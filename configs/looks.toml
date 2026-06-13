@@ -1,0 +1,21 @@
+# AutoEdit looks — magnitude shaping over the rule baseline. A look never adds new
+# decisions; it scales/offsets existing ones. Final = shaped_value * intensity.
+# Fields (all optional, neutral defaults): contrast_mul, vibrance_add, clarity_mul, dehaze_mul
+
+[natural]
+contrast_mul = 1.0
+vibrance_add = 0.0
+clarity_mul  = 1.0
+dehaze_mul   = 1.0
+
+[punchy]
+contrast_mul = 1.4
+vibrance_add = 6.0
+clarity_mul  = 1.3
+dehaze_mul   = 1.3
+
+[soft_portrait]
+contrast_mul = 0.8
+vibrance_add = 0.0
+clarity_mul  = 0.6
+dehaze_mul   = 1.0

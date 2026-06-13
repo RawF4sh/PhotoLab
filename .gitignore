@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+.venv/
+venv/
+.pytest_cache/
+
+# AutoEdit run outputs
+out/
+dist/
+*.autoedit.json
+run.json
+
+# Model weights (fetched from Hugging Face on first run — never committed; SAM license)
+models/*.pt
+models/*.pth
+models/*.safetensors
+
+# Local test images (keep the corpus out of git history; use LFS if you must)
+test-corpus/*.jpg
+test-corpus/*.jpeg
+test-corpus/*.png
+test-corpus/*.tif
+test-corpus/*.tiff
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

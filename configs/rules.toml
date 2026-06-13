@@ -1,0 +1,62 @@
+# AutoEdit rules — stats -> per-region edit values (the rule BASELINE; the LLM refines on top).
+#
+# Sections are [scene.region]. region = "global" lands on the whole image; any other region
+# name lands on that resolved mask. Each value is an expression evaluated by the sandboxed
+# evaluator in src/autoedit/rules.py.
+#
+# Variables available in EVERY block (global stats):
+#   mean_lum, mean_sat, shadow_clip, highlight_clip, haze, intensity
+#   sky_lum, sky_sat, blown_sky, subj_lum, bg_lum   (0.0 when that concept is absent)
+# Variables ALSO available inside a non-global region block (about THAT region):
+#   region_lum, region_sat, region_clip_low, region_clip_high, region_coverage,
+#   region_vs_global_lum   (region_lum - mean_lum)
+# Helpers: clamp(x, lo, hi), min, max, if(cond, a, b), abs, and the operators + - * / and comparisons.
+#
+# Units match the apply engine (src/autoedit/edit/ops.py):
+#   exposure = stops (EV);  contrast/highlights/shadows/whites/blacks/clarity/vibrance/
+#   saturation/dehaze = roughly [-100, 100];  temp/tint = white-balance units.
+
+# ─────────────────────────── people ───────────────────────────
+[people.global]
+exposure   = "clamp(-(mean_lum - 0.45) * 1.2, -0.25, 0.25)"
+highlights = "clamp(-highlight_clip * 80, -40, 0)"
+shadows    = "clamp(shadow_clip * 60, 0, 22)"
+vibrance   = "6"
+
+[people.skin]
+exposure   = "clamp(0.5 * max(0, mean_lum - region_lum), 0, 0.5)"
+shadows    = "clamp(0.4 * max(0, mean_lum - region_lum) * 40, 0, 16)"
+clarity    = "-6"          # negative clarity softens skin
+
+[people.subject]
+exposure   = "clamp(0.5 * max(0, bg_lum - subj_lum), 0, 0.6)"
+clarity    = "4"
+
+# ────────────────────────── landscape ─────────────────────────
+[landscape.global]
+exposure   = "clamp(-(mean_lum - 0.45) * 1.0, -0.2, 0.2)"
+highlights = "clamp(-highlight_clip * 90, -45, 0)"
+shadows    = "clamp(shadow_clip * 70, 0, 25)"
+vibrance   = "10"
+dehaze     = "if(haze > 0.4, 8, 0)"
+
+[landscape.sky]
+exposure   = "clamp(-blown_sky * 0.4, -0.3, 0)"
+highlights = "clamp(-blown_sky * 60, -40, 0)"
+saturation = "if(region_sat > 0.7, -8, 6)"
+dehaze     = "if(haze > 0.4, 10, 0)"
+
+[landscape.foliage]
+vibrance   = "8"
+saturation = "clamp((0.5 - region_sat) * 20, -6, 10)"
+
+# ─────────────────────────── other ────────────────────────────
+[other.global]
+exposure   = "clamp(-(mean_lum - 0.45) * 1.0, -0.2, 0.2)"
+highlights = "clamp(-highlight_clip * 80, -40, 0)"
+shadows    = "clamp(shadow_clip * 60, 0, 20)"
+vibrance   = "6"
+
+[other.subject]
+exposure   = "clamp(0.4 * max(0, mean_lum - region_lum), 0, 0.4)"
+clarity    = "3"

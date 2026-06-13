@@ -1,0 +1,38 @@
+name: Bug report
+description: Something went wrong while running AutoEdit
+labels: [bug]
+body:
+  - type: input
+    id: lr-version
+    attributes:
+      label: Lightroom Classic version
+      placeholder: "e.g. 13.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS (Apple Silicon), macOS (Intel), Windows]
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: AutoEdit version
+      placeholder: "e.g. 0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect vs. what occurred? Steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: Paste relevant lines from autoedit.log (temp dir). No photos needed.
+      render: shell

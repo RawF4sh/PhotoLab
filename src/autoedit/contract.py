@@ -1,0 +1,110 @@
+"""The data contract — run config + serializable Result (sidecar JSON).
+
+Ported from the Rust scaffold's engine/src/io.rs. Two kinds of data live here:
+- Pydantic models for everything that gets serialized (RunConfig, Result, sidecar).
+- Plain dataclasses (in the modules that own them) for runtime objects holding numpy
+  arrays (masks, image buffers) — those never get serialized directly.
+
+`Settings` is a plain dict of edit-op name -> value, e.g. {"exposure": 0.35, "vibrance": 6}.
+Op names and units are defined by the apply engine (edit/ops.py), NOT Adobe CRS names.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+# A bundle of edit-op values. Keys are op names from edit/ops.py OP_NAMES.
+Settings = dict[str, float]
+
+
+class RunConfig(BaseModel):
+    """Everything a batch run needs. Built from configs/defaults.toml + a --config file
+    + CLI overrides (see cli.py::load_config)."""
+
+    # selection / look
+    style: str = "natural"  # styles.toml profile: look + default concepts + brief
+    prompt: str | None = None  # free-text intent, combined with the style brief for the LLM
+    preset: str | None = None  # concept-set override (concepts.toml); wins over the style's set
+    concepts: list[str] | None = None  # explicit concept override; wins over preset
+    look: str | None = None  # magnitude profile override; defaults to the style's look
+    intensity: float = 0.8
+
+    # decision
+    decider: str = "rules"  # "rules" | "llm"
+    llm_mode: str = "refine"  # "refine" | "propose"
+    llm_model: str = "claude-haiku-4-5-20251001"
+    llm_temperature: float = 0.0
+    llm_max_calls: int = 0  # 0 = unlimited
+    llm_budget_usd: float = 0.0
+    llm_thumb_px: int = 512
+
+    # segmentation
+    backend: str = "stub"  # "stub" | "sam3"
+    device: str = "auto"
+    analysis_long_edge: int = 1536
+
+    # output
+    out_format: str = "jpeg"  # "jpeg" | "tiff"
+    quality: int = 92
+    emit: str = "baked"  # "baked" | "editable" | "both"
+
+    # paths to config assets (resolved by cli.py)
+    rules_path: str = "configs/rules.toml"
+    looks_path: str = "configs/looks.toml"
+    concepts_path: str = "configs/concepts.toml"
+    styles_path: str = "configs/styles.toml"
+
+
+class DetectedConcept(BaseModel):
+    name: str
+    present: bool
+    score: float
+    coverage: float
+    instance_count: int = 0
+
+
+class RegionStatsModel(BaseModel):
+    name: str
+    lum: float
+    sat: float
+    clip_low: float
+    clip_high: float
+    coverage: float
+
+
+class GlobalStatsModel(BaseModel):
+    mean_lum: float
+    mean_sat: float
+    shadow_clip: float
+    highlight_clip: float
+    haze: float
+    sky_lum: float = 0.0
+    sky_sat: float = 0.0
+    blown_sky: float = 0.0
+    subj_lum: float = 0.0
+    bg_lum: float = 0.0
+
+
+class MaskOps(BaseModel):
+    target: str  # region name, e.g. "sky" | "skin" | "subject"
+    ops: Settings
+
+
+class Result(BaseModel):
+    """The per-image sidecar (`<name>.autoedit.json`) — every decision, auditable."""
+
+    image: str
+    scene: str
+    confidence: float
+    style: str | None = None
+    brief: str | None = None
+    concepts: list[DetectedConcept] = Field(default_factory=list)
+    region_stats: list[RegionStatsModel] = Field(default_factory=list)
+    global_stats: GlobalStatsModel | None = None
+    global_settings: Settings = Field(default_factory=dict)
+    masks: list[MaskOps] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    decider: str = "rules"
+    model: str | None = None
+    engine_version: str = ""
+    timing_ms: float = 0.0

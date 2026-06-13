@@ -1,0 +1,91 @@
+# AutoEdit concepts — open-vocabulary region config.
+#
+# [preset.NAME]  -> the set of concept prompts SAM 3 segments for that preset.
+# [concept.NAME] -> per-concept metadata used by segment/resolve.py and the rules:
+#   priority      higher wins contested pixels in the non-overlap label map
+#   min_score     below this best-instance score => treat concept as absent
+#   min_coverage  below this frame fraction => treat as absent
+#   feather_px    edge softening (fraction of long edge) applied at apply time
+#   rule_region   which [scene.region] block in rules.toml this concept maps to
+#
+# Anchor probe (scene classification) uses: person, sky, foliage.
+
+[preset.generic]
+concepts = ["subject", "sky", "skin"]
+
+[preset.wedding]
+concepts = ["skin", "dress", "suit", "sky", "foliage", "flowers"]
+
+[preset.landscape]
+concepts = ["sky", "foliage", "water", "mountain", "rock"]
+
+# ── per-concept metadata (priority: smaller/specific beats larger/general) ──
+[concept.skin]
+priority = 90
+min_score = 0.45
+min_coverage = 0.01
+feather_px = 0.004
+rule_region = "skin"
+
+[concept.flowers]
+priority = 80
+min_score = 0.45
+min_coverage = 0.005
+feather_px = 0.003
+rule_region = "foliage"
+
+[concept.dress]
+priority = 70
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.004
+rule_region = "subject"
+
+[concept.suit]
+priority = 70
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.004
+rule_region = "subject"
+
+[concept.subject]
+priority = 50
+min_score = 0.40
+min_coverage = 0.03
+feather_px = 0.005
+rule_region = "subject"
+
+[concept.foliage]
+priority = 40
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.004
+rule_region = "foliage"
+
+[concept.water]
+priority = 35
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.005
+rule_region = "sky"
+
+[concept.mountain]
+priority = 30
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.005
+rule_region = "foliage"
+
+[concept.rock]
+priority = 30
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.004
+rule_region = "foliage"
+
+[concept.sky]
+priority = 20
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.006
+rule_region = "sky"

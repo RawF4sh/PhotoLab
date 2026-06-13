@@ -1,0 +1,26 @@
+# AutoEdit run defaults. CLI flags override these; a --config run.toml overrides these too.
+
+[run]
+style = "natural"          # styles.toml profile: look + default concepts + brief
+intensity = 0.8
+decider = "rules"          # "rules" | "llm"
+emit = "baked"             # "baked" | "editable" | "both"
+# look/preset/concepts/prompt are unset here — the style supplies look + concepts;
+# override any of them per-run via CLI flags (--look, --preset, --concepts, --prompt).
+
+[segment]
+backend = "stub"           # "stub" (no GPU, heuristic) | "sam3"
+device = "auto"            # auto -> cuda > mps > cpu
+analysis_long_edge = 1536  # segmentation/stats resolution; apply is full-res
+
+[output]
+format = "jpeg"            # "jpeg" | "tiff"
+quality = 92
+
+[llm]
+mode = "refine"            # "refine" (bounded deltas) | "propose"
+model = "claude-haiku-4-5-20251001"
+temperature = 0.0
+max_calls = 0              # 0 = unlimited; >0 caps then falls back to rules
+budget_usd = 0.0           # 0 = unlimited
+thumb_px = 512

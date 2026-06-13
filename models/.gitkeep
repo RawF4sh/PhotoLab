@@ -1,0 +1,2 @@
+# Tiny ONNX models (scene classifier, optional face detector) live here, tracked via
+# Git LFS (.gitattributes). Added in Phase 1 only if heuristics prove insufficient.

@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement (a look, a rule tweak, a workflow)
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem or use case?
+      description: What kind of photos / shoots? What does the current output get wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed change
+  - type: checkboxes
+    id: area
+    attributes:
+      label: Area
+      options:
+        - label: Rule/look tuning (rules/*.toml)
+        - label: New scene type
+        - label: New mask/region
+        - label: Plugin UI / workflow

@@ -1,0 +1,90 @@
+<h1 align="center">AutoEdit</h1>
+
+<p align="center">
+  <b>Open-vocabulary batch photo auto-editing.</b><br>
+  Segment a folder of photos into <i>arbitrary named regions</i> with Meta's SAM 3,
+  compute per-region + global edits (rule baseline, optional LLM refine), and bake
+  good-looking results — locally.
+</p>
+
+---
+
+## Why this exists
+
+Segmentation-driven auto-editing is already commoditized — Lightroom's Adaptive Presets,
+Imagen, Aftershoot, and Evoto all do *bulk → segment → per-region edit → global finish*,
+but against a **fixed** region set (subject / sky / skin / background). The one open lane is
+**open-vocabulary** targeting: edit *"the dress"*, *"the foliage"*, *"the bouquet"* — any
+concept you can name. SAM 3 makes that possible, and SAM masks can't live inside Lightroom,
+so AutoEdit is a standalone tool that applies its own pixel edits.
+
+> **Honest scope.** On baked 8-bit JPEGs, highlight/shadow *recovery* can't match a raw
+> editor — that latitude is gone. AutoEdit is *consistent, good-looking, open-vocab batch
+> editing*, not raw-grade recovery. Feed 16-bit TIFFs to raise the ceiling.
+
+## How it works
+
+```
+folder ─► decode ─► SAM 3 segment(concepts) ─► resolve masks (priority, no double-edit)
+       ─► per-region stats ─► scene ─► decide (rules baseline → optional LLM refine)
+       ─► apply (feather + masked pixel ops + global finish) ─► baked image + sidecar JSON
+```
+
+The pipeline analyzes on a downscaled proxy and applies at full resolution. Every edit is
+explained in a `<name>.autoedit.json` sidecar (detected concepts, stats, settings, "why" notes).
+
+## Install
+
+```bash
+pip install -e .            # core: numpy, Pillow, pydantic (runs now with the stub segmenter)
+pip install -e '.[sam]'     # + torch + SAM 3 (real open-vocab masks; GPU recommended)
+pip install -e '.[llm]'     # + Anthropic SDK (LLM per-region refine)
+pip install -e '.[accel]'   # + OpenCV/Kornia/colour-science/tifffile/rawpy (quality + 16-bit)
+```
+
+No GPU needed to try it: the **stub segmenter** (heuristic sky/subject/skin) runs the whole
+pipeline on CPU. Swap to real SAM 3 with `--backend sam3`.
+
+## Use
+
+```bash
+autoedit run ./photos ./out --preset wedding --look natural --intensity 0.8
+autoedit run ./photos ./out --concepts "sky,skin,dress,foliage"   # arbitrary concepts
+autoedit run ./photos ./out --decider llm --llm-mode refine        # LLM bounded-delta refine
+autoedit run ./photos ./out --dry-run                              # decisions + sidecars, no pixels
+autoedit doctor        # check device + backend availability
+autoedit presets       # list concept presets
+```
+
+> **Planned:** `autoedit ui` — a local web app (FastAPI + browser): drop a folder, pick a
+> style, type what you want, preview before/after, run the batch. Same backend, so the local
+> app and a future hosted version share one codebase. See [PLAN.md](PLAN.md) §5.
+
+Run without installing:
+```bash
+PYTHONPATH=src python -m autoedit.cli run ./photos ./out --backend stub
+# or: scripts/dev-run.sh ./photos ./out
+```
+
+## Configure (no code changes)
+
+Everything tunable lives in [configs/](configs/):
+- [rules.toml](configs/rules.toml) — per-region stats → edit-value expressions (the baseline).
+- [looks.toml](configs/looks.toml) — Natural / Punchy / Soft Portrait magnitude shaping.
+- [concepts.toml](configs/concepts.toml) — concept presets + per-concept priority/feather/rule mapping.
+- [defaults.toml](configs/defaults.toml) — run defaults.
+
+## Develop
+
+```bash
+PYTHONPATH=src python tests/run_all.py    # zero-dependency test runner (or: python -m pytest)
+```
+
+Architecture and conventions: [CLAUDE.md](CLAUDE.md). The implementation plan that produced
+this: see the approved plan referenced in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+[MIT](LICENSE) for AutoEdit's code. **SAM 3** ships under Meta's custom SAM License (not
+MIT) — its weights are fetched from Hugging Face on first use and never redistributed here;
+read Meta's license before any commercial use.

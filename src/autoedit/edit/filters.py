@@ -1,0 +1,38 @@
+"""Fast, dependency-free 2D blurs (numpy). Used for clarity local-contrast and mask feather.
+
+`box_blur` is an O(N) integral-image moving average; `gaussian_blur` runs 3 box passes
+(a good Gaussian approximation). Kornia/OpenCV can replace these for GPU speed later.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+
+def box_blur(a: np.ndarray, radius: int) -> np.ndarray:
+    """Box (moving-average) blur of a 2D float array, edge-padded."""
+    if radius < 1:
+        return a.copy()
+    r = int(radius)
+    k = 2 * r + 1
+    # horizontal
+    ap = np.pad(a, ((0, 0), (r, r)), mode="edge")
+    cs = np.cumsum(ap, axis=1)
+    cs = np.pad(cs, ((0, 0), (1, 0)), mode="constant")
+    out = (cs[:, k:] - cs[:, :-k]) / k
+    # vertical
+    ap = np.pad(out, ((r, r), (0, 0)), mode="edge")
+    cs = np.cumsum(ap, axis=0)
+    cs = np.pad(cs, ((1, 0), (0, 0)), mode="constant")
+    return (cs[k:, :] - cs[:-k, :]) / k
+
+
+def gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    """Approximate Gaussian blur via 3 box passes."""
+    if sigma <= 0:
+        return a.copy()
+    r = max(1, int(round(sigma)))
+    out = a.astype(np.float32)
+    for _ in range(3):
+        out = box_blur(out, r)
+    return out

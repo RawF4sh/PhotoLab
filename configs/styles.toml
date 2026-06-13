@@ -1,0 +1,22 @@
+# AutoEdit styles — selectable, user-facing looks. A style bundles:
+#   look     -> which looks.toml magnitude profile shapes the rule output
+#   concepts -> the default open-vocab concept set to segment (overridable by --concepts/--preset)
+#   brief    -> a baked natural-language intent, combined with the user's --prompt and sent to
+#               the LLM decider (steers the per-region deltas; ignored by the pure-rules path)
+#
+# Pick one with `--style NAME`; add `--prompt "..."` to layer your own intent on top.
+
+[natural]
+look = "natural"
+concepts = ["subject", "sky", "skin"]
+brief = "clean, true-to-life color, balanced exposure, gentle and natural, protect skin tones"
+
+[editorial]
+look = "punchy"
+concepts = ["subject", "sky", "skin", "background"]
+brief = "high-contrast editorial look, deep shadows, crisp subject separation, slightly cool background, punchy but not garish"
+
+[warm_film]
+look = "soft_portrait"
+concepts = ["subject", "sky", "skin", "foliage"]
+brief = "warm filmic tones, soft contrast, gentle highlight rolloff, golden skin, muted greens"

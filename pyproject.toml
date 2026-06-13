@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoedit"
+version = "0.2.0"
+description = "Standalone open-vocabulary batch photo auto-editor (SAM 3 segmentation + per-region edits)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+# Core runtime — intentionally minimal so the pipeline runs with a stub segmenter and
+# no GPU/network. Heavy/optional pieces live in [project.optional-dependencies] below.
+dependencies = [
+    "numpy>=1.26",
+    "Pillow>=10",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+# SAM 3 segmentation (GPU-intended). Pulls torch; device auto-detected at runtime.
+sam = ["torch>=2.2", "sam3"]
+# LLM per-region refine path.
+llm = ["anthropic>=0.40"]
+# Quality/perf accelerators for the apply engine + 16-bit IO.
+accel = ["opencv-python>=4.9", "kornia>=0.7", "colour-science>=0.4", "tifffile>=2024.1", "rawpy>=0.19"]
+# Nicer CLI/progress (optional; argparse fallback always works).
+cli = ["typer>=0.12", "rich>=13"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+autoedit = "autoedit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
