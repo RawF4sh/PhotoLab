@@ -18,8 +18,12 @@ def apply_image(
     full_rgb: np.ndarray,
     regions: list[tuple[np.ndarray, Settings]],
     global_settings: Settings,
+    compositional: list[tuple[np.ndarray, Settings]] | None = None,
 ) -> np.ndarray:
-    """full_rgb: float HxWx3 gamma [0,1]. regions: [(alpha_full, settings), ...] priority desc."""
+    """full_rgb: float HxWx3 gamma [0,1].
+    regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited.
+    compositional: [(alpha_full, settings), ...] — radial/linear moves blended independently
+    (they intentionally overlap regions, e.g. a vignette over the background)."""
     out = full_rgb.astype(np.float32).copy()
     claimed = np.zeros(out.shape[:2], dtype=np.float32)
 
@@ -33,6 +37,13 @@ def apply_image(
         a3 = a_eff[..., None]
         out = out * (1.0 - a3) + edited * a3
         claimed = np.clip(claimed + a_eff, 0.0, 1.0)
+
+    for alpha, settings in compositional or []:
+        if not settings or float(alpha.max()) <= 1e-4:
+            continue
+        edited = ops.apply_ops(out, settings)
+        a3 = alpha[..., None]
+        out = out * (1.0 - a3) + edited * a3
 
     if global_settings:
         out = ops.apply_ops(out, global_settings)

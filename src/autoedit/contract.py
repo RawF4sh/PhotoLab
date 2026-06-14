@@ -47,12 +47,14 @@ class RunConfig(BaseModel):
     out_format: str = "jpeg"  # "jpeg" | "tiff"
     quality: int = 92
     emit: str = "baked"  # "baked" | "editable" | "both"
+    compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
 
     # paths to config assets (resolved by cli.py)
     rules_path: str = "configs/rules.toml"
     looks_path: str = "configs/looks.toml"
     concepts_path: str = "configs/concepts.toml"
     styles_path: str = "configs/styles.toml"
+    compose_path: str = "configs/compose.toml"
 
 
 class DetectedConcept(BaseModel):
@@ -103,6 +105,7 @@ class Result(BaseModel):
     global_stats: GlobalStatsModel | None = None
     global_settings: Settings = Field(default_factory=dict)
     masks: list[MaskOps] = Field(default_factory=list)
+    composition: list[MaskOps] = Field(default_factory=list)  # radial/linear moves
     notes: list[str] = Field(default_factory=list)
     decider: str = "rules"
     model: str | None = None

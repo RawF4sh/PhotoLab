@@ -1,0 +1,26 @@
+# AutoEdit compositional moves — radial/linear gradients placed by reasoning about the
+# scene to guide the eye (the differentiator). Each move triggers when its `when` concept is
+# present; geometry is derived from that region (radial centers on the subject; linear grads
+# from an edge). The LLM decider can later override placement/ops; today placement is a
+# deterministic heuristic that works with the stub segmenter.
+#
+#   when         concept that must be present to trigger the move
+#   shape        "radial" | "linear"
+#   ops          edit values applied through the generated mask (scaled by intensity)
+#   radial:  target ("inside"|"outside"), feather, radius_scale (× the region's half-extent)
+#   linear:  from ("top"|"bottom"|"left"|"right"), coverage (fraction of frame the ramp spans)
+
+[subject_vignette]
+when = "subject"
+shape = "radial"
+target = "outside"          # darken/desaturate AROUND the subject → pull the eye inward
+feather = 0.20
+radius_scale = 1.5
+ops = { exposure = -0.22, saturation = -5 }
+
+[sky_grad]
+when = "sky"
+shape = "linear"
+from = "top"                # graduated darken from the top, like an ND grad
+coverage = 0.5
+ops = { exposure = -0.18, highlights = -12 }
