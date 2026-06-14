@@ -46,12 +46,13 @@ class LlmDecider:
     name = "llm"
 
     def __init__(self, mode="refine", model="claude-haiku-4-5-20251001", temperature=0.0,
-                 max_calls=0, budget_usd=0.0):
+                 max_calls=0, budget_usd=0.0, api_key=None):
         self.mode = mode
         self.model = model
         self.temperature = temperature
         self.max_calls = max_calls
         self.budget_usd = budget_usd
+        self.api_key = api_key  # BYO-key; falls back to the SDK's env lookup if None
         self.calls = 0
         self.spent = 0.0
         self._base = RulesDecider()
@@ -82,7 +83,8 @@ class LlmDecider:
             return self._client
         from anthropic import Anthropic  # raises if extra missing → caught upstream
 
-        self._client = Anthropic()  # reads ANTHROPIC_API_KEY
+        # explicit BYO-key if provided, else the SDK reads ANTHROPIC_API_KEY
+        self._client = Anthropic(api_key=self.api_key) if self.api_key else Anthropic()
         return self._client
 
     def _call_llm(self, ctx, g, regions) -> dict:

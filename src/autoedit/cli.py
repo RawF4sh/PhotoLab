@@ -64,6 +64,8 @@ def load_run_config(args) -> RunConfig:
         "look": args.look,
         "intensity": args.intensity,
         "decider": args.decider,
+        "allow_cloud": args.allow_cloud,
+        "api_key": args.api_key,
         "llm_mode": args.llm_mode,
         "backend": args.backend,
         "device": args.device,
@@ -91,6 +93,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--look", help="magnitude profile override (defaults to the style's look)")
     p.add_argument("--intensity", type=float)
     p.add_argument("--decider", choices=["rules", "llm"])
+    p.add_argument("--allow-cloud", dest="allow_cloud", action="store_true", default=None,
+                   help="consent to the BYO-key cloud LLM (sends a thumbnail to your AI provider)")
+    p.add_argument("--api-key", dest="api_key", help="Anthropic API key (else ANTHROPIC_API_KEY env)")
     p.add_argument("--llm-mode", dest="llm_mode", choices=["refine", "propose"])
     p.add_argument("--backend", choices=["stub", "sam3"])
     p.add_argument("--device")
@@ -119,23 +124,31 @@ def _cmd_run(args) -> int:
 
 
 def _cmd_doctor(args) -> int:
-    print(f"AutoEdit doctor")
+    from .decide import DISCLOSURE
+
+    print("AutoEdit doctor")
+    print("  segmentation:")
     try:
         import torch  # noqa: F401
         from .segment.sam3 import pick_device
 
-        print(f"  torch: available, device(auto) -> {pick_device('auto')}")
-        print("  sam3 backend: usable (install weights on first run)")
+        print(f"    torch: available, device(auto) -> {pick_device('auto')}")
+        print("    sam3 backend: usable. Weights fetch from Hugging Face on first run "
+              "(Meta custom SAM License — not MIT; check terms before commercial use).")
     except Exception as e:
-        print(f"  torch/sam3: NOT available ({e})")
-        print("  -> stub backend works now; `pip install '.[sam]'` for real SAM 3")
+        print(f"    torch/sam3: NOT available ({e})")
+        print("    -> stub backend works now; `pip install '.[sam]'` for real SAM 3")
+    print("  cloud LLM (BYO-key, optional):")
     try:
         import anthropic  # noqa: F401
 
         has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-        print(f"  anthropic: available, ANTHROPIC_API_KEY {'set' if has_key else 'MISSING'}")
+        consent = os.environ.get("AUTOEDIT_ALLOW_CLOUD", "").lower() in ("1", "true", "yes")
+        print(f"    anthropic: available | ANTHROPIC_API_KEY {'set' if has_key else 'MISSING'} "
+              f"| consent {'ON' if consent else 'OFF (use --allow-cloud)'}")
     except Exception:
-        print("  anthropic: not installed (`pip install '.[llm]'` for the LLM decider)")
+        print("    anthropic: not installed (`pip install '.[llm]'` for the LLM decider)")
+    print(f"    disclosure: {DISCLOSURE}")
     return 0
 
 

@@ -50,7 +50,7 @@ pipeline on CPU. Swap to real SAM 3 with `--backend sam3`.
 ```bash
 autoedit run ./photos ./out --preset wedding --look natural --intensity 0.8
 autoedit run ./photos ./out --concepts "sky,skin,dress,foliage"   # arbitrary concepts
-autoedit run ./photos ./out --decider llm --llm-mode refine        # LLM bounded-delta refine
+autoedit run ./photos ./out --decider llm --allow-cloud           # BYO-key LLM (see Privacy)
 autoedit run ./photos ./out --dry-run                              # decisions + sidecars, no pixels
 autoedit doctor        # check device + backend availability
 autoedit presets       # list concept presets
@@ -65,6 +65,16 @@ Run without installing:
 PYTHONPATH=src python -m autoedit.cli run ./photos ./out --backend stub
 # or: scripts/dev-run.sh ./photos ./out
 ```
+
+## Privacy / cloud
+
+AutoEdit is **local by default** — segmentation and edits run on your machine; nothing is sent
+anywhere. The optional LLM decider (`--decider llm`) is **off unless you opt in** with
+`--allow-cloud` (or `AUTOEDIT_ALLOW_CLOUD=1`) **and** provide your own API key (`--api-key` or
+`ANTHROPIC_API_KEY`). When enabled, it sends a **small thumbnail + image stats** to your AI
+provider and bills **your** key per photo — full-resolution pixels never leave your machine.
+Without consent or a key it transparently falls back to the local rules. Run `autoedit doctor`
+to see your current status.
 
 ## Configure (no code changes)
 

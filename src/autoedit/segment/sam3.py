@@ -55,11 +55,7 @@ class Sam3Segmenter:
         h, w = img.height, img.width
         out: list[RegionMask] = []
         for concept in concepts:
-            # === SAM 3 concept-promptable inference ===================================
-            # instances: list of (bool HxW mask, float score) for every occurrence of the
-            # concept. Pin the call to the published sam3 API during the Phase S spike.
-            instances = self._model.segment_concept(img.rgb, concept)  # type: ignore[attr-defined]
-            # ========================================================================
+            instances = self._run_concept(img.rgb, concept)
             if not instances:
                 continue
             union = np.zeros((h, w), dtype=bool)
@@ -79,3 +75,16 @@ class Sam3Segmenter:
                 )
             )
         return out
+
+    def _run_concept(self, image_rgb, concept: str):
+        """The ONE SAM 3 inference call. Returns [(bool HxW mask, float score), ...] for every
+        instance of `concept`. Pin to the published `sam3` API during the Phase-A spike on a
+        GPU box; the method name below is the expected entry point."""
+        fn = getattr(self._model, "segment_concept", None)
+        if fn is None:  # pragma: no cover - exercised only with the sam extra installed
+            raise RuntimeError(
+                "SAM 3 model has no `segment_concept`; wire Sam3Segmenter._run_concept to the "
+                "installed sam3 API (Phase-A spike). The rest of the pipeline already consumes "
+                "(mask, score) instances."
+            )
+        return fn(image_rgb, concept)
