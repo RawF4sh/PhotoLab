@@ -16,7 +16,7 @@ class RulesDecider:
             ctx.rules, ctx.scene, ctx.gstats, ctx.region_stats, ctx.region_rule, ctx.intensity
         )
         look = ctx.looks.get(ctx.look, Look())
-        shape(g, look, ctx.intensity)
+        shape(g, look, ctx.intensity, is_global=True)
         for s in regions.values():
             shape(s, look, ctx.intensity)
         return g, regions
