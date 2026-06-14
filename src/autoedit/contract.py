@@ -31,6 +31,8 @@ class RunConfig(BaseModel):
 
     # decision
     decider: str = "rules"  # "rules" | "llm"
+    allow_cloud: bool = False  # explicit consent required to use the cloud LLM (BYO-key)
+    api_key: str | None = None  # Anthropic API key; falls back to ANTHROPIC_API_KEY env
     llm_mode: str = "refine"  # "refine" | "propose"
     llm_model: str = "claude-haiku-4-5-20251001"
     llm_temperature: float = 0.0
