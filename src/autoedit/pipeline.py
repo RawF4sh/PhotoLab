@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import emit, looks as looks_mod, rules as rules_mod, scene as scene_mod, stats as stats_mod
+from . import compose, emit, looks as looks_mod, rules as rules_mod, scene as scene_mod, stats as stats_mod
 from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
@@ -34,6 +34,7 @@ class Pipeline:
     presets: dict
     meta: dict
     styles: dict
+    compose_moves: list
     segmenter: Segmenter
     decider: Decider
 
@@ -47,6 +48,7 @@ class Pipeline:
             presets=presets,
             meta=meta,
             styles=load_styles(cfg.styles_path),
+            compose_moves=compose.load_compose(cfg.compose_path) if cfg.compose else [],
             segmenter=make_segmenter(cfg.backend, cfg.device),
             decider=make_decider(cfg),
         )
@@ -99,9 +101,11 @@ class Pipeline:
         )
         global_settings, region_settings = self.decider.decide(ctx)
 
+        full_hw = (img.height, img.width)
+        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)
+
         out_rgb = None
         if do_apply:
-            full_hw = (img.height, img.width)
             regions_apply = []
             for r in resolved.regions:  # priority-descending
                 s = region_settings.get(r.name)
@@ -110,7 +114,11 @@ class Pipeline:
                 cm = meta_for(r.name, self.meta)
                 alpha = build_alpha(r.mask, full_hw, cm.feather_px)
                 regions_apply.append((alpha, s))
-            out_rgb = apply_image(img.rgb, regions_apply, global_settings)
+            comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
+            out_rgb = apply_image(
+                img.rgb, regions_apply, global_settings,
+                compositional=[(a, s) for _n, a, s in comp],
+            )
 
         notes = build_notes(gstats, region_stats, resolved.detected)
         result = emit.build_result(
@@ -124,6 +132,7 @@ class Pipeline:
             region_stats=region_stats,
             global_settings=global_settings,
             region_settings=region_settings,
+            compositional=comp_settings,
             notes=notes,
             decider=self.decider.name,
             model=cfg.llm_model if cfg.decider == "llm" else None,
