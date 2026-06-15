@@ -1,6 +1,7 @@
 """Web service layer (framework-agnostic — no FastAPI needed to test)."""
 
 import importlib
+import os
 
 import numpy as np
 from PIL import Image as PILImage
@@ -47,3 +48,14 @@ def test_preview_returns_before_after(tmp_path):
     assert out["after"].startswith("data:image/png;base64,")
     assert out["result"]["scene"] == "people"
     assert out["after"] != out["before"]  # the edit changed the pixels
+
+
+def test_run_one_writes_outputs(tmp_path):
+    a = np.full((80, 80, 3), 120, np.uint8)
+    a[:40] = [100, 140, 200]
+    p = tmp_path / "one.jpg"
+    PILImage.fromarray(a, "RGB").save(str(p))
+    out_dir = tmp_path / "out"
+    res = service.run_one(str(p), str(out_dir), {"style": "natural", "backend": "stub"})
+    assert os.path.exists(res["image_out"]) and os.path.exists(res["sidecar"])
+    assert res["result"]["image"] == "one.jpg"

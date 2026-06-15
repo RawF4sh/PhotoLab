@@ -10,7 +10,7 @@
   body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #14161a; color: #e8eaed; }
   header { padding: 14px 20px; border-bottom: 1px solid #2a2e35; font-weight: 600; }
   header span { color: #8a93a2; font-weight: 400; margin-left: 8px; }
-  .wrap { display: grid; grid-template-columns: 320px 1fr; gap: 0; height: calc(100vh - 53px); }
+  .wrap { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100vh - 53px); }
   .panel { padding: 18px; overflow: auto; border-right: 1px solid #2a2e35; }
   .stage { padding: 18px; overflow: auto; }
   label { display: block; margin: 12px 0 4px; color: #aab2bf; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
@@ -22,6 +22,8 @@
   .chk input { width: auto; }
   button { cursor: pointer; background: #2b6cff; border-color: #2b6cff; font-weight: 600; margin-top: 14px; }
   button.secondary { background: #232831; border-color: #313640; }
+  button.mode { margin-top: 0; }
+  button.mode.active { background: #2b6cff; border-color: #2b6cff; }
   button:disabled { opacity: .5; cursor: default; }
   .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .pair figure { margin: 0; }
@@ -31,19 +33,40 @@
   .notes li { color: #cfd6e0; }
   .muted { color: #8a93a2; font-size: 12px; }
   .err { color: #ff8a8a; }
+  .browse { flex: 0 0 92px; margin-top: 0; }
+  .listbtn { flex: 0 0 64px; margin-top: 0; }
 </style>
 </head>
 <body>
 <header>AutoEdit <span>open-vocabulary batch editor</span></header>
 <div class="wrap">
   <div class="panel">
-    <label>Input folder (on this machine)</label>
+    <label>Source</label>
     <div class="row">
-      <input id="dir" placeholder="/path/to/photos" />
-      <button class="secondary" style="flex:0 0 70px;margin-top:0" onclick="listImages()">List</button>
+      <button class="secondary mode active" id="modeFolder" onclick="setMode('folder')">Folder</button>
+      <button class="secondary mode" id="modeSingle" onclick="setMode('single')">Single photo</button>
     </div>
-    <label>Image (for preview)</label>
-    <select id="file"></select>
+
+    <div id="folderMode">
+      <label>Input folder</label>
+      <div class="row">
+        <input id="dir" placeholder="/path/to/photos" />
+        <button class="secondary browse" onclick="browse('folder')">Browse…</button>
+      </div>
+      <label>Image (for preview)</label>
+      <div class="row">
+        <select id="file"></select>
+        <button class="secondary listbtn" onclick="listImages()">List</button>
+      </div>
+    </div>
+
+    <div id="singleMode" style="display:none">
+      <label>Photo</label>
+      <div class="row">
+        <input id="single" placeholder="/path/to/photo.jpg" />
+        <button class="secondary browse" onclick="browse('file')">Browse…</button>
+      </div>
+    </div>
 
     <label>Style</label>
     <select id="style"></select>
@@ -66,11 +89,14 @@
     <div class="chk"><input type="checkbox" id="cloud" /><span>Use cloud LLM (BYO-key)</span></div>
     <input id="apikey" placeholder="Anthropic API key (or set env)" style="margin-top:8px;display:none" />
 
-    <button onclick="preview()" id="previewBtn">Preview selected photo</button>
+    <button onclick="preview()" id="previewBtn">Preview</button>
 
     <label>Output folder</label>
-    <input id="outdir" placeholder="/path/to/output" />
-    <button class="secondary" onclick="runBatch()" id="runBtn">Run batch on folder</button>
+    <div class="row">
+      <input id="outdir" placeholder="/path/to/output" />
+      <button class="secondary browse" onclick="browse('out')">Browse…</button>
+    </div>
+    <button class="secondary" onclick="run()" id="runBtn">Run batch on folder</button>
     <div id="status" class="muted" style="margin-top:10px"></div>
   </div>
 
@@ -82,19 +108,43 @@
     <h3>Why</h3>
     <ul id="notes" class="notes"></ul>
     <h3>Decisions</h3>
-    <pre id="sidecar">Pick a folder, list images, choose a style, then Preview.</pre>
+    <pre id="sidecar">Pick a folder or a single photo, choose a style, then Preview.</pre>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
-document.getElementById('cloud').addEventListener('change', e => {
-  $('apikey').style.display = e.target.checked ? 'block' : 'none';
-});
+const err = m => { $('status').innerHTML = '<span class="err">' + m + '</span>'; };
+const mode = () => ($('singleMode').style.display === 'none' ? 'folder' : 'single');
+
+$('cloud').addEventListener('change', e => { $('apikey').style.display = e.target.checked ? 'block' : 'none'; });
+
+function setMode(m) {
+  const single = m === 'single';
+  $('singleMode').style.display = single ? 'block' : 'none';
+  $('folderMode').style.display = single ? 'none' : 'block';
+  $('modeSingle').classList.toggle('active', single);
+  $('modeFolder').classList.toggle('active', !single);
+  $('runBtn').textContent = single ? 'Edit this photo' : 'Run batch on folder';
+}
+
+async function browse(target) {
+  const kind = target === 'file' ? 'file' : 'folder';
+  $('status').textContent = 'Opening picker…';
+  try {
+    const { path } = await (await fetch('/api/pick?kind=' + kind)).json();
+    if (!path) { $('status').textContent = 'Cancelled.'; return; }
+    if (target === 'folder') { $('dir').value = path; await listImages(); }
+    else if (target === 'file') { $('single').value = path; $('status').textContent = path; }
+    else { $('outdir').value = path; $('status').textContent = 'Output: ' + path; }
+  } catch (e) { err(e); }
+}
 
 function options() {
+  const single = mode() === 'single';
   return {
-    dir: $('dir').value, file: $('file').value,
+    dir: single ? '' : $('dir').value,
+    file: single ? $('single').value : $('file').value,
     style: $('style').value, prompt: $('prompt').value || null,
     intensity: parseFloat($('intensity').value),
     concepts: $('concepts').value || null,
@@ -107,42 +157,46 @@ function options() {
 
 async function loadStyles() {
   const styles = await (await fetch('/api/styles')).json();
-  const sel = $('style');
-  sel.innerHTML = '';
+  const sel = $('style'); sel.innerHTML = '';
   styles.forEach(s => { const o = document.createElement('option'); o.value = s.name; o.textContent = s.name; o.dataset.brief = s.brief; sel.appendChild(o); });
   sel.onchange = () => { $('brief').textContent = sel.selectedOptions[0]?.dataset.brief || ''; };
   sel.onchange();
 }
 
 async function listImages() {
-  const dir = $('dir').value;
-  const files = await (await fetch('/api/list?dir=' + encodeURIComponent(dir))).json();
+  const files = await (await fetch('/api/list?dir=' + encodeURIComponent($('dir').value))).json();
   const sel = $('file'); sel.innerHTML = '';
   files.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o); });
   $('status').textContent = files.length + ' image(s) found.';
 }
 
 async function preview() {
-  if (!$('file').value) { $('status').innerHTML = '<span class="err">List a folder and pick an image first.</span>'; return; }
+  const o = options();
+  if (!o.file) { err(mode() === 'single' ? 'Pick a photo first.' : 'List a folder and pick an image first.'); return; }
   $('previewBtn').disabled = true; $('status').textContent = 'Rendering preview…';
   try {
-    const r = await (await fetch('/api/preview', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(options()) })).json();
+    const r = await (await fetch('/api/preview', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(o) })).json();
     $('before').src = r.before; $('after').src = r.after;
     $('notes').innerHTML = (r.result.notes || []).map(n => '<li>' + n + '</li>').join('') || '<li class="muted">no notes</li>';
     $('sidecar').textContent = JSON.stringify({ scene: r.result.scene, style: r.result.style, brief: r.result.brief, global: r.result.global_settings, masks: r.result.masks, composition: r.result.composition }, null, 2);
     $('status').textContent = 'Preview ready.';
-  } catch (e) { $('status').innerHTML = '<span class="err">' + e + '</span>'; }
+  } catch (e) { err(e); }
   $('previewBtn').disabled = false;
 }
 
-async function runBatch() {
-  if (!$('dir').value || !$('outdir').value) { $('status').innerHTML = '<span class="err">Set input and output folders.</span>'; return; }
-  $('runBtn').disabled = true; $('status').textContent = 'Running batch…';
+async function run() {
+  const single = mode() === 'single';
+  if (!$('outdir').value) { err('Set an output folder.'); return; }
+  const o = options(); o.out_dir = $('outdir').value;
+  let url;
+  if (single) { if (!o.file) { err('Pick a photo.'); return; } url = '/api/run-one'; }
+  else { if (!$('dir').value) { err('Set an input folder.'); return; } o.input_dir = $('dir').value; url = '/api/run'; }
+  $('runBtn').disabled = true; $('status').textContent = 'Working…';
   try {
-    const opts = options(); opts.input_dir = $('dir').value; opts.out_dir = $('outdir').value;
-    const m = await (await fetch('/api/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(opts) })).json();
-    $('status').textContent = `Done: ${m.processed} edited, ${m.failed} failed, ${m.duration_s}s → ${m.out_dir}`;
-  } catch (e) { $('status').innerHTML = '<span class="err">' + e + '</span>'; }
+    const m = await (await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(o) })).json();
+    $('status').textContent = single ? ('Edited 1 photo → ' + m.image_out)
+      : `Done: ${m.processed} edited, ${m.failed} failed, ${m.duration_s}s → ${m.out_dir}`;
+  } catch (e) { err(e); }
   $('runBtn').disabled = false;
 }
 
