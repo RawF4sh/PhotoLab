@@ -133,9 +133,21 @@ def _cmd_doctor(args) -> int:
         import torch  # noqa: F401
         from .segment.sam3 import pick_device
 
-        print(f"    torch: available, device(auto) -> {pick_device('auto')}")
-        print("    sam3 backend: usable. Weights fetch from Hugging Face on first run "
-              "(Meta custom SAM License — not MIT; check terms before commercial use).")
+        dev = pick_device("auto")
+        print(f"    torch: available, device(auto) -> {dev}")
+        try:
+            from transformers import Sam3Model, Sam3Processor  # noqa: F401
+
+            print("    sam3 backend: ready (Transformers has SAM 3).")
+            print("      weights are gated — accept the license at "
+                  "https://huggingface.co/facebook/sam3 then `huggingface-cli login` "
+                  "(Meta custom SAM License — not MIT; check terms before commercial use).")
+            if dev == "mps":
+                print("      apple silicon: runs on mps; PYTORCH_ENABLE_MPS_FALLBACK is on for "
+                      "ops MPS lacks.")
+        except Exception as e:
+            print(f"    sam3 backend: torch OK but Transformers>=5.12 w/ SAM 3 missing ({e})")
+            print("    -> `pip install -U '.[sam]'`")
     except Exception as e:
         print(f"    torch/sam3: NOT available ({e})")
         print("    -> stub backend works now; `pip install '.[sam]'` for real SAM 3")

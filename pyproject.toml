@@ -18,8 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# SAM 3 segmentation (GPU-intended). Pulls torch; device auto-detected at runtime.
-sam = ["torch>=2.2", "sam3"]
+# SAM 3 segmentation. Ships inside Transformers (Sam3Model/Sam3Processor, model id
+# facebook/sam3 — gated on HF). Runs on cuda/mps/cpu; device auto-detected at runtime.
+sam = ["transformers>=5.12", "torch>=2.4", "torchvision>=0.19", "accelerate>=1.0"]
 # LLM per-region refine path.
 llm = ["anthropic>=0.40"]
 # Quality/perf accelerators for the apply engine + 16-bit IO.
