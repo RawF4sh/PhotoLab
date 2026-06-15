@@ -172,6 +172,18 @@ def _cmd_styles(args) -> int:
     return 0
 
 
+def _cmd_ui(args) -> int:
+    from .web.app import serve
+
+    try:
+        serve(host=args.host, port=args.port, configs_dir=args.configs_dir or "configs",
+              open_browser=not args.no_open)
+    except ImportError as e:
+        print(f"The UI needs the [ui] extra:  pip install '.[ui]'   ({e})", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="autoedit", description="Open-vocabulary batch photo auto-editor")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -191,6 +203,13 @@ def main(argv: list[str] | None = None) -> int:
     sty_p = sub.add_parser("styles", help="list style profiles")
     sty_p.add_argument("--configs-dir", dest="configs_dir")
     sty_p.set_defaults(func=_cmd_styles)
+
+    ui_p = sub.add_parser("ui", help="launch the local web app")
+    ui_p.add_argument("--host", default="127.0.0.1")
+    ui_p.add_argument("--port", type=int, default=8765)
+    ui_p.add_argument("--no-open", dest="no_open", action="store_true", help="don't open the browser")
+    ui_p.add_argument("--configs-dir", dest="configs_dir")
+    ui_p.set_defaults(func=_cmd_ui)
 
     args = parser.parse_args(argv)
     return args.func(args)
