@@ -80,8 +80,21 @@ def _png_b64(rgb01: np.ndarray, max_px: int = 900) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def check_image(path: str) -> None:
+    """Raise a clear ValueError if `path` isn't an openable supported image."""
+    if not path:
+        raise ValueError("no file selected")
+    if not os.path.isfile(path):
+        raise ValueError(f"file not found: {path}")
+    if not is_supported(path):
+        ext = os.path.splitext(path)[1] or "(none)"
+        raise ValueError(f"not a supported image (extension {ext}); pick a JPG/PNG/TIFF, "
+                         f"not a sidecar like .xmp")
+
+
 def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 900) -> dict:
     """Render a single-image before/after preview + the decision sidecar."""
+    check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = Pipeline.build(cfg)
     out_rgb, result = pipe.process_one(image_path, do_apply=True)
@@ -100,6 +113,7 @@ def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None 
 
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
+    check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = Pipeline.build(cfg)
     out_rgb, result = pipe.process_one(image_path, do_apply=True)
@@ -118,10 +132,13 @@ def pick_path(kind: str = "folder") -> str | None:
     why AutoEdit's UI is a *local* app — the server can read local paths and pop a real dialog,
     which a sandboxed browser cannot do on its own."""
     if sys.platform == "darwin":
-        verb = "choose folder" if kind == "folder" else "choose file"
-        script = f'POSIX path of ({verb} with prompt "Select a {kind} for AutoEdit")'
+        if kind == "folder":
+            verb = 'choose folder with prompt "Select a folder for AutoEdit"'
+        else:  # restrict to images so users can't pick sidecars (.xmp) etc.
+            verb = 'choose file of type {"public.image"} with prompt "Select a photo for AutoEdit"'
         try:
-            r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+            r = subprocess.run(["osascript", "-e", f"POSIX path of ({verb})"],
+                               capture_output=True, text=True)
             return r.stdout.strip() or None if r.returncode == 0 else None
         except FileNotFoundError:
             return None
@@ -132,7 +149,11 @@ def pick_path(kind: str = "folder") -> str | None:
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
-        path = filedialog.askdirectory() if kind == "folder" else filedialog.askopenfilename()
+        if kind == "folder":
+            path = filedialog.askdirectory()
+        else:
+            path = filedialog.askopenfilename(
+                filetypes=[("Images", "*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp"), ("All", "*.*")])
         root.destroy()
         return path or None
     except Exception:
