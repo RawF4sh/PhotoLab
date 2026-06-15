@@ -3,36 +3,39 @@ description: Something went wrong while running AutoEdit
 labels: [bug]
 body:
   - type: input
-    id: lr-version
+    id: version
     attributes:
-      label: Lightroom Classic version
-      placeholder: "e.g. 13.2"
+      label: AutoEdit version
+      placeholder: "e.g. 0.2.0 (autoedit --help / pip show autoedit)"
     validations:
       required: true
   - type: dropdown
     id: os
     attributes:
       label: Operating system
-      options: [macOS (Apple Silicon), macOS (Intel), Windows]
+      options: [macOS (Apple Silicon), macOS (Intel), Linux, Windows]
     validations:
       required: true
   - type: input
-    id: plugin-version
+    id: python
     attributes:
-      label: AutoEdit version
-      placeholder: "e.g. 0.1.0"
+      label: Python version
+      placeholder: "e.g. 3.12"
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Segmentation backend
+      options: [stub, sam3]
+  - type: textarea
+    id: command
+    attributes:
+      label: Command + what happened
+      description: The full `autoedit ...` command, expected vs actual, steps to reproduce.
     validations:
       required: true
   - type: textarea
-    id: what-happened
+    id: output
     attributes:
-      label: What happened?
-      description: What did you expect vs. what occurred? Steps to reproduce.
-    validations:
-      required: true
-  - type: textarea
-    id: log
-    attributes:
-      label: Log excerpt
-      description: Paste relevant lines from autoedit.log (temp dir). No photos needed.
+      label: Error output / sidecar excerpt
+      description: Paste the traceback and/or the relevant `<name>.autoedit.json`. No photos needed.
       render: shell

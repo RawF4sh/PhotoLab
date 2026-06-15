@@ -15,6 +15,7 @@ import os
 import sys
 import tomllib
 
+from . import paths
 from .contract import RunConfig
 
 
@@ -48,7 +49,7 @@ def _read_toml(path: str) -> dict:
 
 
 def load_run_config(args) -> RunConfig:
-    configs_dir = args.configs_dir or "configs"
+    configs_dir = args.configs_dir or paths.configs_dir()
     kw = _flatten(_read_toml(os.path.join(configs_dir, "defaults.toml")))
     kw["rules_path"] = os.path.join(configs_dir, "rules.toml")
     kw["looks_path"] = os.path.join(configs_dir, "looks.toml")
@@ -155,7 +156,7 @@ def _cmd_doctor(args) -> int:
 def _cmd_presets(args) -> int:
     from .concepts import load_concepts
 
-    configs_dir = args.configs_dir or "configs"
+    configs_dir = args.configs_dir or paths.configs_dir()
     presets, _ = load_concepts(os.path.join(configs_dir, "concepts.toml"))
     for name, concepts in presets.items():
         print(f"{name}: {', '.join(concepts)}")
@@ -165,7 +166,7 @@ def _cmd_presets(args) -> int:
 def _cmd_styles(args) -> int:
     from .styles import load_styles
 
-    configs_dir = args.configs_dir or "configs"
+    configs_dir = args.configs_dir or paths.configs_dir()
     styles = load_styles(os.path.join(configs_dir, "styles.toml"))
     for name, s in styles.items():
         print(f"{name}  (look={s.look})\n    {s.brief}")
@@ -176,7 +177,7 @@ def _cmd_ui(args) -> int:
     from .web.app import serve
 
     try:
-        serve(host=args.host, port=args.port, configs_dir=args.configs_dir or "configs",
+        serve(host=args.host, port=args.port, configs_dir=args.configs_dir or paths.configs_dir(),
               open_browser=not args.no_open)
     except ImportError as e:
         print(f"The UI needs the [ui] extra:  pip install '.[ui]'   ({e})", file=sys.stderr)

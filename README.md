@@ -7,6 +7,15 @@
   good-looking results — locally.
 </p>
 
+<p align="center">
+  <a href="../../actions/workflows/ci.yml"><img alt="CI" src="../../actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+</p>
+
+<!-- TODO(launch): replace with a real before/after GIF — this is the product page. -->
+<p align="center"><i>[ before / after demo GIF goes here ]</i></p>
+
 ---
 
 ## Why this exists
@@ -78,11 +87,13 @@ to see your current status.
 
 ## Configure (no code changes)
 
-Everything tunable lives in [configs/](configs/):
-- [rules.toml](configs/rules.toml) — per-region stats → edit-value expressions (the baseline).
-- [looks.toml](configs/looks.toml) — Natural / Punchy / Soft Portrait magnitude shaping.
-- [concepts.toml](configs/concepts.toml) — concept presets + per-concept priority/feather/rule mapping.
-- [defaults.toml](configs/defaults.toml) — run defaults.
+Everything tunable lives in [src/autoedit/configs/](src/autoedit/configs/) (override with a
+local `./configs` dir or `--configs-dir`):
+- [rules.toml](src/autoedit/configs/rules.toml) — per-region stats → edit-value expressions (the baseline).
+- [styles.toml](src/autoedit/configs/styles.toml) — selectable styles (look + default concepts + brief).
+- [looks.toml](src/autoedit/configs/looks.toml) — magnitude shaping + split-tone color grading.
+- [compose.toml](src/autoedit/configs/compose.toml) — radial/linear compositional moves (vignette, sky grad).
+- [concepts.toml](src/autoedit/configs/concepts.toml) — concept presets + per-concept priority/feather/rule mapping.
 
 ## Develop
 

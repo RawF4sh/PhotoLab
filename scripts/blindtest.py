@@ -24,7 +24,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("corpus")
     ap.add_argument("out", nargs="?", default="dist/blindtest")
-    ap.add_argument("--configs-dir", dest="configs_dir", default="configs")
+    ap.add_argument("--configs-dir", dest="configs_dir", default=None)
     args = ap.parse_args()
     args.config = None
     for k in ("preset", "concepts", "look", "intensity", "decider", "llm_mode",

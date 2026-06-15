@@ -13,7 +13,7 @@ import os
 import numpy as np
 from PIL import Image as PILImage
 
-from .. import batch
+from .. import batch, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
 from ..imageio import is_supported, load_image
@@ -27,7 +27,8 @@ _ALLOWED = (
 )
 
 
-def make_cfg(opts: dict, configs_dir: str = "configs") -> RunConfig:
+def make_cfg(opts: dict, configs_dir: str | None = None) -> RunConfig:
+    configs_dir = configs_dir or paths.configs_dir()
     kw: dict = {
         "rules_path": os.path.join(configs_dir, "rules.toml"),
         "looks_path": os.path.join(configs_dir, "looks.toml"),
@@ -46,13 +47,15 @@ def make_cfg(opts: dict, configs_dir: str = "configs") -> RunConfig:
     return RunConfig(**kw)
 
 
-def list_styles(configs_dir: str = "configs") -> list[dict]:
+def list_styles(configs_dir: str | None = None) -> list[dict]:
+    configs_dir = configs_dir or paths.configs_dir()
     styles = load_styles(os.path.join(configs_dir, "styles.toml"))
     return [{"name": s.name, "look": s.look, "brief": s.brief, "concepts": s.concepts}
             for s in styles.values()]
 
 
-def list_presets(configs_dir: str = "configs") -> dict[str, list[str]]:
+def list_presets(configs_dir: str | None = None) -> dict[str, list[str]]:
+    configs_dir = configs_dir or paths.configs_dir()
     presets, _ = load_concepts(os.path.join(configs_dir, "concepts.toml"))
     return presets
 
@@ -75,7 +78,7 @@ def _png_b64(rgb01: np.ndarray, max_px: int = 900) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def preview(image_path: str, opts: dict, configs_dir: str = "configs", max_px: int = 900) -> dict:
+def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 900) -> dict:
     """Render a single-image before/after preview + the decision sidecar."""
     cfg = make_cfg(opts, configs_dir)
     pipe = Pipeline.build(cfg)
@@ -88,6 +91,6 @@ def preview(image_path: str, opts: dict, configs_dir: str = "configs", max_px: i
     }
 
 
-def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str = "configs") -> dict:
+def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     cfg = make_cfg(opts, configs_dir)
     return batch.run(cfg, input_dir, out_dir, do_apply=True)

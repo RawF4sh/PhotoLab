@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub Release
+      id-token: write   # PyPI Trusted Publishing (no token needed if configured)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: |
+          pip install build twine
+          python -m build
+      - name: Check metadata + that configs are bundled
+        run: |
+          twine check dist/*
+          python - <<'PY'
+          import glob, zipfile
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          need = ["autoedit/configs/rules.toml", "autoedit/configs/styles.toml",
+                  "autoedit/web/static/index.html"]
+          missing = [n for n in need if n not in names]
+          assert not missing, f"wheel is missing packaged data: {missing}"
+          print("wheel bundles configs + web static OK")
+          PY
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # Configure a Trusted Publisher on PyPI for this repo, OR set:
+        #   with: { password: ${{ secrets.PYPI_API_TOKEN }} }
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
