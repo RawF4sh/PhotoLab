@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AutoEdit</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #14161a; color: #e8eaed; }
+  header { padding: 14px 20px; border-bottom: 1px solid #2a2e35; font-weight: 600; }
+  header span { color: #8a93a2; font-weight: 400; margin-left: 8px; }
+  .wrap { display: grid; grid-template-columns: 320px 1fr; gap: 0; height: calc(100vh - 53px); }
+  .panel { padding: 18px; overflow: auto; border-right: 1px solid #2a2e35; }
+  .stage { padding: 18px; overflow: auto; }
+  label { display: block; margin: 12px 0 4px; color: #aab2bf; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  input, select, textarea, button { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #313640; background: #1b1e24; color: #e8eaed; font: inherit; }
+  textarea { resize: vertical; min-height: 52px; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .chk input { width: auto; }
+  button { cursor: pointer; background: #2b6cff; border-color: #2b6cff; font-weight: 600; margin-top: 14px; }
+  button.secondary { background: #232831; border-color: #313640; }
+  button:disabled { opacity: .5; cursor: default; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .pair figure { margin: 0; }
+  .pair img { width: 100%; border-radius: 8px; background: #0d0f12; }
+  figcaption { color: #8a93a2; font-size: 12px; margin-bottom: 6px; }
+  pre { background: #1b1e24; border: 1px solid #2a2e35; border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 12px; }
+  .notes li { color: #cfd6e0; }
+  .muted { color: #8a93a2; font-size: 12px; }
+  .err { color: #ff8a8a; }
+</style>
+</head>
+<body>
+<header>AutoEdit <span>open-vocabulary batch editor</span></header>
+<div class="wrap">
+  <div class="panel">
+    <label>Input folder (on this machine)</label>
+    <div class="row">
+      <input id="dir" placeholder="/path/to/photos" />
+      <button class="secondary" style="flex:0 0 70px;margin-top:0" onclick="listImages()">List</button>
+    </div>
+    <label>Image (for preview)</label>
+    <select id="file"></select>
+
+    <label>Style</label>
+    <select id="style"></select>
+    <div id="brief" class="muted"></div>
+
+    <label>Describe what you want (optional)</label>
+    <textarea id="prompt" placeholder="moody, warm, lift shadows, draw the eye to the subject"></textarea>
+
+    <label>Intensity <span id="intensityVal" class="muted"></span></label>
+    <input type="range" id="intensity" min="0" max="1" step="0.05" value="0.8"
+           oninput="document.getElementById('intensityVal').textContent=this.value" />
+
+    <label>Concepts override (optional, comma-separated)</label>
+    <input id="concepts" placeholder="sky, skin, dress, foliage" />
+
+    <label>Segmentation backend</label>
+    <select id="backend"><option value="stub">stub (no GPU)</option><option value="sam3">sam3 (GPU)</option></select>
+
+    <div class="chk"><input type="checkbox" id="compose" checked /><span>Compositional masks (vignette, sky grad)</span></div>
+    <div class="chk"><input type="checkbox" id="cloud" /><span>Use cloud LLM (BYO-key)</span></div>
+    <input id="apikey" placeholder="Anthropic API key (or set env)" style="margin-top:8px;display:none" />
+
+    <button onclick="preview()" id="previewBtn">Preview selected photo</button>
+
+    <label>Output folder</label>
+    <input id="outdir" placeholder="/path/to/output" />
+    <button class="secondary" onclick="runBatch()" id="runBtn">Run batch on folder</button>
+    <div id="status" class="muted" style="margin-top:10px"></div>
+  </div>
+
+  <div class="stage">
+    <div class="pair">
+      <figure><figcaption>Before</figcaption><img id="before" alt="" /></figure>
+      <figure><figcaption>After</figcaption><img id="after" alt="" /></figure>
+    </div>
+    <h3>Why</h3>
+    <ul id="notes" class="notes"></ul>
+    <h3>Decisions</h3>
+    <pre id="sidecar">Pick a folder, list images, choose a style, then Preview.</pre>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+document.getElementById('cloud').addEventListener('change', e => {
+  $('apikey').style.display = e.target.checked ? 'block' : 'none';
+});
+
+function options() {
+  return {
+    dir: $('dir').value, file: $('file').value,
+    style: $('style').value, prompt: $('prompt').value || null,
+    intensity: parseFloat($('intensity').value),
+    concepts: $('concepts').value || null,
+    backend: $('backend').value,
+    compose: $('compose').checked,
+    decider: $('cloud').checked ? 'llm' : 'rules',
+    allow_cloud: $('cloud').checked, api_key: $('apikey').value || null,
+  };
+}
+
+async function loadStyles() {
+  const styles = await (await fetch('/api/styles')).json();
+  const sel = $('style');
+  sel.innerHTML = '';
+  styles.forEach(s => { const o = document.createElement('option'); o.value = s.name; o.textContent = s.name; o.dataset.brief = s.brief; sel.appendChild(o); });
+  sel.onchange = () => { $('brief').textContent = sel.selectedOptions[0]?.dataset.brief || ''; };
+  sel.onchange();
+}
+
+async function listImages() {
+  const dir = $('dir').value;
+  const files = await (await fetch('/api/list?dir=' + encodeURIComponent(dir))).json();
+  const sel = $('file'); sel.innerHTML = '';
+  files.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o); });
+  $('status').textContent = files.length + ' image(s) found.';
+}
+
+async function preview() {
+  if (!$('file').value) { $('status').innerHTML = '<span class="err">List a folder and pick an image first.</span>'; return; }
+  $('previewBtn').disabled = true; $('status').textContent = 'Rendering preview…';
+  try {
+    const r = await (await fetch('/api/preview', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(options()) })).json();
+    $('before').src = r.before; $('after').src = r.after;
+    $('notes').innerHTML = (r.result.notes || []).map(n => '<li>' + n + '</li>').join('') || '<li class="muted">no notes</li>';
+    $('sidecar').textContent = JSON.stringify({ scene: r.result.scene, style: r.result.style, brief: r.result.brief, global: r.result.global_settings, masks: r.result.masks, composition: r.result.composition }, null, 2);
+    $('status').textContent = 'Preview ready.';
+  } catch (e) { $('status').innerHTML = '<span class="err">' + e + '</span>'; }
+  $('previewBtn').disabled = false;
+}
+
+async function runBatch() {
+  if (!$('dir').value || !$('outdir').value) { $('status').innerHTML = '<span class="err">Set input and output folders.</span>'; return; }
+  $('runBtn').disabled = true; $('status').textContent = 'Running batch…';
+  try {
+    const opts = options(); opts.input_dir = $('dir').value; opts.out_dir = $('outdir').value;
+    const m = await (await fetch('/api/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(opts) })).json();
+    $('status').textContent = `Done: ${m.processed} edited, ${m.failed} failed, ${m.duration_s}s → ${m.out_dir}`;
+  } catch (e) { $('status').innerHTML = '<span class="err">' + e + '</span>'; }
+  $('runBtn').disabled = false;
+}
+
+loadStyles();
+</script>
+</body>
+</html>

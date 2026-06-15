@@ -24,6 +24,8 @@ sam = ["torch>=2.2", "sam3"]
 llm = ["anthropic>=0.40"]
 # Quality/perf accelerators for the apply engine + 16-bit IO.
 accel = ["opencv-python>=4.9", "kornia>=0.7", "colour-science>=0.4", "tifffile>=2024.1", "rawpy>=0.19"]
+# Local web app (FastAPI + browser UI): `autoedit ui`.
+ui = ["fastapi>=0.110", "uvicorn>=0.27"]
 # Nicer CLI/progress (optional; argparse fallback always works).
 cli = ["typer>=0.12", "rich>=13"]
 dev = ["pytest>=8"]
@@ -33,6 +35,9 @@ autoedit = "autoedit.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"autoedit.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
