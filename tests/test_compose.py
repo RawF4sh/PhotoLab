@@ -5,6 +5,7 @@ from PIL import Image as PILImage
 
 from autoedit.compose import Move, load_compose, plan, settings_for
 from autoedit.contract import RunConfig
+from autoedit.paths import config_path
 from autoedit.edit import apply_image, linear_alpha, radial_alpha
 from autoedit.pipeline import Pipeline
 
@@ -25,7 +26,7 @@ def test_linear_alpha_top_gradient():
 
 
 def test_load_and_settings_for():
-    moves = load_compose("configs/compose.toml")
+    moves = load_compose(config_path("compose.toml"))
     names = {m.name for m in moves}
     assert {"subject_vignette", "sky_grad"} <= names
     s = settings_for(moves, {"subject": np.ones((4, 4), bool)}, intensity=1.0)

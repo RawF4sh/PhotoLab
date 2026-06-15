@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .paths import config_path
+
 # A bundle of edit-op values. Keys are op names from edit/ops.py OP_NAMES.
 Settings = dict[str, float]
 
@@ -51,12 +53,12 @@ class RunConfig(BaseModel):
     emit: str = "baked"  # "baked" | "editable" | "both"
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
 
-    # paths to config assets (resolved by cli.py)
-    rules_path: str = "configs/rules.toml"
-    looks_path: str = "configs/looks.toml"
-    concepts_path: str = "configs/concepts.toml"
-    styles_path: str = "configs/styles.toml"
-    compose_path: str = "configs/compose.toml"
+    # paths to config assets — resolved to ./configs or the packaged configs (see paths.py)
+    rules_path: str = Field(default_factory=lambda: config_path("rules.toml"))
+    looks_path: str = Field(default_factory=lambda: config_path("looks.toml"))
+    concepts_path: str = Field(default_factory=lambda: config_path("concepts.toml"))
+    styles_path: str = Field(default_factory=lambda: config_path("styles.toml"))
+    compose_path: str = Field(default_factory=lambda: config_path("compose.toml"))
 
 
 class DetectedConcept(BaseModel):

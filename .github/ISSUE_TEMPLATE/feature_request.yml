@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement (a look, a rule tweak, a workflow)
+description: Suggest an improvement (a style, a rule tweak, a workflow)
 labels: [enhancement]
 body:
   - type: textarea
@@ -18,7 +18,9 @@ body:
     attributes:
       label: Area
       options:
-        - label: Rule/look tuning (rules/*.toml)
-        - label: New scene type
-        - label: New mask/region
-        - label: Plugin UI / workflow
+        - label: Rule/style tuning (configs/*.toml)
+        - label: New concept / open-vocab region
+        - label: Compositional moves (radial/linear)
+        - label: Adjustment vocabulary (curves, HSL, color grading)
+        - label: Web UI / workflow
+        - label: SAM 3 / LLM decider

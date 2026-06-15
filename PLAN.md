@@ -59,7 +59,7 @@ segmenter; 12 tests green): every stage above except real SAM 3 (placeholder in
 [segment/sam3.py](src/autoedit/segment/sam3.py), pending the Phase-A spike) and the
 LLM natural-language brief / compositional masks (§4). `RulesDecider` + `LlmDecider` (Claude
 tool-use, refine/propose, cost caps, safe fallback) both exist; `autoedit` CLI
-(`run`/`doctor`/`presets`); config-as-data in [configs/](configs/); Python CI.
+(`run`/`doctor`/`presets`); config-as-data in [src/autoedit/configs/](src/autoedit/configs/); Python CI.
 
 ### 3a. What the edits are made *of* — the adjustment vocabulary
 | Vocabulary | What it is | Role | Status |
@@ -89,7 +89,7 @@ raw input (D); offer XMP export (B) as an optional Lightroom hand-off, honestly 
 global+parametric only.
 
 ## 4. Next feature: style + describe-what-you-want
-- **Styles:** promote [configs/looks.toml](configs/looks.toml) into selectable **style profiles**
+- **Styles:** promote [looks.toml](src/autoedit/configs/looks.toml) into selectable **style profiles**
   (look params + default concept set + a baked style brief), e.g. Natural / Editorial / Warm
   Film / Punchy.
 - **Brief:** a `--prompt "..."` natural-language brief threaded into `LlmDecider` (it already

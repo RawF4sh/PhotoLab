@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image as PILImage
 
 from autoedit.contract import RunConfig
+from autoedit.paths import config_path
 from autoedit.pipeline import Pipeline
 from autoedit.styles import Style, combine_brief, load_styles, style_for
 
@@ -19,7 +20,7 @@ def _make(path):
 
 
 def test_styles_load():
-    styles = load_styles("configs/styles.toml")
+    styles = load_styles(config_path("styles.toml"))
     assert "natural" in styles and "editorial" in styles
     assert styles["natural"].look == "natural"
     assert styles["editorial"].brief  # non-empty

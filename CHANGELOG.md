@@ -22,8 +22,21 @@ Python tool. Full rationale + design in the approved plan
   mask feather, priority compositing, identity no-op.
 - `autoedit` CLI (`run` / `doctor` / `presets`), batch orchestrator with per-image error
   isolation + `--resume` + run manifest, sidecar JSON with "why" notes.
-- Config-as-data in `configs/` (rules, looks, concepts, defaults); zero-dependency test
-  runner (`tests/run_all.py`, 12 tests passing); Python CI.
+- Config-as-data (rules, looks, concepts, defaults); zero-dependency test runner
+  (`tests/run_all.py`); Python CI.
+- **Styles + brief** (`styles.toml`, `--style`/`--prompt`): pick a look + describe intent
+  instead of training on a catalog; brief threaded to the LLM decider.
+- **Adjustment vocabulary**: filmic curve, targeted HSL (skin/green/blue), color grading
+  (split-tone); styles inject global curve + grade.
+- **Compositional masks** (`compose.toml`, `edit/mask.py`): radial vignette + linear sky
+  grad placed by reasoning about the scene; `--no-compose`.
+- **BYO-key cloud consent**: the LLM path is gated behind `--allow-cloud` + a key, with a
+  disclosure and transparent fallback to local rules.
+- **Local web app** (`autoedit ui`, `[ui]` extra): FastAPI backend + browser UI over the
+  batch engine (pick folder → style → brief → before/after preview → run).
+- **Packaging**: configs bundled in the package (`paths.py` resolver) so `pip install
+  autoedit` works anywhere; PyPI release workflow; `CONTRIBUTING.md`; refreshed issue
+  templates + `FUNDING.yml`. 40 tests passing.
 
 ### Removed
 - Rust engine (`engine/`), Lua Lightroom plugin (`plugin/`), duplicated `rules/`, Rust
