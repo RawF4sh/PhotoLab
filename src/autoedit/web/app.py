@@ -32,6 +32,10 @@ def create_app(configs_dir: str = "configs"):
     def listing(dir: str = ""):
         return service.list_images(dir)
 
+    @app.get("/api/pick")
+    def pick(kind: str = "folder"):
+        return {"path": service.pick_path(kind)}
+
     @app.post("/api/preview")
     def preview(payload: dict = Body(...)):
         folder, file = payload.get("dir", ""), payload.get("file", "")
@@ -41,6 +45,10 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/run")
     def run(payload: dict = Body(...)):
         return service.run_batch(payload["input_dir"], payload.get("out_dir", "out"), payload, configs_dir)
+
+    @app.post("/api/run-one")
+    def run_one(payload: dict = Body(...)):
+        return service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir)
 
     return app
 
