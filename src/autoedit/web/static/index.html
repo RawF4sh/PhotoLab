@@ -176,6 +176,7 @@ async function preview() {
   $('previewBtn').disabled = true; $('status').textContent = 'Rendering preview…';
   try {
     const r = await (await fetch('/api/preview', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(o) })).json();
+    if (r.error) { err(r.error); $('previewBtn').disabled = false; return; }
     $('before').src = r.before; $('after').src = r.after;
     $('notes').innerHTML = (r.result.notes || []).map(n => '<li>' + n + '</li>').join('') || '<li class="muted">no notes</li>';
     $('sidecar').textContent = JSON.stringify({ scene: r.result.scene, style: r.result.style, brief: r.result.brief, global: r.result.global_settings, masks: r.result.masks, composition: r.result.composition }, null, 2);
@@ -194,6 +195,7 @@ async function run() {
   $('runBtn').disabled = true; $('status').textContent = 'Working…';
   try {
     const m = await (await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(o) })).json();
+    if (m.error) { err(m.error); $('runBtn').disabled = false; return; }
     $('status').textContent = single ? ('Edited 1 photo → ' + m.image_out)
       : `Done: ${m.processed} edited, ${m.failed} failed, ${m.duration_s}s → ${m.out_dir}`;
   } catch (e) { err(e); }

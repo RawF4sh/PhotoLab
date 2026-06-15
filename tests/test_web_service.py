@@ -59,3 +59,16 @@ def test_run_one_writes_outputs(tmp_path):
     res = service.run_one(str(p), str(out_dir), {"style": "natural", "backend": "stub"})
     assert os.path.exists(res["image_out"]) and os.path.exists(res["sidecar"])
     assert res["result"]["image"] == "one.jpg"
+
+
+def test_check_image_rejects_non_image_and_missing(tmp_path):
+    import pytest
+
+    xmp = tmp_path / "3D6A1365.xmp"
+    xmp.write_text("<x:xmpmeta/>")
+    with pytest.raises(ValueError):
+        service.check_image(str(xmp))          # sidecar, not an image
+    with pytest.raises(ValueError):
+        service.check_image(str(tmp_path / "missing.jpg"))
+    with pytest.raises(ValueError):
+        service.run_one(str(xmp), str(tmp_path / "o"), {"backend": "stub"})

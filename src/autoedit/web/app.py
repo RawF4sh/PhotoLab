@@ -10,10 +10,17 @@ from . import service
 
 def create_app(configs_dir: str = "configs"):
     from fastapi import Body, FastAPI
-    from fastapi.responses import HTMLResponse
+    from fastapi.responses import HTMLResponse, JSONResponse
 
     app = FastAPI(title="AutoEdit")
     static_dir = os.path.join(os.path.dirname(__file__), "static")
+
+    def guard(fn):
+        """Turn engine errors (bad file, etc.) into a friendly 400 instead of a 500 traceback."""
+        try:
+            return fn()
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -40,15 +47,15 @@ def create_app(configs_dir: str = "configs"):
     def preview(payload: dict = Body(...)):
         folder, file = payload.get("dir", ""), payload.get("file", "")
         path = os.path.join(folder, file) if folder and file else (file or folder)
-        return service.preview(path, payload, configs_dir)
+        return guard(lambda: service.preview(path, payload, configs_dir))
 
     @app.post("/api/run")
     def run(payload: dict = Body(...)):
-        return service.run_batch(payload["input_dir"], payload.get("out_dir", "out"), payload, configs_dir)
+        return guard(lambda: service.run_batch(payload["input_dir"], payload.get("out_dir", "out"), payload, configs_dir))
 
     @app.post("/api/run-one")
     def run_one(payload: dict = Body(...)):
-        return service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir)
+        return guard(lambda: service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir))
 
     return app
 
