@@ -122,12 +122,23 @@ class Sam3Segmenter:
         with torch.no_grad():
             outputs = self._model(**inputs)
 
+        # Run mask post-processing on CPU. torch's MPS backend has aborted (SIGABRT in the
+        # Metal driver) inside bitwise/binary ops on bool masks for some inputs; the heavy
+        # forward stays on the GPU, only the lightweight thresholding/union moves to CPU.
+        items = getattr(outputs, "items", None)
+        if callable(items):
+            for k, v in list(items()):
+                if isinstance(v, torch.Tensor):
+                    outputs[k] = v.to("cpu")
+        sizes = inputs.get("original_sizes")
+        sizes = sizes.to("cpu").tolist() if hasattr(sizes, "to") else sizes
+
         # post_process returns one dict per image; masks are resized to target (== proxy) size.
         results = self._processor.post_process_instance_segmentation(
             outputs,
             threshold=self.score_threshold,
             mask_threshold=self.mask_threshold,
-            target_sizes=inputs.get("original_sizes").tolist(),
+            target_sizes=sizes,
         )[0]
 
         instances: list[tuple[np.ndarray, float]] = []
