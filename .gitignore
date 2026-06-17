@@ -10,6 +10,7 @@ venv/
 
 # AutoEdit run outputs
 out/
+out-*/
 dist/
 *.autoedit.json
 run.json

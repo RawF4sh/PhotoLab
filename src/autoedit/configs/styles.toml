@@ -20,3 +20,8 @@ brief = "high-contrast editorial look, deep shadows, crisp subject separation, s
 look = "soft_portrait"
 concepts = ["subject", "sky", "skin", "foliage"]
 brief = "warm filmic tones, soft contrast, gentle highlight rolloff, golden skin, muted greens"
+
+[dramatic]
+look = "dramatic"
+concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock"]
+brief = "bold cinematic landscape: deep dramatic sky, dehazed mountains, crisp bright snow, lush warm-green foreground, teal-orange grade, rich contrast"

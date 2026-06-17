@@ -35,20 +35,65 @@ clarity    = "4"
 # ────────────────────────── landscape ─────────────────────────
 [landscape.global]
 exposure   = "clamp(-(mean_lum - 0.45) * 1.0, -0.2, 0.2)"
-highlights = "clamp(-highlight_clip * 90, -45, 0)"
-shadows    = "clamp(shadow_clip * 70, 0, 25)"
-vibrance   = "10"
-dehaze     = "if(haze > 0.4, 8, 0)"
+contrast   = "12"
+highlights = "clamp(-highlight_clip * 90, -45, -6)"
+shadows    = "clamp(shadow_clip * 70, 4, 28)"
+whites     = "8"
+blacks     = "-6"
+vibrance   = "12"
+clarity    = "8"
+dehaze     = "if(haze > 0.3, 12, 5)"
 
+# the REAL sky: deepen + pull out whatever cloud/structure is actually there (no fabrication)
 [landscape.sky]
 exposure   = "clamp(-blown_sky * 0.4, -0.3, 0)"
-highlights = "clamp(-blown_sky * 60, -40, 0)"
-saturation = "if(region_sat > 0.7, -8, 6)"
-dehaze     = "if(haze > 0.4, 10, 0)"
+highlights = "clamp(-blown_sky * 60 - 10, -45, -8)"
+contrast   = "14"
+clarity    = "12"
+dehaze     = "if(haze > 0.3, 14, 6)"
+saturation = "if(region_sat > 0.7, -6, 10)"
+hsl_blue_sat = "12"          # richer blue only where the sky actually is blue
 
-[landscape.foliage]
+# dehaze + local contrast to cut atmospheric haze and define ridgelines
+[landscape.mountain]
+dehaze     = "16"
+clarity    = "18"
+contrast   = "10"
 vibrance   = "8"
-saturation = "clamp((0.5 - region_sat) * 20, -6, 10)"
+
+# brighten + crisp + slightly cool, while protecting already-blown snow
+[landscape.snow]
+exposure   = "clamp((0.72 - region_lum) * 0.5, 0, 0.22)"
+whites     = "14"
+highlights = "clamp(-region_clip_high * 40, -22, 0)"
+clarity    = "12"
+contrast   = "8"
+temp       = "-4"
+
+# trees / bushes: lush green
+[landscape.foliage]
+vibrance   = "14"
+saturation = "clamp((0.5 - region_sat) * 20, -6, 12)"
+clarity    = "10"
+hsl_green_sat = "14"
+hsl_green_lum = "6"
+
+# foreground grass: warm golden-green, textured, lifted out of the shadows
+[landscape.grass]
+exposure   = "clamp((mean_lum - region_lum) * 0.3, -0.05, 0.18)"
+vibrance   = "14"
+saturation = "10"
+clarity    = "12"
+temp       = "6"             # warm the grass toward gold
+hsl_green_sat = "16"
+hsl_green_lum = "8"
+
+# water: clarity + a touch of dehaze + richer blue
+[landscape.water]
+clarity    = "12"
+saturation = "10"
+dehaze     = "8"
+hsl_blue_sat = "8"
 
 # ─────────────────────────── other ────────────────────────────
 [other.global]
