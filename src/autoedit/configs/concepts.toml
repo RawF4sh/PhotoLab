@@ -17,7 +17,7 @@ concepts = ["subject", "sky", "skin"]
 concepts = ["skin", "dress", "suit", "sky", "foliage", "flowers"]
 
 [preset.landscape]
-concepts = ["sky", "foliage", "water", "mountain", "rock"]
+concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock"]
 
 # ── per-concept metadata (priority: smaller/specific beats larger/general) ──
 [concept.skin]
@@ -62,26 +62,47 @@ min_coverage = 0.02
 feather_px = 0.004
 rule_region = "foliage"
 
+[concept.snow]
+priority = 55          # snow on a peak should win over the mountain mask beneath it
+min_score = 0.45
+min_coverage = 0.01
+feather_px = 0.005
+rule_region = "snow"
+
 [concept.water]
 priority = 35
 min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.005
-rule_region = "sky"
+rule_region = "water"
+
+[concept.grass]
+priority = 45
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.004
+rule_region = "grass"
+
+[concept.trees]
+priority = 45
+min_score = 0.45
+min_coverage = 0.02
+feather_px = 0.004
+rule_region = "foliage"
 
 [concept.mountain]
 priority = 30
 min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.005
-rule_region = "foliage"
+rule_region = "mountain"
 
 [concept.rock]
 priority = 30
 min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.004
-rule_region = "foliage"
+rule_region = "mountain"
 
 [concept.sky]
 priority = 20
