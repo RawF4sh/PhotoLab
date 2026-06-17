@@ -64,6 +64,8 @@ def load_run_config(args) -> RunConfig:
         "preset": args.preset,
         "look": args.look,
         "intensity": args.intensity,
+        "reference": args.reference,
+        "reference_strength": args.reference_strength,
         "decider": args.decider,
         "allow_cloud": args.allow_cloud,
         "api_key": args.api_key,
@@ -92,6 +94,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--preset", help="concept-set override from concepts.toml")
     p.add_argument("--concepts", help='comma-separated, overrides --preset (e.g. "sky,skin,dress")')
     p.add_argument("--look", help="magnitude profile override (defaults to the style's look)")
+    p.add_argument("--reference", help="reference photo whose look (palette/tone) to match onto the batch")
+    p.add_argument("--reference-strength", dest="reference_strength", type=float,
+                   help="reference-match strength 0..1 (default 0.7)")
     p.add_argument("--intensity", type=float)
     p.add_argument("--decider", choices=["rules", "llm"])
     p.add_argument("--allow-cloud", dest="allow_cloud", action="store_true", default=None,

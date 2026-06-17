@@ -120,7 +120,22 @@ class Pipeline:
                 compositional=[(a, s) for _n, a, s in comp],
             )
 
+        # Optional finishing grade: match the look of a reference photo (degrades safely).
+        ref_note = None
+        if do_apply and out_rgb is not None and cfg.reference:
+            try:
+                from .edit.reference import color_transfer
+
+                ref_proxy = downscale_long_edge(load_image(cfg.reference), 512)
+                out_rgb = color_transfer(out_rgb, ref_proxy.rgb, cfg.reference_strength)
+                ref_note = (f"reference match → {os.path.basename(cfg.reference)} "
+                            f"(strength {cfg.reference_strength:.2f})")
+            except Exception as e:
+                ref_note = f"reference match skipped ({e})"
+
         notes = build_notes(gstats, region_stats, resolved.detected)
+        if ref_note:
+            notes.append(ref_note)
         result = emit.build_result(
             image_name=os.path.basename(path),
             scene=sc.name,
