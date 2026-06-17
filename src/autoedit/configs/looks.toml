@@ -32,11 +32,12 @@ grade_highlights_tint = 2.0
 
 # bold cinematic: strong contrast/clarity/dehaze + a deep teal-orange split-tone
 [dramatic]
-contrast_mul = 1.5
+contrast_mul = 1.45
 vibrance_add = 10.0
 clarity_mul  = 1.6
 dehaze_mul   = 1.5
 curve_add    = 18.0           # punchy filmic S-curve
 grade_shadows_temp = -12.0    # cool/teal shadows
 grade_shadows_tint = 4.0      # nudge shadows toward teal
-grade_highlights_temp = 8.0   # warm highlights
+grade_highlights_temp = 11.0  # warmer, more golden highlights
+grade_highlights_tint = 2.0   # a touch of gold in the highlights

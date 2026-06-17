@@ -24,8 +24,9 @@ from ..styles import load_styles
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
 _ALLOWED = (
-    "style", "prompt", "preset", "look", "intensity", "decider", "allow_cloud", "api_key",
-    "backend", "device", "out_format", "quality", "emit", "compose",
+    "style", "prompt", "preset", "look", "intensity", "reference", "reference_strength",
+    "decider", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
+    "emit", "compose",
 )
 
 

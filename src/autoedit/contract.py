@@ -31,6 +31,10 @@ class RunConfig(BaseModel):
     look: str | None = None  # magnitude profile override; defaults to the style's look
     intensity: float = 0.8
 
+    # reference-style color match (optional): grade the result toward an example image's look
+    reference: str | None = None  # path to a reference photo whose palette/tone to match
+    reference_strength: float = 0.7  # 0 = off, 1 = full match
+
     # decision
     decider: str = "rules"  # "rules" | "llm"
     allow_cloud: bool = False  # explicit consent required to use the cloud LLM (BYO-key)

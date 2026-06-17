@@ -78,9 +78,11 @@ class Sam3Segmenter:
             self._processor = Sam3Processor.from_pretrained(self.model_id)
         except Exception as exc:  # pragma: no cover - network/auth, only with the sam extra
             raise RuntimeError(
-                f"Could not load SAM 3 weights ('{self.model_id}'). The repo is gated: accept the "
-                "license at https://huggingface.co/facebook/sam3 and authenticate "
-                "(`huggingface-cli login` or set HF_TOKEN), then retry."
+                f"Could not load SAM 3 weights ('{self.model_id}'): {exc}. "
+                "If this is auth/403: the repo is gated — accept the license at "
+                "https://huggingface.co/facebook/sam3 and authenticate (`huggingface-cli login` "
+                "or HF_TOKEN). If it's a network error and the weights are already cached, set "
+                "HF_HUB_OFFLINE=1 to load from cache."
             ) from exc
 
     def segment(self, img: Image, concepts: list[str]) -> list[RegionMask]:
