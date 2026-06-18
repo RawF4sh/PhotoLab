@@ -221,7 +221,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
           <p class="muted" style="margin:8px 0 18px">or use a picker — JPG, PNG, TIFF · RAW coming soon</p>
           <div class="row" style="justify-content:center;gap:10px">
             <button class="btn primary" onclick="event.stopPropagation();pickFolder()">Choose folder…</button>
-            <button class="btn" onclick="event.stopPropagation();go('setup')">Choose a single photo</button>
+            <button class="btn" onclick="event.stopPropagation();pickSingle()">Choose a single photo</button>
           </div>
           <div class="note" style="display:inline-flex;margin-top:22px"><span>🔒</span> Runs locally. Your photos never leave your machine unless you opt in to the cloud brief planner.</div>
         </div>
@@ -425,12 +425,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 const $ = s => document.querySelector(s);
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
 
+/* ---- live app state (real photos when served) --------------------------- */
+const STATE={served:false,dir:null,mode:'folder',files:[],sel:0,style:'natural',intensity:0.8,preview:null};
+const real=()=>STATE.files.length>0;
+const thumbURL=(p,px=360)=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p);
+const joinPath=(d,f)=>d?(d.replace(/\/+$/,'')+'/'+f):f;
+
 /* ---- mock data ---------------------------------------------------------- */
 const STEPS=[['home','Import'],['setup','Setup'],['concepts','Concepts'],['preview','Preview'],['running','Run'],['review','Review']];
 const STYLES=[
-  ['Natural','True-to-life, balanced','#6ea8ff'],['Editorial','High-contrast, crisp','#b98bff'],
-  ['Warm Film','Golden, soft rolloff','#ffb877'],['Punchy Landscape','Deep skies, vivid','#4fd1a0'],
-  ['Clean Portrait','Flattering, subtle','#ff9bb0'],['Moody Cinematic','Teal-orange grade','#5fb6d6']];
+  ['Natural','True-to-life, balanced','#6ea8ff','natural'],['Editorial','High-contrast, crisp','#b98bff','editorial'],
+  ['Warm Film','Golden, soft rolloff','#ffb877','warm_film'],['Punchy Landscape','Deep skies, vivid','#4fd1a0','dramatic'],
+  ['Clean Portrait','Flattering, subtle','#ff9bb0','natural'],['Moody Cinematic','Teal-orange grade','#5fb6d6','dramatic']];
 const LOOKS=['overcast','bluesky','sunset','forest','lake','glacier'];
 const PHOTOS=Array.from({length:12},(_,i)=>({n:i+1,name:`3D6A${1738+i*7}.JPG`,look:LOOKS[i%LOOKS.length],
   status:['done','done','review','done','done','fail','done','done','done','review','done','done'][i]}));
@@ -493,10 +499,10 @@ function renderStepper(){const idx=STEPS.findIndex(s=>s[0]===cur);
 function onEnter(id){
   const sc=document.querySelector(`.screen[data-screen="${id}"]`);
   requestAnimationFrame(()=>sc&&sc.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);}));
-  if(id==='setup'){photoInto($('#setup-prev'),'overcast');}
-  if(id==='concepts'){baInto($('#concept-ba'),'overcast');drawMask();}
-  if(id==='preview'){baInto($('#prev-ba'),'overcast');initSplit($('#prev-ba'));}
-  if(id==='running'){photoInto($('#run-thumb'),'bluesky');}
+  if(id==='setup'&&!real()){photoInto($('#setup-prev'),'overcast');}
+  if(id==='concepts'){drawMask();if(!STATE.preview)baInto($('#concept-ba'),'overcast');}
+  if(id==='preview'){initSplit($('#prev-ba'));if(!STATE.preview)baInto($('#prev-ba'),'overcast');}
+  if(id==='running'&&!real()){photoInto($('#run-thumb'),'bluesky');}
 }
 
 /* ---- render mock UI ----------------------------------------------------- */
@@ -508,17 +514,30 @@ function recentCard(name,n,style,when){const c=el('div','card');c.style.cssText=
 function renderHome(){const r=$('#recent');r.innerHTML='';
   [['Alaska — Summer 2026',1238,'Punchy Landscape','2d ago'],['Wedding · Bennett',412,'Clean Portrait','5d ago'],['Iceland ring road',863,'Moody Cinematic','1w ago']]
   .forEach(p=>r.appendChild(recentCard(...p)));}
-function renderRail(){const r=$('#rail');r.innerHTML='';$('#imp-count').textContent=PHOTOS.length+' photos';
+function renderRail(){const r=$('#rail');r.innerHTML='';
+  if(real()){const items=STATE.files.slice(0,60);
+    $('#imp-count').textContent=STATE.files.length+' photos'+(STATE.files.length>60?' (60 shown)':'');
+    items.forEach((p,i)=>{const t=el('div','thumb'+(i===STATE.sel?' sel':''));t.style.height='84px';
+      t.innerHTML=`<div class="no">${i+1}</div><img src="${thumbURL(p.path,160)}" loading="lazy" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"/>`;
+      t.onclick=()=>selectPhoto(i);r.appendChild(t);});
+    return;}
+  $('#imp-count').textContent=PHOTOS.length+' photos';
   PHOTOS.forEach((p,i)=>{const t=el('div','thumb'+(i===0?' sel':''));t.style.height='84px';
     t.innerHTML=`<div class="no">${p.n}</div><div class="st">${badge(p.status)}</div><div class="photo" style="position:absolute;inset:0"></div>`;
     t.onclick=()=>{document.querySelectorAll('#rail .thumb').forEach(x=>x.classList.remove('sel'));t.classList.add('sel');$('#setup-name').textContent=p.name;photoInto($('#setup-prev'),p.look);};
     r.appendChild(t);photoInto(t.querySelector('.photo'),p.look);});}
+function selectPhoto(i){STATE.sel=i;STATE.preview=null;
+  document.querySelectorAll('#rail .thumb').forEach((t,j)=>t.classList.toggle('sel',j===i));
+  const p=STATE.files[i];$('#setup-name').textContent=p.name;
+  const prev=$('#setup-prev');prev.classList.add('photo');
+  prev.innerHTML=`<img src="${thumbURL(p.path,1100)}" style="width:100%;height:100%;object-fit:contain;background:#0c0e12"/>`;}
 function badge(s){const m={done:['b-done','Finished'],review:['b-review','Review'],fail:['b-fail','Failed'],run:['b-run','Editing'],wait:['b-wait','Waiting'],edit:['b-edit','Analyzing']};
   const [c,l]=m[s]||m.wait;return `<span class="badge ${c}"><span class="b-led"></span>${l}</span>`;}
-function renderStyles(){const s=$('#styles');s.innerHTML='';STYLES.forEach((st,i)=>{const c=el('div','card');
-  c.style.cssText='padding:11px;cursor:pointer;'+(i===0?'border-color:rgba(91,124,255,.55);background:var(--grad-soft)':'');
+function renderStyles(){const s=$('#styles');s.innerHTML='';
+  const ON='padding:11px;cursor:pointer;border-color:rgba(91,124,255,.55);background:var(--grad-soft)',OFF='padding:11px;cursor:pointer';
+  STYLES.forEach((st,i)=>{const c=el('div','card');c.style.cssText=i===0?ON:OFF;
   c.innerHTML=`<div style="height:6px;border-radius:99px;background:${st[2]};margin-bottom:9px"></div><b style="font-size:13px">${st[0]}</b><div class="tip" style="margin-top:2px">${st[1]}</div>`;
-  c.onclick=()=>{[...s.children].forEach(x=>x.style.cssText='padding:11px;cursor:pointer');c.style.cssText='padding:11px;cursor:pointer;border-color:rgba(91,124,255,.55);background:var(--grad-soft)';};
+  c.onclick=()=>{[...s.children].forEach(x=>x.style.cssText=OFF);c.style.cssText=ON;STATE.style=st[3];};
   s.appendChild(c);});}
 function renderConcepts(){const c=$('#concepts');c.innerHTML='';CONCEPTS.forEach(([name,conf,col])=>{
   const present=conf>0,on=conf>=70;const chip=el('div','chip'+(on?' on':''));
@@ -561,7 +580,17 @@ function drawMask(){const c=$('#cmask');c.innerHTML=`<svg width="100%" height="1
   <rect x="0" y="64" width="100" height="36" fill="#54d08a"/></svg>`;}
 
 /* ---- workflow actions --------------------------------------------------- */
-function analyze(){go('concepts');}
+async function analyze(){
+  if(!real()){go('concepts');return;}                       // standalone demo → drawn fallback
+  go('concepts');conceptLoading(true);
+  try{
+    const p=STATE.files[STATE.sel];
+    const opts={file:p.path,style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true};
+    const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(opts)})).json();
+    if(res.error){conceptError(res.error);return;}
+    STATE.preview=res;applyPreview(res);
+  }catch(e){conceptError(String(e));}
+}
 function addConcept(){const v=$('#newConcept').value.trim();if(!v)return;const c=$('#concepts');
   const chip=el('div','chip on');chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:#8b9bb5"></span><span class="grow">${v}</span><span class="conf">new</span><span class="ed">✎</span>`;
   chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);$('#newConcept').value='';}
@@ -588,23 +617,74 @@ function log(m){const l=$('#log');l.textContent+=m+'\n';l.scrollTop=l.scrollHeig
 
 /* ---- toggles + dropzone ------------------------------------------------- */
 document.addEventListener('click',e=>{if(e.target.matches('[data-toggle]'))e.target.classList.toggle('on');
+  if(e.target.matches('[data-i]'))STATE.intensity={Subtle:0.5,Balanced:0.8,Strong:1.0}[e.target.textContent]||0.8;
   if(e.target.closest('.seg')&&e.target.tagName==='BUTTON'&&e.target.closest('[id]')?.id!=='stepper'){const seg=e.target.closest('.seg');if(seg.closest('#preview'))return;seg.querySelectorAll('button').forEach(b=>b.classList.remove('on'));e.target.classList.add('on');}});
 const dz=$('#dropzone');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--grad-soft)';});
 dz.addEventListener('dragleave',()=>{dz.style.borderColor='';dz.style.background='';});
-dz.addEventListener('drop',e=>{e.preventDefault();go('setup');});
-dz.addEventListener('click',()=>go('setup'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='';dz.style.background='';pickFolder();});
+dz.addEventListener('click',()=>pickFolder());
 
-/* ---- optional real-backend hooks (no-op when opened as a file) ---------- */
-async function pickFolder(){try{const r=await fetch('/api/pick?kind=folder');const {path}=await r.json();if(path){go('setup');return;}}catch(_){}
-  go('setup');}
-async function tryRealStyles(){try{const s=await(await fetch('/api/styles')).json();if(Array.isArray(s)&&s.length){/* could merge real styles */}}catch(_){}}
+/* ---- real backend wiring (folder/single pickers + live preview) --------- */
+async function pickFolder(){if(!STATE.served){go('setup');return;}
+  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+    const files=await(await fetch('/api/list?dir='+encodeURIComponent(path))).json();
+    if(!files.length){alert('No JPG/PNG/TIFF images found in that folder.');return;}
+    STATE.dir=path;STATE.mode='folder';STATE.preview=null;
+    STATE.files=files.map(f=>({name:f,path:joinPath(path,f)}));STATE.sel=0;
+    renderRail();selectPhoto(0);go('setup');
+  }catch(e){alert('Could not open folder: '+e);}}
+async function pickSingle(){if(!STATE.served){go('setup');return;}
+  try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+    STATE.dir=null;STATE.mode='single';STATE.preview=null;
+    STATE.files=[{name:path.split('/').pop(),path}];STATE.sel=0;
+    renderRail();selectPhoto(0);go('setup');
+  }catch(e){alert('Could not open photo: '+e);}}
+
+const CCOL={sky:'#5b86ff',mountain:'#9b8cff',rock:'#9b8cff',snow:'#7fe0ff',foliage:'#54d08a',trees:'#54d08a',
+  grass:'#a9c34a',water:'#36b5d8',skin:'#ff8aa0',subject:'#ff9d57',background:'#8a93a2'};
+const ccol=n=>CCOL[String(n).toLowerCase()]||'#8b9bb5';
+const fmtVal=(k,v)=>k==='exposure'?(v>=0?'+':'')+(+v).toFixed(2)+' EV':(v>=0?'+':'')+Math.round(v);
+function conceptLoading(){$('#concepts').innerHTML='<div class="row" style="gap:10px;color:var(--ink-3)"><span class="b-led" style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>Segmenting with SAM 3… first run downloads/loads the model (~20–40s)</div>';}
+function conceptError(m){$('#concepts').innerHTML=`<div class="note warn"><span>⚠</span> ${m}</div>`;}
+function setBA(sel,before,after){const n=$(sel),b=n.querySelector('.before'),a=n.querySelector('.after');
+  b.classList.add('photo');b.innerHTML=`<img src="${before}" style="width:100%;height:100%;object-fit:cover"/>`;
+  a.classList.add('photo');a.innerHTML=`<img src="${after}" style="width:100%;height:100%;object-fit:cover"/>`;}
+function applyPreview(res){const r=res.result||{};
+  setBA('#concept-ba',res.before,res.after);setBA('#prev-ba',res.before,res.after);initSplit($('#prev-ba'));
+  // concepts with REAL confidences
+  const c=$('#concepts');c.innerHTML='';const cs=r.concepts||[];
+  if(!cs.length)c.innerHTML='<span class="tip">No concepts detected in this scene.</span>';
+  cs.forEach(d=>{const conf=Math.round((d.score||0)*100),chip=el('div','chip'+(d.present?' on':''));
+    chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:${ccol(d.name)}"></span>
+      <span class="grow" style="text-transform:capitalize">${d.name}</span>
+      <span class="conf"${d.present?'':' style="color:var(--ink-4)"'}>${d.present?conf+'%':'not found'}</span><span class="ed">✎</span>`;
+    chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);});
+  // global adjustments (real values)
+  const g=$('#globals');g.innerHTML='';const gs=r.global_settings||{};let any=false;
+  [['exposure','Exposure'],['contrast','Contrast'],['highlights','Highlights'],['shadows','Shadows'],['whites','Whites'],
+   ['blacks','Blacks'],['temp','White balance'],['vibrance','Vibrance'],['saturation','Saturation'],['dehaze','Dehaze'],
+   ['clarity','Clarity'],['curve','Tone curve'],['sharpen','Sharpen']].forEach(([k,l])=>{if(gs[k]){any=true;
+    g.appendChild(el('div','',`<div style="background:#14171d;border:1px solid var(--line);border-radius:9px;padding:8px 10px"><div class="tip" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em">${l}</div><b style="font-variant-numeric:tabular-nums">${fmtVal(k,gs[k])}</b></div>`));}});
+  if(gs.grade_shadows_temp||gs.grade_highlights_temp){any=true;g.appendChild(el('div','',`<div style="background:#14171d;border:1px solid var(--line);border-radius:9px;padding:8px 10px"><div class="tip" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em">Color grade</div><b>teal / orange</b></div>`));}
+  if(!any)g.innerHTML='<span class="tip">No global changes.</span>';
+  // region adjustments (real masks + ops)
+  const rg=$('#regions');rg.innerHTML='';const ms=r.masks||[];
+  if(!ms.length)rg.innerHTML='<span class="tip">No region edits.</span>';
+  ms.forEach(m=>{const ops=m.ops||{};const desc=Object.entries(ops).filter(([k,v])=>v).slice(0,4).map(([k,v])=>`${k} ${fmtVal(k,v)}`).join(' · ')||'—';
+    rg.appendChild(el('div','',`<div class="row" style="gap:10px;padding:9px 11px;background:#14171d;border:1px solid var(--line);border-radius:10px"><span class="sw" style="width:10px;height:24px;border-radius:4px;background:${ccol(m.target)};flex:none"></span><div><b style="font-size:12.5px;text-transform:capitalize">${m.target}</b><div class="tip">${desc}</div></div></div>`));});
+  // why — the real sidecar notes
+  $('#why').innerHTML=(r.notes||[]).map(w=>`<div class="row" style="gap:9px;margin-bottom:8px;align-items:flex-start"><span style="color:var(--accent)">•</span><span style="font-size:12.5px;color:var(--ink-2)">${w}</span></div>`).join('')||'<span class="tip">No notes.</span>';
+  $('#why').style.display='none';
+  document.querySelector('#preview .eyebrow').textContent='Preview · '+(r.style||STATE.style)+(r.scene?' · '+r.scene:'');
+}
 
 /* ---- boot --------------------------------------------------------------- */
 renderHome();renderRail();renderStyles();renderConcepts();renderGlobals();renderRegions();renderWhy();renderFilters();renderReview();renderStepper();
 let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(()=>{
   document.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);});},120);});
-tryRealStyles();
+// detect a live backend → switch from drawn placeholders to your real photos + segmentation
+fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length)STATE.served=true;}).catch(()=>{});
 </script>
 </body>
 </html>

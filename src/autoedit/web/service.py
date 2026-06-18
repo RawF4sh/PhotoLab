@@ -18,7 +18,7 @@ from PIL import Image as PILImage
 from .. import batch, emit, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
-from ..imageio import is_supported, load_image
+from ..imageio import downscale_long_edge, is_supported, load_image
 from ..pipeline import Pipeline
 from ..styles import load_styles
 
@@ -79,6 +79,17 @@ def _png_b64(rgb01: np.ndarray, max_px: int = 900) -> str:
     buf = io.BytesIO()
     pil.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def thumb_bytes(path: str, px: int = 360, quality: int = 82) -> bytes:
+    """A small JPEG of any image on disk (by path) — for the UI's real thumbnails/previews.
+    Cheap: decode + downscale, no pipeline/segmentation."""
+    check_image(path)
+    proxy = downscale_long_edge(load_image(path), px)
+    pil = PILImage.fromarray((np.clip(proxy.rgb, 0.0, 1.0) * 255 + 0.5).astype(np.uint8), "RGB")
+    buf = io.BytesIO()
+    pil.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
 
 
 def check_image(path: str) -> None:
