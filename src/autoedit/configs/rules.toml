@@ -15,93 +15,126 @@
 # Units match the apply engine (src/autoedit/edit/ops.py):
 #   exposure = stops (EV);  contrast/highlights/shadows/whites/blacks/clarity/vibrance/
 #   saturation/dehaze = roughly [-100, 100];  temp/tint = white-balance units.
+#
+# TUNING NOTE: these are an ASSERTIVE baseline modelled on a hand-edited reference set —
+# recover highlights hard, deepen + cool skies, lift shadows for detail, strong clarity/dehaze
+# on mountains/snow, warm the foreground. The look (looks.toml) + intensity scale it; the
+# `soft`/`soft_portrait` looks dial it back for a gentle result.
 
 # ─────────────────────────── people ───────────────────────────
 [people.global]
 exposure   = "clamp(-(mean_lum - 0.45) * 1.2, -0.25, 0.25)"
-highlights = "clamp(-highlight_clip * 80, -40, 0)"
-shadows    = "clamp(shadow_clip * 60, 0, 22)"
-vibrance   = "6"
+contrast   = "14"
+highlights = "clamp(-highlight_clip * 110 - 10, -55, -6)"   # recover blown background sky
+shadows    = "clamp(shadow_clip * 75 + 6, 6, 32)"
+whites     = "clamp(4 - highlight_clip * 60, -20, 6)"
+blacks     = "-8"
+vibrance   = "10"
+clarity    = "8"
+sharpen    = "12"
 
+# protect skin: lift if underexposed, soften texture, a touch of warmth
 [people.skin]
 exposure   = "clamp(0.5 * max(0, mean_lum - region_lum), 0, 0.5)"
 shadows    = "clamp(0.4 * max(0, mean_lum - region_lum) * 40, 0, 16)"
-clarity    = "-6"          # negative clarity softens skin
+clarity    = "-5"
+temp       = "4"
+vibrance   = "6"
 
+# subject: lift out of the background + sharpen
 [people.subject]
-exposure   = "clamp(0.5 * max(0, bg_lum - subj_lum), 0, 0.6)"
-clarity    = "4"
+exposure   = "clamp(0.5 * max(0, bg_lum - subj_lum) + 0.05, 0, 0.6)"
+clarity    = "10"
+contrast   = "8"
+sharpen    = "20"
 
 # ────────────────────────── landscape ─────────────────────────
 [landscape.global]
-exposure   = "clamp(-(mean_lum - 0.45) * 1.0, -0.2, 0.2)"
-contrast   = "12"
-highlights = "clamp(-highlight_clip * 90, -45, -6)"
-shadows    = "clamp(shadow_clip * 70, 4, 28)"
-whites     = "8"
-blacks     = "-6"
-vibrance   = "12"
-clarity    = "8"
-dehaze     = "if(haze > 0.3, 12, 5)"
-
-# the REAL sky: deepen + pull out whatever cloud/structure is actually there (no fabrication)
-[landscape.sky]
-exposure   = "clamp(-blown_sky * 0.4, -0.3, 0)"
-highlights = "clamp(-blown_sky * 60 - 10, -45, -8)"
-contrast   = "14"
+exposure   = "clamp(-(mean_lum - 0.46) * 1.1, -0.25, 0.25)"
+contrast   = "18"
+highlights = "clamp(-highlight_clip * 100 - 12, -52, -8)"   # hard highlight recovery
+shadows    = "clamp(shadow_clip * 85 + 10, 10, 40)"          # always open shadows for detail
+whites     = "clamp(6 - highlight_clip * 70, -22, 8)"
+blacks     = "-10"                                           # deep black point for punch
+vibrance   = "16"
 clarity    = "12"
-dehaze     = "if(haze > 0.3, 14, 6)"
-saturation = "if(region_sat > 0.7, -6, 10)"
-hsl_blue_sat = "12"          # richer blue only where the sky actually is blue
+dehaze     = "if(haze > 0.25, 18, 7)"
+sharpen    = "18"
+
+# the REAL sky: darken + cool + deepen (the signature move) — no fabrication
+[landscape.sky]
+exposure   = "clamp(-0.12 - blown_sky * 0.5, -0.45, -0.08)"  # always give the sky weight
+highlights = "clamp(-blown_sky * 60 - 16, -55, -12)"
+contrast   = "18"
+clarity    = "14"
+dehaze     = "if(haze > 0.25, 18, 8)"
+saturation = "if(region_sat > 0.72, -6, 14)"
+temp       = "-6"                                            # cool the sky
+hsl_blue_sat = "16"                                          # richer blue where it's actually blue
 
 # dehaze + local contrast to cut atmospheric haze and define ridgelines
 [landscape.mountain]
-dehaze     = "16"
-clarity    = "18"
-contrast   = "10"
-vibrance   = "8"
+dehaze     = "22"
+clarity    = "26"
+contrast   = "14"
+shadows    = "8"
+vibrance   = "10"
+sharpen    = "14"
 
-# brighten + crisp + slightly cool, while protecting already-blown snow
+# recover snow texture (never flat white), crisp + slightly cool
 [landscape.snow]
-exposure   = "clamp((0.72 - region_lum) * 0.5, 0, 0.22)"
-whites     = "14"
-highlights = "clamp(-region_clip_high * 40, -22, 0)"
-clarity    = "12"
-contrast   = "8"
+exposure   = "clamp((0.74 - region_lum) * 0.4, -0.08, 0.16)"
+highlights = "clamp(-region_clip_high * 55 - 14, -55, -8)"   # pull snow highlights to hold texture
+whites     = "clamp(-region_clip_high * 45 - 6, -32, 4)"
+clarity    = "18"
+contrast   = "12"
 temp       = "-4"
 
 # trees / bushes: lush green
 [landscape.foliage]
-vibrance   = "14"
-saturation = "clamp((0.5 - region_sat) * 20, -6, 12)"
-clarity    = "10"
-hsl_green_sat = "14"
-hsl_green_lum = "6"
+exposure   = "clamp((mean_lum - region_lum) * 0.3, -0.05, 0.16)"
+vibrance   = "16"
+saturation = "clamp((0.5 - region_sat) * 22, -4, 16)"
+clarity    = "12"
+hsl_green_sat = "18"
+hsl_green_lum = "8"
 
 # foreground grass: warm golden-green, textured, lifted out of the shadows
 [landscape.grass]
-exposure   = "clamp((mean_lum - region_lum) * 0.3, -0.05, 0.18)"
-vibrance   = "14"
-saturation = "10"
-clarity    = "12"
-temp       = "6"             # warm the grass toward gold
-hsl_green_sat = "16"
-hsl_green_lum = "8"
+exposure   = "clamp((mean_lum - region_lum) * 0.35, -0.04, 0.2)"
+vibrance   = "16"
+saturation = "12"
+clarity    = "14"
+temp       = "7"                                             # warm the grass toward gold
+hsl_green_sat = "18"
+hsl_green_lum = "10"
 
-# water: clarity + a touch of dehaze + richer blue
+# water: darken + richer cool blue + clarity
 [landscape.water]
-clarity    = "12"
-saturation = "10"
+exposure   = "-0.06"
+saturation = "12"
+clarity    = "14"
 dehaze     = "8"
-hsl_blue_sat = "8"
+temp       = "-4"
+hsl_blue_sat = "12"
 
 # ─────────────────────────── other ────────────────────────────
 [other.global]
-exposure   = "clamp(-(mean_lum - 0.45) * 1.0, -0.2, 0.2)"
-highlights = "clamp(-highlight_clip * 80, -40, 0)"
-shadows    = "clamp(shadow_clip * 60, 0, 20)"
-vibrance   = "6"
+exposure   = "clamp(-(mean_lum - 0.45) * 1.1, -0.22, 0.22)"
+contrast   = "14"
+highlights = "clamp(-highlight_clip * 100 - 10, -50, -6)"
+shadows    = "clamp(shadow_clip * 80 + 8, 8, 34)"
+whites     = "clamp(4 - highlight_clip * 60, -20, 6)"
+blacks     = "-8"
+vibrance   = "12"
+clarity    = "12"
+dehaze     = "if(haze > 0.3, 12, 4)"
+sharpen    = "16"
 
+# subject (e.g. wildlife): lift + clarity for fur/feature detail
 [other.subject]
-exposure   = "clamp(0.4 * max(0, mean_lum - region_lum), 0, 0.4)"
-clarity    = "3"
+exposure   = "clamp(0.4 * max(0, mean_lum - region_lum) + 0.04, 0, 0.45)"
+clarity    = "14"
+contrast   = "8"
+shadows    = "8"
+sharpen    = "20"

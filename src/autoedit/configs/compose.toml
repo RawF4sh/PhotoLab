@@ -24,3 +24,11 @@ shape = "linear"
 from = "top"                # graduated darken from the top, like an ND grad
 coverage = 0.5
 ops = { exposure = -0.18, highlights = -12 }
+
+[frame_vignette]
+when = "always"             # every frame gets a gentle edge falloff (the finished look)
+shape = "radial"
+target = "outside"          # darken/desaturate the corners, centered on the frame
+feather = 0.45
+radius_scale = 1.1
+ops = { exposure = -0.16, saturation = -3 }

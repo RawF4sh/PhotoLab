@@ -24,6 +24,8 @@ OP_NAMES = (
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
     # targeted HSL — adjust specific hue bands
     "hsl_skin_sat", "hsl_green_sat", "hsl_green_lum", "hsl_blue_sat",
+    # output sharpening (unsharp mask) — applied last
+    "sharpen",
 )
 
 OP_BOUNDS = {
@@ -48,6 +50,7 @@ OP_BOUNDS = {
     "hsl_green_sat": (-100.0, 100.0),
     "hsl_green_lum": (-100.0, 100.0),
     "hsl_blue_sat": (-100.0, 100.0),
+    "sharpen": (-100.0, 100.0),
 }
 
 _GRADE_KEYS = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
@@ -110,6 +113,15 @@ def clarity(rgb: np.ndarray, amt: float) -> np.ndarray:
     detail = l - gaussian_blur(l, sigma)
     mid = np.clip(1.0 - np.abs(l - 0.5) * 2.0, 0, 1)  # protect highlights/shadows
     return _scale_luma(rgb, l + (amt / 100.0) * detail * mid * 2.0, l)
+
+
+def sharpen(rgb: np.ndarray, amt: float) -> np.ndarray:
+    """Unsharp mask on luminance — fine-edge sharpening (vs clarity's broad local contrast).
+    A small-radius high-pass added back to luma; color is preserved via _scale_luma."""
+    l = luma(rgb)
+    sigma = 0.0007 * max(rgb.shape[0], rgb.shape[1]) + 0.8  # small radius → edges, not local contrast
+    detail = l - gaussian_blur(l, sigma)
+    return _scale_luma(rgb, l + (amt / 100.0) * 1.6 * detail, l)
 
 
 def vibrance(rgb: np.ndarray, vib: float, sat: float) -> np.ndarray:
@@ -221,4 +233,6 @@ def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
     if any(settings.get(k, 0.0) for k in _GRADE_KEYS):
         out = color_grade(out, settings.get("grade_shadows_temp", 0.0), settings.get("grade_shadows_tint", 0.0),
                           settings.get("grade_highlights_temp", 0.0), settings.get("grade_highlights_tint", 0.0))
+    if settings.get("sharpen", 0.0):  # output sharpening, last
+        out = sharpen(out, settings["sharpen"])
     return out

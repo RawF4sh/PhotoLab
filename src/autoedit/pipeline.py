@@ -41,6 +41,9 @@ class Pipeline:
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
         presets, meta = load_concepts(cfg.concepts_path)
+        moves = compose.load_compose(cfg.compose_path) if cfg.compose else []
+        if not cfg.vignette:  # vignette is a toggleable subset of the compositional moves
+            moves = [m for m in moves if "vignette" not in m.name]
         return cls(
             cfg=cfg,
             rules=rules_mod.load(cfg.rules_path),
@@ -48,7 +51,7 @@ class Pipeline:
             presets=presets,
             meta=meta,
             styles=load_styles(cfg.styles_path),
-            compose_moves=compose.load_compose(cfg.compose_path) if cfg.compose else [],
+            compose_moves=moves,
             segmenter=make_segmenter(cfg.backend, cfg.device),
             decider=make_decider(cfg),
         )
@@ -100,6 +103,11 @@ class Pipeline:
             thumb=thumb,
         )
         global_settings, region_settings = self.decider.decide(ctx)
+
+        if not cfg.sharpen:  # strip the sharpen op when output sharpening is disabled
+            global_settings.pop("sharpen", None)
+            for s in region_settings.values():
+                s.pop("sharpen", None)
 
         full_hw = (img.height, img.width)
         comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)

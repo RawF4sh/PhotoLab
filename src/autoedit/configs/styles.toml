@@ -8,8 +8,10 @@
 
 [natural]
 look = "natural"
-concepts = ["subject", "sky", "skin"]
-brief = "clean, true-to-life color, balanced exposure, gentle and natural, protect skin tones"
+# broad set so the DEFAULT adapts to any scene: landscapes get sky/mountain/snow/grass/water,
+# portraits get skin/subject. Scene classification + per-region rules do the rest.
+concepts = ["sky", "mountain", "snow", "grass", "water", "skin", "subject"]
+brief = "clean, true-to-life color, balanced exposure, recover highlights, deepen the sky, open shadows for detail, protect skin tones"
 
 [editorial]
 look = "punchy"

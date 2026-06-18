@@ -5,11 +5,16 @@
 # Global-only finishing the look injects (applied once, to the whole image):
 #   curve_add (filmic S-curve), grade_{shadows,highlights}_{temp,tint} (split-tone)
 
+# the default — assertive-but-clean: a gentle filmic S-curve + the cool-shadow/warm-highlight
+# grade that every good edit has, with a light lift on the rule baseline.
 [natural]
-contrast_mul = 1.0
-vibrance_add = 0.0
-clarity_mul  = 1.0
-dehaze_mul   = 1.0
+contrast_mul = 1.15
+vibrance_add = 3.0
+clarity_mul  = 1.15
+dehaze_mul   = 1.15
+curve_add    = 10.0
+grade_shadows_temp = -6.0
+grade_highlights_temp = 6.0
 
 [punchy]
 contrast_mul = 1.4
