@@ -77,6 +77,8 @@ def load_run_config(args) -> RunConfig:
         "analysis_long_edge": args.analysis_long_edge,
         "emit": args.emit,
         "compose": args.compose,
+        "vignette": args.vignette,
+        "sharpen": args.sharpen,
     }
     for k, v in overrides.items():
         if v is not None:
@@ -111,6 +113,10 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--emit", choices=["baked", "editable", "both"])
     p.add_argument("--no-compose", dest="compose", action="store_false", default=None,
                    help="disable radial/linear compositional moves (vignette, sky grad)")
+    p.add_argument("--no-vignette", dest="vignette", action="store_false", default=None,
+                   help="disable the frame/subject vignette")
+    p.add_argument("--no-sharpen", dest="sharpen", action="store_false", default=None,
+                   help="disable output sharpening")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help="segment + decide + sidecar, no baked pixels")

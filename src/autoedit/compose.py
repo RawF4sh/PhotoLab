@@ -64,12 +64,17 @@ def _bbox_norm(mask: np.ndarray) -> tuple[float, float, float, float]:
     return cx, cy, hx, hy
 
 
+def _triggers(m: Move, union: dict[str, np.ndarray]) -> bool:
+    """A move fires when its `when` concept is present, or unconditionally for `when="always"`."""
+    return m.when == "always" or m.when in union
+
+
 def settings_for(moves: list[Move], union: dict[str, np.ndarray], intensity: float) -> dict[str, Settings]:
     """Just the (name -> settings) the moves would apply — cheap, no alpha (for sidecars/dry-run)."""
     return {
         m.name: {k: v * float(intensity) for k, v in m.ops.items()}
         for m in moves
-        if m.when in union
+        if _triggers(m, union)
     }
 
 
@@ -81,10 +86,11 @@ def plan(
 ) -> list[tuple[str, np.ndarray, Settings]]:
     out: list[tuple[str, np.ndarray, Settings]] = []
     for m in moves:
-        if m.when not in union:
+        if not _triggers(m, union):
             continue
         if m.shape == "radial":
-            cx, cy, hx, hy = _bbox_norm(union[m.when])
+            # frame-centered for an unconditional move; otherwise derive from the region
+            cx, cy, hx, hy = (0.5, 0.5, 0.5, 0.5) if m.when not in union else _bbox_norm(union[m.when])
             alpha = radial_alpha(
                 full_hw, cx, cy, hx * m.radius_scale, hy * m.radius_scale,
                 feather=m.feather, inside=(m.target == "inside"),

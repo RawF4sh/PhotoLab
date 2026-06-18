@@ -56,6 +56,8 @@ class RunConfig(BaseModel):
     quality: int = 92
     emit: str = "baked"  # "baked" | "editable" | "both"
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
+    vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff
+    sharpen: bool = True  # output sharpening (unsharp mask); off → no sharpen ops applied
 
     # paths to config assets — resolved to ./configs or the packaged configs (see paths.py)
     rules_path: str = Field(default_factory=lambda: config_path("rules.toml"))
