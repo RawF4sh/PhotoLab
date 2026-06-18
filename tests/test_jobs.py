@@ -1,0 +1,51 @@
+"""Background batch jobs — threaded per-photo runner with live status (stub backend)."""
+
+import os
+import time
+
+import numpy as np
+from PIL import Image as PILImage
+
+from autoedit.web import jobs
+
+
+def _img(p):
+    a = np.zeros((48, 48, 3), np.uint8)
+    a[:24] = [100, 140, 200]   # sky-ish top → stub detects sky → landscape scene
+    a[24:] = [90, 110, 80]
+    PILImage.fromarray(a, "RGB").save(str(p))
+
+
+def _wait(job, timeout=20):
+    t0 = time.time()
+    while job.status not in ("done", "cancelled", "error") and time.time() - t0 < timeout:
+        time.sleep(0.05)
+    return job
+
+
+def test_job_runs_to_done_and_writes_outputs(tmp_path):
+    d = tmp_path / "in"; d.mkdir()
+    for n in ("a.jpg", "b.jpg"):
+        _img(d / n)
+    out = tmp_path / "out"
+    job = jobs.start(str(d), None, str(out), {"backend": "stub", "style": "natural"})
+    _wait(job)
+    snap = jobs.snapshot(job)
+    assert snap["status"] == "done"
+    assert snap["total"] == 2 and snap["processed"] == 2 and snap["failed"] == 0
+    assert snap["done"] + snap["review"] == 2
+    for it in snap["items"]:                         # outputs written + recorded
+        assert it["out"] and os.path.exists(it["out"])
+    assert os.path.isdir(str(out))
+
+
+def test_job_isolates_a_bad_image(tmp_path):
+    d = tmp_path / "in"; d.mkdir()
+    _img(d / "good.jpg")
+    (d / "bad.jpg").write_bytes(b"not an image")    # supported extension, undecodable
+    job = jobs.start(str(d), None, str(tmp_path / "o"), {"backend": "stub"})
+    _wait(job)
+    snap = jobs.snapshot(job)
+    assert snap["status"] == "done" and snap["total"] == 2
+    assert snap["failed"] == 1                       # bad.jpg fails, good.jpg succeeds
+    assert any(i["status"] == "failed" and i["error"] for i in snap["items"])

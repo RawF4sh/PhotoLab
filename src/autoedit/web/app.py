@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from . import service
+from . import jobs, service
 
 
 def create_app(configs_dir: str = "configs"):
@@ -71,6 +71,28 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/run-one")
     def run_one(payload: dict = Body(...)):
         return guard(lambda: service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir))
+
+    # ── background batch jobs (live per-photo progress) ──
+    @app.post("/api/jobs")
+    def start_job(payload: dict = Body(...)):
+        return guard(lambda: jobs.snapshot(jobs.start(
+            payload.get("input_dir"), payload.get("files"), payload.get("out_dir"),
+            payload, configs_dir)))
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str):
+        j = jobs.get(job_id)
+        if j is None:
+            return JSONResponse(status_code=404, content={"error": "unknown job"})
+        return jobs.snapshot(j)
+
+    @app.post("/api/jobs/{job_id}/control")
+    def job_control(job_id: str, payload: dict = Body(...)):
+        j = jobs.get(job_id)
+        if j is None:
+            return JSONResponse(status_code=404, content={"error": "unknown job"})
+        jobs.control(j, payload.get("action", ""))
+        return jobs.snapshot(j)
 
     return app
 
