@@ -343,7 +343,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
             <div class="row" style="gap:8px"><span class="badge b-done"><span class="b-led"></span><span id="c-done">0</span> finished</span>
               <span class="badge b-review"><span class="b-led"></span><span id="c-rev">0</span> review</span>
               <span class="badge b-fail"><span class="b-led"></span><span id="c-fail">0</span> failed</span></div>
-            <div class="row" style="gap:8px"><button class="btn sm" id="pauseBtn" onclick="togglePause()">Pause</button><button class="btn sm" onclick="go('review')">Cancel</button></div>
+            <div class="row" style="gap:8px"><button class="btn sm" id="pauseBtn" onclick="togglePause()">Pause</button><button class="btn sm" onclick="cancelRun()">Cancel</button></div>
           </div>
         </div>
         <div class="card">
@@ -594,9 +594,59 @@ async function analyze(){
 function addConcept(){const v=$('#newConcept').value.trim();if(!v)return;const c=$('#concepts');
   const chip=el('div','chip on');chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:#8b9bb5"></span><span class="grow">${v}</span><span class="conf">new</span><span class="ed">✎</span>`;
   chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);$('#newConcept').value='';}
-let runT=null,paused=false;
-function startRun(){go('running');runBatch();}
-function togglePause(){paused=!paused;$('#pauseBtn').textContent=paused?'Resume':'Pause';}
+let runT=null,paused=false,JOB=null,pollT=null;
+function startRun(){
+  if(!real()||!STATE.served){go('running');runBatch();return;}   // standalone demo fallback
+  go('running');$('#queue').innerHTML='';$('#log').textContent='';$('#run-bar').style.width='0';$('#run-pct').textContent='0%';
+  $('#c-done').textContent=$('#c-rev').textContent=$('#c-fail').textContent='0';
+  const body={style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true};
+  if(STATE.mode==='single')body.files=[STATE.files[STATE.sel].path];else body.input_dir=STATE.dir;
+  fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){alert(j.error);return;}JOB=j;renderQueueReal(j);pollJob();})
+    .catch(e=>alert('Could not start job: '+e));
+}
+const QMAP={waiting:'wait',editing:'run',finished:'done',review:'review',failed:'fail'};
+const cssid=s=>'q_'+String(s).replace(/[^a-z0-9]/gi,'_');
+function renderQueueReal(j){const q=$('#queue');q.innerHTML='';
+  j.items.slice(0,200).forEach(it=>{const row=el('div','row between');row.id=cssid(it.name);
+    row.style.cssText='padding:11px 16px;border-bottom:1px solid var(--line)';
+    row.innerHTML=`<div class="row" style="gap:11px"><img src="${thumbURL(it.src,96)}" style="width:46px;height:32px;border-radius:6px;object-fit:cover"/><b style="font-size:12.5px">${it.name}</b></div><span class="qs">${badge(QMAP[it.status]||'wait')}</span>`;
+    q.appendChild(row);});}
+function pollJob(){clearInterval(pollT);pollT=setInterval(()=>{
+  fetch('/api/jobs/'+JOB.id).then(r=>r.json()).then(j=>{JOB=j;updateRunUI(j);
+    if(['done','cancelled','error'].includes(j.status)){clearInterval(pollT);setTimeout(()=>{renderReviewReal(j);go('review');},600);}
+  }).catch(()=>{});},800);}
+function updateRunUI(j){const pct=j.total?Math.round(j.processed/j.total*100):0;
+  $('#run-bar').style.width=pct+'%';$('#run-pct').textContent=pct+'%';
+  $('#c-done').textContent=j.done;$('#c-rev').textContent=j.review;$('#c-fail').textContent=j.failed;
+  $('#q-summary').textContent=`${j.done} finished · ${j.review} review · ${j.failed} failed`;
+  $('#run-eta').textContent=j.status==='done'?'done':(j.status==='paused'?'paused':(j.eta_s!=null?`~${j.eta_s}s remaining`:'estimating…'));
+  $('#run-sub').textContent='Output → '+j.out_dir;
+  const cur=j.items[j.current];
+  if(cur){$('#run-name').textContent=cur.name;$('#run-thumb').innerHTML=`<img src="${thumbURL(cur.src,160)}" style="width:100%;height:100%;object-fit:cover"/>`;}
+  j.items.slice(0,200).forEach(it=>{const row=document.getElementById(cssid(it.name));if(row)row.querySelector('.qs').innerHTML=badge(QMAP[it.status]||'wait');});}
+function renderReviewReal(j){const g=$('#reviewGrid');g.innerHTML='';
+  document.querySelector('#review .eyebrow').textContent=`Batch complete · ${j.done} edited · saved to ${j.out_dir}`;
+  j.items.slice(0,200).forEach(it=>{const c=el('div','card');c.style.cssText='padding:0;overflow:hidden';
+    const after=it.out?thumbURL(it.out,420):thumbURL(it.src,420);
+    const safe=it.status==='failed'?`<span class="badge b-fail"><span class="b-led"></span>${it.error?'failed':'unreadable'}</span>`
+      :it.warn?`<span class="badge b-review"><span class="b-led"></span>${it.warn}</span>`
+      :`<span class="badge b-done"><span class="b-led"></span>safe</span>`;
+    c.innerHTML=`<div class="photo" style="height:130px"><img class="rv" src="${after}" style="width:100%;height:100%;object-fit:cover"/></div>
+      <div class="sec" style="padding:11px 12px"><div class="row between"><b style="font-size:12.5px">${it.name}</b>${badge(QMAP[it.status]||'wait')}</div>
+      <div class="row between" style="margin-top:9px"><button class="btn sm" data-ba>Before</button><span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${safe}</div></div>`;
+    const img=c.querySelector('.rv'),btn=c.querySelector('[data-ba]');let af=true;
+    btn.onclick=()=>{af=!af;img.src=af?after:thumbURL(it.src,420);btn.textContent=af?'Before':'After';};
+    g.appendChild(c);});
+  $('#filters').innerHTML='';[['All',j.total],['Accepted',j.done],['Needs review',j.review],['Failed',j.failed]]
+    .forEach(([l,n],i)=>{const ch=el('div','chip'+(i===0?' on':''));ch.innerHTML=`${l} <span class="conf">${n}</span>`;
+      ch.onclick=()=>{[...$('#filters').children].forEach(x=>x.classList.remove('on'));ch.classList.add('on');};$('#filters').appendChild(ch);});}
+function togglePause(){
+  if(!JOB){paused=!paused;$('#pauseBtn').textContent=paused?'Resume':'Pause';return;}
+  const act=$('#pauseBtn').textContent==='Pause'?'pause':'resume';
+  fetch('/api/jobs/'+JOB.id+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:act})});
+  $('#pauseBtn').textContent=act==='pause'?'Resume':'Pause';}
+function cancelRun(){if(JOB){fetch('/api/jobs/'+JOB.id+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'cancel'})});}else{clearInterval(runT);go('review');}}
 function runBatch(){let i=0,done=0,rev=0,fail=0,pct=0;const total=PHOTOS.length;const q=$('#queue');q.innerHTML='';
   const rows=PHOTOS.map(p=>{const row=el('div','row between');row.style.cssText='padding:11px 16px;border-bottom:1px solid var(--line)';
     row.innerHTML=`<div class="row" style="gap:11px"><div class="photo" style="width:46px;height:32px;border-radius:6px"></div><b style="font-size:12.5px">${p.name}</b></div><span class="qs">${badge('wait')}</span>`;
