@@ -11,6 +11,7 @@ import io
 import os
 import subprocess
 import sys
+import threading
 
 import numpy as np
 from PIL import Image as PILImage
@@ -48,6 +49,31 @@ def make_cfg(opts: dict, configs_dir: str | None = None) -> RunConfig:
     elif isinstance(concepts, list) and concepts:
         kw["concepts"] = concepts
     return RunConfig(**kw)
+
+
+# A resident segmenter per (backend, device) so the UI doesn't reload the 848M model on every
+# request, and a lock that serializes inference (one GPU model isn't concurrency-safe).
+_SEG_CACHE: dict = {}
+_SEG_LOCK = threading.Lock()
+INFERENCE_LOCK = threading.Lock()
+
+
+def shared_segmenter(cfg: RunConfig):
+    key = (cfg.backend, cfg.device)
+    with _SEG_LOCK:
+        seg = _SEG_CACHE.get(key)
+        if seg is None:
+            from ..segment import make_segmenter
+            seg = make_segmenter(cfg.backend, cfg.device)
+            _SEG_CACHE[key] = seg
+        return seg
+
+
+def build_pipeline(cfg: RunConfig) -> Pipeline:
+    """A Pipeline using the resident (cached) segmenter — one model load per process."""
+    pipe = Pipeline.build(cfg)
+    pipe.segmenter = shared_segmenter(cfg)
+    return pipe
 
 
 def list_styles(configs_dir: str | None = None) -> list[dict]:
@@ -108,11 +134,12 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     """Render a single-image before/after preview + the decision sidecar."""
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
-    pipe = Pipeline.build(cfg)
-    out_rgb, result = pipe.process_one(image_path, do_apply=True)
-    before = load_image(image_path).rgb
+    pipe = build_pipeline(cfg)
+    work = downscale_long_edge(load_image(image_path), 1400)  # preview applies on a proxy → fast
+    with INFERENCE_LOCK:
+        out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
     return {
-        "before": _png_b64(before, max_px),
+        "before": _png_b64(work.rgb, max_px),
         "after": _png_b64(out_rgb, max_px),
         "result": result.model_dump(),
     }
@@ -127,8 +154,9 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
-    pipe = Pipeline.build(cfg)
-    out_rgb, result = pipe.process_one(image_path, do_apply=True)
+    pipe = build_pipeline(cfg)
+    with INFERENCE_LOCK:
+        out_rgb, result = pipe.process_one(image_path, do_apply=True)
     os.makedirs(out_dir, exist_ok=True)
     image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format)
     emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)

@@ -66,7 +66,8 @@ class Pipeline:
             return list(style.concepts)
         return self.presets.get("generic") or ["subject", "sky", "skin"]
 
-    def process_one(self, path: str, do_apply: bool = True) -> tuple[np.ndarray | None, Result]:
+    def process_one(self, path: str, do_apply: bool = True,
+                    image: Image | None = None) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
 
@@ -74,7 +75,9 @@ class Pipeline:
         look = cfg.look or style.look
         brief = combine_brief(style.brief, cfg.prompt)
 
-        img: Image = load_image(path)
+        # `image` lets callers (e.g. the UI preview) pass a pre-downscaled proxy so the full-res
+        # apply stays fast; the batch/export path passes nothing → full resolution.
+        img: Image = image if image is not None else load_image(path)
         proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
 
