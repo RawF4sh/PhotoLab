@@ -169,6 +169,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .ba .tag.l{left:12px} .ba .tag.r{right:12px}
 .mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:.0;transition:opacity .25s}
 .mask-ov.show{opacity:.5}
+/* generating state — the before/after is hidden until the edit is actually rendered */
+.ba .genov{position:absolute;inset:0;display:none;flex-direction:column;gap:13px;align-items:center;justify-content:center;
+  background:rgba(10,12,16,.5);backdrop-filter:blur(2px);color:#fff;font-weight:600;font-size:13px;z-index:6;letter-spacing:.01em}
+.ba.gen .genov{display:flex}
+.ba.gen .handle,.ba.gen .knob,.ba.gen .tag{display:none}
+.spin{width:30px;height:30px;border-radius:50%;border:3px solid rgba(255,255,255,.22);border-top-color:#fff;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* thumbnails */
 .thumb{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line);cursor:pointer;transition:.15s;background:#0c0e12}
@@ -283,6 +290,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
             <div class="mask-ov" id="cmask"></div>
             <div class="handle"></div><div class="knob">⇄</div>
             <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
+            <div class="genov"><span class="spin"></span><span>Generating preview…</span></div>
           </div>
         </main>
         <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
@@ -311,6 +319,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
             <div class="layer before"></div><div class="layer after"></div>
             <div class="handle"></div><div class="knob">⇄</div>
             <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
+            <div class="genov"><span class="spin"></span><span>Generating preview…</span></div>
           </div>
         </main>
         <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
@@ -537,7 +546,7 @@ function renderStyles(){const s=$('#styles');s.innerHTML='';
   const ON='padding:11px;cursor:pointer;border-color:rgba(91,124,255,.55);background:var(--grad-soft)',OFF='padding:11px;cursor:pointer';
   STYLES.forEach((st,i)=>{const c=el('div','card');c.style.cssText=i===0?ON:OFF;
   c.innerHTML=`<div style="height:6px;border-radius:99px;background:${st[2]};margin-bottom:9px"></div><b style="font-size:13px">${st[0]}</b><div class="tip" style="margin-top:2px">${st[1]}</div>`;
-  c.onclick=()=>{[...s.children].forEach(x=>x.style.cssText=OFF);c.style.cssText=ON;STATE.style=st[3];};
+  c.onclick=()=>{[...s.children].forEach(x=>x.style.cssText=OFF);c.style.cssText=ON;STATE.style=st[3];STATE.preview=null;};
   s.appendChild(c);});}
 function renderConcepts(){const c=$('#concepts');c.innerHTML='';CONCEPTS.forEach(([name,conf,col])=>{
   const present=conf>0,on=conf>=70;const chip=el('div','chip'+(on?' on':''));
@@ -657,7 +666,7 @@ function log(m){const l=$('#log');l.textContent+=m+'\n';l.scrollTop=l.scrollHeig
 
 /* ---- toggles + dropzone ------------------------------------------------- */
 document.addEventListener('click',e=>{if(e.target.matches('[data-toggle]'))e.target.classList.toggle('on');
-  if(e.target.matches('[data-i]'))STATE.intensity={Subtle:0.5,Balanced:0.8,Strong:1.0}[e.target.textContent]||0.8;
+  if(e.target.matches('[data-i]')){STATE.intensity={Subtle:0.5,Balanced:0.8,Strong:1.0}[e.target.textContent]||0.8;STATE.preview=null;}
   if(e.target.closest('.seg')&&e.target.tagName==='BUTTON'&&e.target.closest('[id]')?.id!=='stepper'){const seg=e.target.closest('.seg');if(seg.closest('#preview'))return;seg.querySelectorAll('button').forEach(b=>b.classList.remove('on'));e.target.classList.add('on');}});
 const dz=$('#dropzone');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--grad-soft)';});
@@ -691,6 +700,7 @@ function setBA(sel,before,after){const n=$(sel),b=n.querySelector('.before'),a=n
   b.classList.add('photo');b.innerHTML=`<img src="${before}" style="width:100%;height:100%;object-fit:cover"/>`;
   a.classList.add('photo');a.innerHTML=`<img src="${after}" style="width:100%;height:100%;object-fit:cover"/>`;}
 function applyPreview(res){const r=res.result||{};
+  ['#concept-ba','#prev-ba'].forEach(s=>{$(s).classList.remove('gen');$(s).style.setProperty('--split','50%');});
   setBA('#concept-ba',res.before,res.after);setBA('#prev-ba',res.before,res.after);initSplit($('#prev-ba'));
   // concepts with REAL confidences
   const c=$('#concepts');c.innerHTML='';const cs=r.concepts||[];
@@ -718,9 +728,10 @@ function applyPreview(res){const r=res.result||{};
   $('#why').style.display='none';
   document.querySelector('#preview .eyebrow').textContent='Preview · '+(r.style||STATE.style)+(r.scene?' · '+r.scene:'');
 }
-// show the REAL source photo (not a drawing) while SAM 3 segments, then swap in the edit
+// show the source photo under a "Generating preview…" overlay; the before/after only appears
+// once the edit is actually rendered (applyPreview removes .gen)
 function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].path,1000);
-  setBA('#concept-ba',src,src);setBA('#prev-ba',src,src);initSplit($('#prev-ba'));conceptLoading();}
+  ['#concept-ba','#prev-ba'].forEach(s=>{setBA(s,src,src);$(s).classList.add('gen');});conceptLoading();}
 async function loadPreview(){
   if(STATE.loading||!real()||!STATE.served)return;
   STATE.loading=true;previewLoading();
