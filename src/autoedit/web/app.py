@@ -9,7 +9,7 @@ from . import service
 
 
 def create_app(configs_dir: str = "configs"):
-    from fastapi import Body, FastAPI
+    from fastapi import Body, FastAPI, Response
     from fastapi.responses import HTMLResponse, JSONResponse
 
     app = FastAPI(title="AutoEdit")
@@ -45,6 +45,14 @@ def create_app(configs_dir: str = "configs"):
     @app.get("/api/list")
     def listing(dir: str = ""):
         return service.list_images(dir)
+
+    @app.get("/api/thumb")
+    def thumb(path: str, px: int = 360):
+        try:
+            return Response(content=service.thumb_bytes(path, px), media_type="image/jpeg",
+                            headers={"Cache-Control": "max-age=3600"})
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
 
     @app.get("/api/pick")
     def pick(kind: str = "folder"):
