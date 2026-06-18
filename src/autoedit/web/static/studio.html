@@ -426,7 +426,7 @@ const $ = s => document.querySelector(s);
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
 
 /* ---- live app state (real photos when served) --------------------------- */
-const STATE={served:false,dir:null,mode:'folder',files:[],sel:0,style:'natural',intensity:0.8,preview:null};
+const STATE={served:false,dir:null,mode:'folder',files:[],sel:0,style:'natural',intensity:0.8,preview:null,loading:false};
 const real=()=>STATE.files.length>0;
 const thumbURL=(p,px=360)=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p);
 const joinPath=(d,f)=>d?(d.replace(/\/+$/,'')+'/'+f):f;
@@ -500,8 +500,8 @@ function onEnter(id){
   const sc=document.querySelector(`.screen[data-screen="${id}"]`);
   requestAnimationFrame(()=>sc&&sc.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);}));
   if(id==='setup'&&!real()){photoInto($('#setup-prev'),'overcast');}
-  if(id==='concepts'){drawMask();if(!STATE.preview)baInto($('#concept-ba'),'overcast');}
-  if(id==='preview'){initSplit($('#prev-ba'));if(!STATE.preview)baInto($('#prev-ba'),'overcast');}
+  if(id==='concepts'){drawMask();if(!STATE.preview){if(real()&&STATE.served)loadPreview();else baInto($('#concept-ba'),'overcast');}}
+  if(id==='preview'){initSplit($('#prev-ba'));if(!STATE.preview){if(real()&&STATE.served)loadPreview();else baInto($('#prev-ba'),'overcast');}}
   if(id==='running'&&!real()){photoInto($('#run-thumb'),'bluesky');}
 }
 
@@ -580,17 +580,7 @@ function drawMask(){const c=$('#cmask');c.innerHTML=`<svg width="100%" height="1
   <rect x="0" y="64" width="100" height="36" fill="#54d08a"/></svg>`;}
 
 /* ---- workflow actions --------------------------------------------------- */
-async function analyze(){
-  if(!real()){go('concepts');return;}                       // standalone demo → drawn fallback
-  go('concepts');conceptLoading(true);
-  try{
-    const p=STATE.files[STATE.sel];
-    const opts={file:p.path,style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true};
-    const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(opts)})).json();
-    if(res.error){conceptError(res.error);return;}
-    STATE.preview=res;applyPreview(res);
-  }catch(e){conceptError(String(e));}
-}
+function analyze(){go('concepts');}   // onEnter loads the real preview when served
 function addConcept(){const v=$('#newConcept').value.trim();if(!v)return;const c=$('#concepts');
   const chip=el('div','chip on');chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:#8b9bb5"></span><span class="grow">${v}</span><span class="conf">new</span><span class="ed">✎</span>`;
   chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);$('#newConcept').value='';}
@@ -727,6 +717,19 @@ function applyPreview(res){const r=res.result||{};
   $('#why').innerHTML=(r.notes||[]).map(w=>`<div class="row" style="gap:9px;margin-bottom:8px;align-items:flex-start"><span style="color:var(--accent)">•</span><span style="font-size:12.5px;color:var(--ink-2)">${w}</span></div>`).join('')||'<span class="tip">No notes.</span>';
   $('#why').style.display='none';
   document.querySelector('#preview .eyebrow').textContent='Preview · '+(r.style||STATE.style)+(r.scene?' · '+r.scene:'');
+}
+// show the REAL source photo (not a drawing) while SAM 3 segments, then swap in the edit
+function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].path,1000);
+  setBA('#concept-ba',src,src);setBA('#prev-ba',src,src);initSplit($('#prev-ba'));conceptLoading();}
+async function loadPreview(){
+  if(STATE.loading||!real()||!STATE.served)return;
+  STATE.loading=true;previewLoading();
+  try{const p=STATE.files[STATE.sel];
+    const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({file:p.path,style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true})})).json();
+    if(res.error)conceptError(res.error);else{STATE.preview=res;applyPreview(res);}
+  }catch(e){conceptError(String(e));}
+  STATE.loading=false;
 }
 
 /* ---- boot --------------------------------------------------------------- */

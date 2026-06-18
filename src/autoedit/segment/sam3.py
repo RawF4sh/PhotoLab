@@ -73,17 +73,24 @@ class Sam3Segmenter:
                 "`pip install '.[sam]'` (Apple Silicon: see README — uses the mps device)."
             ) from exc
 
+        def _load(offline: bool):
+            model = Sam3Model.from_pretrained(self.model_id, local_files_only=offline)
+            proc = Sam3Processor.from_pretrained(self.model_id, local_files_only=offline)
+            return model.to(self.device).eval(), proc
+
         try:
-            self._model = Sam3Model.from_pretrained(self.model_id).to(self.device).eval()
-            self._processor = Sam3Processor.from_pretrained(self.model_id)
-        except Exception as exc:  # pragma: no cover - network/auth, only with the sam extra
-            raise RuntimeError(
-                f"Could not load SAM 3 weights ('{self.model_id}'): {exc}. "
-                "If this is auth/403: the repo is gated — accept the license at "
-                "https://huggingface.co/facebook/sam3 and authenticate (`huggingface-cli login` "
-                "or HF_TOKEN). If it's a network error and the weights are already cached, set "
-                "HF_HUB_OFFLINE=1 to load from cache."
-            ) from exc
+            # Cached → load fully offline (instant, and never hangs on an HF network ping).
+            self._model, self._processor = _load(True)
+        except Exception:
+            try:
+                self._model, self._processor = _load(False)  # not cached → fetch from HF
+            except Exception as exc:  # pragma: no cover - network/auth, only with the sam extra
+                raise RuntimeError(
+                    f"Could not load SAM 3 weights ('{self.model_id}'): {exc}. "
+                    "If this is auth/403: the repo is gated — accept the license at "
+                    "https://huggingface.co/facebook/sam3 and authenticate (`huggingface-cli "
+                    "login` or HF_TOKEN)."
+                ) from exc
 
     def segment(self, img: Image, concepts: list[str]) -> list[RegionMask]:
         self._ensure_model()

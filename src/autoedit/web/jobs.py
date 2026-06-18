@@ -12,11 +12,10 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .. import emit
 from ..imageio import is_supported
-from ..pipeline import Pipeline
 
 
 def _list_images(d: str) -> list[str]:
@@ -83,11 +82,11 @@ def start(input_dir, files, out_dir, opts, configs_dir=None) -> Job:
 
 def _run(job: Job, configs_dir) -> None:
     try:
-        from .service import make_cfg  # local import avoids any import cycle
+        from .service import INFERENCE_LOCK, build_pipeline, make_cfg  # local import avoids a cycle
 
         cfg = make_cfg(job.opts, configs_dir)
         os.makedirs(job.out_dir, exist_ok=True)
-        pipe = Pipeline.build(cfg)       # one model load for the whole job
+        pipe = build_pipeline(cfg)       # resident model, shared with the preview endpoint
         durs: list[float] = []
         for i, item in enumerate(job.items):
             if job.cancelled:
@@ -102,7 +101,8 @@ def _run(job: Job, configs_dir) -> None:
             item.status = "editing"
             t0 = time.time()
             try:
-                out_rgb, result = pipe.process_one(item.src, do_apply=True)
+                with INFERENCE_LOCK:
+                    out_rgb, result = pipe.process_one(item.src, do_apply=True)
                 image_out, sidecar = emit.output_paths(job.out_dir, item.src, cfg.out_format)
                 emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
                 emit.write_sidecar(result, sidecar)
