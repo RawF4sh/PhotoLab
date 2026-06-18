@@ -22,10 +22,17 @@ def create_app(configs_dir: str = "configs"):
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
 
+    def _page(name: str) -> str:
+        with open(os.path.join(static_dir, name), encoding="utf-8") as fh:
+            return fh.read()
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        with open(os.path.join(static_dir, "index.html"), encoding="utf-8") as fh:
-            return fh.read()
+        return _page("studio.html")          # the premium Studio UI
+
+    @app.get("/classic", response_class=HTMLResponse)
+    def classic() -> str:
+        return _page("index.html")           # the minimal functional UI
 
     @app.get("/api/styles")
     def styles():

@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AutoEdit Studio</title>
+<style>
+/* ============================================================================
+   AutoEdit — Design System (tokens)
+   ========================================================================== */
+:root{
+  color-scheme: dark;
+  /* surfaces */
+  --bg:#0F1115; --bg-2:#14161A; --panel:#1A1D23; --panel-2:#1E222A; --raise:#22262F;
+  --line:#2A2F38; --line-2:#343A45;
+  /* text */
+  --ink:#EDF0F4; --ink-2:#AEB6C2; --ink-3:#7E8794; --ink-4:#5B6470;
+  /* accent */
+  --accent:#3B7DFF; --accent-2:#7C5CFF; --accent-ink:#cddeff;
+  --grad:linear-gradient(135deg,#3B7DFF 0%,#7C5CFF 100%);
+  --grad-soft:linear-gradient(135deg,rgba(59,125,255,.18),rgba(124,92,255,.18));
+  /* status */
+  --ok:#3DD68C; --warn:#F5B23D; --danger:#FF6060; --info:#49C0E8;
+  /* shape */
+  --r-sm:8px; --r:12px; --r-lg:16px; --r-xl:22px;
+  --sh-1:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 12px 40px -12px rgba(0,0,0,.7);
+  --sh-glow:0 0 0 1px rgba(59,125,255,.35), 0 10px 40px -8px rgba(59,125,255,.35);
+  --ease:cubic-bezier(.4,0,.2,1);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:
+  radial-gradient(1200px 600px at 80% -10%, rgba(124,92,255,.10), transparent 60%),
+  radial-gradient(900px 500px at -10% 10%, rgba(59,125,255,.10), transparent 55%),
+  var(--bg);
+  color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  letter-spacing:.1px;overflow:hidden}
+h1,h2,h3,h4{margin:0;font-weight:650;letter-spacing:-.2px}
+button{font-family:inherit}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2c313b;border-radius:20px;border:3px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#3a4150;background-clip:content-box}
+
+/* ============================================================================ Typography */
+.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--ink-3);font-weight:600}
+.muted{color:var(--ink-3)} .dim{color:var(--ink-4)}
+.h-display{font-size:30px;line-height:1.1;font-weight:700}
+
+/* ============================================================================ App shell */
+.app{display:flex;flex-direction:column;height:100vh}
+.topbar{display:flex;align-items:center;gap:18px;height:58px;padding:0 18px;
+  border-bottom:1px solid var(--line);background:rgba(20,22,26,.72);backdrop-filter:blur(14px);z-index:30}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.3px}
+.brand .dot{width:22px;height:22px;border-radius:7px;background:var(--grad);box-shadow:var(--sh-glow)}
+.brand small{color:var(--ink-3);font-weight:500}
+.stepper{display:flex;align-items:center;gap:2px;margin:0 auto}
+.step{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:99px;color:var(--ink-3);
+  font-size:12.5px;font-weight:550;cursor:pointer;border:1px solid transparent;transition:.18s var(--ease);white-space:nowrap}
+.step .n{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;font-size:11px;
+  background:var(--raise);color:var(--ink-3);border:1px solid var(--line-2)}
+.step:hover{color:var(--ink-2);background:#1b1f27}
+.step.active{color:var(--ink);background:var(--grad-soft);border-color:rgba(91,124,255,.4)}
+.step.active .n{background:var(--grad);color:#fff;border-color:transparent}
+.step.done .n{background:rgba(61,214,140,.16);color:var(--ok);border-color:rgba(61,214,140,.35)}
+.step .sep{color:var(--ink-4)}
+.topbar .right{display:flex;align-items:center;gap:10px}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:99px;font-size:12px;
+  border:1px solid var(--line-2);color:var(--ink-2);background:#171a20}
+.pill .led{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.iconbtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--line);background:#171a20;color:var(--ink-2);
+  display:grid;place-items:center;cursor:pointer;transition:.15s}
+.iconbtn:hover{color:var(--ink);border-color:var(--line-2);background:var(--raise)}
+
+.screens{flex:1;position:relative;overflow:hidden}
+.screen{position:absolute;inset:0;opacity:0;visibility:hidden;transform:translateY(8px);
+  transition:opacity .28s var(--ease),transform .28s var(--ease);overflow:auto}
+.screen.active{opacity:1;visibility:visible;transform:none}
+
+/* ============================================================================ Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 16px;border-radius:10px;
+  font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--line-2);background:var(--raise);color:var(--ink);
+  transition:.16s var(--ease)}
+.btn:hover{background:#272c36;border-color:#3c4350}
+.btn.primary{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 8px 24px -8px rgba(59,125,255,.6)}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn.ghost:hover{background:#1b1f27;color:var(--ink)}
+.btn.lg{height:44px;padding:0 22px;font-size:14.5px;border-radius:12px}
+.btn.sm{height:30px;padding:0 11px;font-size:12.5px;border-radius:8px}
+.btn.block{width:100%}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+/* ============================================================================ Panels / cards */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-1)}
+.sec{padding:16px 16px}
+.sec + .sec{border-top:1px solid var(--line)}
+.sec h4{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:12px;font-weight:600}
+.row{display:flex;align-items:center;gap:10px}
+.between{justify-content:space-between}
+.grow{flex:1}
+
+/* ============================================================================ Form controls */
+.input,textarea,select{width:100%;background:#14171d;border:1px solid var(--line-2);color:var(--ink);
+  border-radius:10px;padding:10px 12px;font:inherit;outline:none;transition:.15s}
+.input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,125,255,.18)}
+textarea{resize:vertical;min-height:84px;line-height:1.55}
+label.lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);
+  margin:0 0 7px;font-weight:600}
+
+/* segmented */
+.seg{display:flex;background:#14171d;border:1px solid var(--line-2);border-radius:10px;padding:3px}
+.seg button{flex:1;height:30px;border:0;background:transparent;color:var(--ink-3);font-size:12.5px;font-weight:600;
+  border-radius:7px;cursor:pointer;transition:.15s}
+.seg button.on{background:var(--grad);color:#fff;box-shadow:0 4px 14px -4px rgba(59,125,255,.6)}
+
+/* toggle */
+.toggle{position:relative;width:40px;height:23px;border-radius:99px;background:#2a2f3a;border:1px solid var(--line-2);
+  cursor:pointer;transition:.18s;flex:none}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#cfd5de;transition:.18s var(--ease)}
+.toggle.on{background:var(--grad);border-color:transparent}
+.toggle.on::after{left:19px;background:#fff}
+
+/* slider */
+input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:99px;background:var(--line-2);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:#fff;border:3px solid var(--accent);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+
+/* ============================================================================ Chips */
+.chip{display:inline-flex;align-items:center;gap:9px;padding:8px 12px;border-radius:11px;cursor:pointer;
+  background:#171a20;border:1px solid var(--line-2);transition:.15s;font-size:13px;font-weight:550;user-select:none}
+.chip:hover{border-color:#3d4a66;background:#1b1f28}
+.chip.on{border-color:rgba(91,124,255,.55);background:var(--grad-soft)}
+.chip .sw{width:12px;height:12px;border-radius:4px;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.3) inset}
+.chip .check{width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-2);display:grid;place-items:center;color:transparent;font-size:11px;flex:none}
+.chip.on .check{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip .conf{font-size:10.5px;color:var(--ink-3);padding:2px 6px;border-radius:6px;background:#13161b;border:1px solid var(--line)}
+.chip .ed{opacity:0;color:var(--ink-3);transition:.15s}
+.chip:hover .ed{opacity:1}
+
+/* status badges */
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;
+  border:1px solid transparent;text-transform:capitalize;white-space:nowrap}
+.badge .b-led{width:6px;height:6px;border-radius:50%;background:currentColor}
+.b-wait{color:var(--ink-3);background:#171a20;border-color:var(--line-2)}
+.b-run{color:var(--info);background:rgba(73,192,232,.1);border-color:rgba(73,192,232,.3)}
+.b-edit{color:var(--accent-2);background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.35)}
+.b-done{color:var(--ok);background:rgba(61,214,140,.1);border-color:rgba(61,214,140,.3)}
+.b-review{color:var(--warn);background:rgba(245,178,61,.1);border-color:rgba(245,178,61,.3)}
+.b-fail{color:var(--danger);background:rgba(255,96,96,.1);border-color:rgba(255,96,96,.3)}
+
+/* ============================================================================ Fake photo (mockup imagery) */
+.photo{position:relative;border-radius:inherit;overflow:hidden;background:#0c0e12}
+.photo canvas{width:100%;height:100%;display:block}
+
+/* before/after split */
+.ba{position:relative;border-radius:var(--r);overflow:hidden;user-select:none;cursor:ew-resize;background:#0c0e12}
+.ba .layer{position:absolute;inset:0}
+.ba .after{clip-path:inset(0 0 0 var(--split,50%))}
+.ba .before{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
+.ba .handle{position:absolute;top:0;bottom:0;left:var(--split,50%);width:2px;background:rgba(255,255,255,.85);
+  transform:translateX(-1px);box-shadow:0 0 12px rgba(0,0,0,.6);pointer-events:none}
+.ba .knob{position:absolute;top:50%;left:var(--split,50%);transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;
+  background:rgba(20,22,28,.7);border:2px solid #fff;backdrop-filter:blur(6px);display:grid;place-items:center;color:#fff;pointer-events:none}
+.ba .tag{position:absolute;top:12px;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:700;letter-spacing:.06em;
+  background:rgba(8,9,12,.66);color:#fff;backdrop-filter:blur(4px)}
+.ba .tag.l{left:12px} .ba .tag.r{right:12px}
+.mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:.0;transition:opacity .25s}
+.mask-ov.show{opacity:.5}
+
+/* thumbnails */
+.thumb{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line);cursor:pointer;transition:.15s;background:#0c0e12}
+.thumb:hover{border-color:var(--line-2)}
+.thumb.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.thumb .no{position:absolute;left:6px;top:6px;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;background:rgba(8,9,12,.6);color:#fff}
+.thumb .st{position:absolute;right:6px;top:6px}
+
+/* progress */
+.bar{height:8px;border-radius:99px;background:#14171d;border:1px solid var(--line);overflow:hidden}
+.bar > i{display:block;height:100%;background:var(--grad);border-radius:99px;transition:width .4s var(--ease)}
+
+/* misc layout helpers */
+.wrap{max-width:1320px;margin:0 auto;padding:26px}
+.grid{display:grid;gap:14px}
+.kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.kv:last-child{border:0}
+.kv b{font-weight:600;color:var(--ink)} .kv .v{color:var(--ink-2);font-variant-numeric:tabular-nums}
+.note{display:flex;gap:9px;padding:11px 13px;border-radius:10px;background:#171a20;border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+.note.warn{background:rgba(245,178,61,.07);border-color:rgba(245,178,61,.3);color:#f0cd8f}
+.tip{font-size:12px;color:var(--ink-3)}
+.divline{height:1px;background:var(--line);margin:14px 0}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ===================== TOP BAR ===================== -->
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span> AutoEdit <small>Studio</small></div>
+    <nav class="stepper" id="stepper"></nav>
+    <div class="right">
+      <span class="pill"><span class="led"></span> Runs locally</span>
+      <button class="iconbtn" title="Settings" onclick="go('settings')">⚙</button>
+    </div>
+  </header>
+
+  <div class="screens" id="screens">
+
+    <!-- ===================== 1 · HOME ===================== -->
+    <section class="screen active" data-screen="home">
+      <div class="wrap" style="max-width:1080px">
+        <div style="text-align:center;margin:18px 0 30px">
+          <div class="eyebrow">Open-vocabulary batch photo editing</div>
+          <h1 class="h-display" style="margin-top:10px">Edit a whole shoot, intentionally.</h1>
+          <p class="muted" style="max-width:560px;margin:12px auto 0">Pick a style, describe what you want, target any region by name — AutoEdit masks and grades every photo locally, and tells you why.</p>
+        </div>
+        <div id="dropzone" class="card" style="border-style:dashed;border-width:1.5px;padding:54px;text-align:center;cursor:pointer;transition:.2s">
+          <div style="width:60px;height:60px;border-radius:16px;background:var(--grad-soft);display:grid;place-items:center;margin:0 auto 16px;font-size:26px">📂</div>
+          <h3 style="font-size:18px">Drop a folder of photos</h3>
+          <p class="muted" style="margin:8px 0 18px">or use a picker — JPG, PNG, TIFF · RAW coming soon</p>
+          <div class="row" style="justify-content:center;gap:10px">
+            <button class="btn primary" onclick="event.stopPropagation();pickFolder()">Choose folder…</button>
+            <button class="btn" onclick="event.stopPropagation();go('setup')">Choose a single photo</button>
+          </div>
+          <div class="note" style="display:inline-flex;margin-top:22px"><span>🔒</span> Runs locally. Your photos never leave your machine unless you opt in to the cloud brief planner.</div>
+        </div>
+        <div style="margin-top:30px">
+          <div class="row between" style="margin-bottom:12px"><h4 class="eyebrow">Recent projects</h4><button class="btn ghost sm">View all</button></div>
+          <div class="grid" id="recent" style="grid-template-columns:repeat(3,1fr)"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 2 · SETUP ===================== -->
+    <section class="screen" data-screen="setup">
+      <div style="display:grid;grid-template-columns:208px 1fr 340px;height:100%">
+        <!-- thumbnail rail -->
+        <aside class="panel" style="border-radius:0;border-top:0;border-left:0;display:flex;flex-direction:column;overflow:hidden">
+          <div class="sec row between" style="border-bottom:1px solid var(--line)"><b style="font-size:13px">Imported</b><span class="pill" id="imp-count" style="padding:3px 8px">— photos</span></div>
+          <div class="grid" id="rail" style="grid-template-columns:1fr 1fr;gap:8px;padding:12px;overflow:auto"></div>
+        </aside>
+        <!-- preview -->
+        <main style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto">
+          <div class="row between"><div><div class="eyebrow">Selected</div><h3 id="setup-name" style="margin-top:4px">3D6A1738.JPG</h3></div>
+            <div class="seg" style="width:210px"><button class="on">Fit</button><button>Fill</button><button>100%</button></div></div>
+          <div class="photo card" id="setup-prev" style="flex:1;min-height:340px;border-radius:var(--r-lg)"></div>
+          <div class="note"><span>💡</span> Tip: your style + brief apply to the whole batch. You can override per-photo later in Review.</div>
+        </main>
+        <!-- controls -->
+        <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
+          <div class="sec"><h4>Style profile</h4><div class="grid" id="styles" style="grid-template-columns:1fr 1fr;gap:9px"></div></div>
+          <div class="sec"><h4>Editing brief</h4>
+            <textarea id="brief" placeholder="Example: Make this a warm cinematic landscape — preserve snow detail, deepen the sky, keep greens natural, lift the foreground."></textarea>
+            <p class="tip" style="margin-top:8px">Plain language. The brief steers which regions get treated and how.</p>
+          </div>
+          <div class="sec"><h4>Intensity</h4>
+            <div class="seg"><button data-i>Subtle</button><button data-i class="on">Balanced</button><button data-i>Strong</button></div>
+          </div>
+          <div class="sec">
+            <div class="row between"><div><b style="font-size:13px">Use AI brief planner</b><div class="tip">Reads a thumbnail + stats to plan edits. BYO API key.</div></div><div class="toggle" data-toggle></div></div>
+            <div class="divline"></div>
+            <div class="row between"><div><b style="font-size:13px">Rules-only mode</b><div class="tip">Deterministic, fully offline. No cloud calls.</div></div><div class="toggle on" data-toggle></div></div>
+          </div>
+          <div class="sec"><button class="btn primary lg block" onclick="analyze()">Analyze photos →</button></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ===================== 3 · CONCEPTS ===================== -->
+    <section class="screen" data-screen="concepts">
+      <div style="display:grid;grid-template-columns:1fr 360px;height:100%">
+        <main style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto">
+          <div class="row between">
+            <div><div class="eyebrow">Detected regions · 3D6A1738.JPG</div><h3 style="margin-top:4px">Choose what to edit</h3></div>
+            <div class="row" style="gap:8px">
+              <button class="btn sm" id="maskToggle" onclick="toggleMask()">◐ Mask overlay</button>
+              <div class="seg" style="width:160px"><button>−</button><button class="on">Fit</button><button>+</button></div>
+            </div>
+          </div>
+          <div class="ba" id="concept-ba" style="flex:1;min-height:360px">
+            <div class="layer before"></div><div class="layer after"></div>
+            <div class="mask-ov" id="cmask"></div>
+            <div class="handle"></div><div class="knob">⇄</div>
+            <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
+          </div>
+        </main>
+        <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
+          <div class="sec"><h4>Concepts in this scene</h4>
+            <div class="grid" id="concepts" style="gap:8px"></div>
+          </div>
+          <div class="sec"><h4>Add a concept</h4>
+            <div class="row" style="gap:8px"><input class="input" id="newConcept" placeholder="e.g. dress, glacier, road, hair…"/><button class="btn" onclick="addConcept()">Add</button></div>
+            <p class="tip" style="margin-top:8px">Open-vocabulary — type any noun. SAM 3 will find it if it’s there.</p>
+          </div>
+          <div class="sec"><button class="btn primary lg block" onclick="go('preview')">Preview the edit →</button>
+            <button class="btn ghost block" style="margin-top:8px" onclick="go('setup')">← Back to style</button></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ===================== 4 · PREVIEW ===================== -->
+    <section class="screen" data-screen="preview">
+      <div style="display:grid;grid-template-columns:1fr 372px;height:100%">
+        <main style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto">
+          <div class="row between">
+            <div><div class="eyebrow">Preview · Natural · Balanced</div><h3 style="margin-top:4px">3D6A1738.JPG</h3></div>
+            <div class="seg" style="width:300px"><button onclick="baMode('before')">Before</button><button onclick="baMode('after')">After</button><button class="on" onclick="baMode('split')">Split</button><button onclick="baMode('side')">Side&nbsp;by&nbsp;side</button></div>
+          </div>
+          <div class="ba" id="prev-ba" style="flex:1;min-height:380px">
+            <div class="layer before"></div><div class="layer after"></div>
+            <div class="handle"></div><div class="knob">⇄</div>
+            <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
+          </div>
+        </main>
+        <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
+          <div class="sec"><h4>Global adjustments</h4><div id="globals" class="grid" style="grid-template-columns:1fr 1fr;gap:8px"></div></div>
+          <div class="sec"><h4>Region adjustments</h4><div id="regions" class="grid" style="gap:9px"></div></div>
+          <div class="sec">
+            <div class="row between" style="cursor:pointer" onclick="this.parentNode.classList.toggle('open');document.getElementById('why').style.display=document.getElementById('why').style.display==='none'?'block':'none'">
+              <h4 style="margin:0">Why this edit?</h4><span class="dim">▾</span></div>
+            <div id="why" style="margin-top:12px"></div>
+          </div>
+          <div class="sec">
+            <div class="row" style="gap:8px"><button class="btn primary grow" onclick="startRun()">Run batch</button><button class="btn" onclick="go('concepts')">Adjust</button></div>
+            <div class="row" style="gap:8px;margin-top:8px"><button class="btn ghost grow">Accept</button><button class="btn ghost grow">Apply to similar</button></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ===================== 5 · RUNNING ===================== -->
+    <section class="screen" data-screen="running">
+      <div class="wrap" style="max-width:1080px">
+        <div class="card" style="padding:22px;margin-bottom:18px">
+          <div class="row between" style="margin-bottom:14px">
+            <div class="row" style="gap:14px"><div class="photo" id="run-thumb" style="width:84px;height:60px;border-radius:9px"></div>
+              <div><div class="eyebrow">Now editing</div><h3 id="run-name" style="margin-top:3px">3D6A1751.JPG</h3><span class="tip" id="run-sub">Applying region edits · sky, mountain, snow, grass</span></div></div>
+            <div style="text-align:right"><div class="h-display" id="run-pct" style="font-size:26px">0%</div><div class="tip" id="run-eta">estimating…</div></div>
+          </div>
+          <div class="bar"><i id="run-bar" style="width:0"></i></div>
+          <div class="row between" style="margin-top:14px">
+            <div class="row" style="gap:8px"><span class="badge b-done"><span class="b-led"></span><span id="c-done">0</span> finished</span>
+              <span class="badge b-review"><span class="b-led"></span><span id="c-rev">0</span> review</span>
+              <span class="badge b-fail"><span class="b-led"></span><span id="c-fail">0</span> failed</span></div>
+            <div class="row" style="gap:8px"><button class="btn sm" id="pauseBtn" onclick="togglePause()">Pause</button><button class="btn sm" onclick="go('review')">Cancel</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="sec row between" style="border-bottom:1px solid var(--line)"><b style="font-size:13px">Queue</b><span class="tip" id="q-summary"></span></div>
+          <div id="queue" style="max-height:320px;overflow:auto"></div>
+          <div class="sec" style="border-top:1px solid var(--line)">
+            <div class="row between" style="cursor:pointer" onclick="document.getElementById('log').style.display=document.getElementById('log').style.display==='none'?'block':'none'">
+              <b class="tip">Technical log</b><span class="dim">▾</span></div>
+            <pre id="log" style="display:none;margin:10px 0 0;font-size:11px;color:var(--ink-3);white-space:pre-wrap;font-family:ui-monospace,monospace"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 6 · REVIEW ===================== -->
+    <section class="screen" data-screen="review">
+      <div class="wrap">
+        <div class="row between" style="margin-bottom:16px">
+          <div><div class="eyebrow">Batch complete</div><h2 style="font-size:22px;margin-top:4px">Review & export</h2></div>
+          <div class="row" style="gap:8px">
+            <button class="btn">Export notes (JSON)</button>
+            <button class="btn primary" onclick="alert('Exporting batch…')">Export batch →</button>
+          </div>
+        </div>
+        <div class="row between" style="margin-bottom:14px">
+          <div class="row" id="filters" style="gap:8px"></div>
+          <div class="row" style="gap:8px">
+            <span class="tip">Export as</span>
+            <div class="seg" style="width:230px"><button class="on">JPEG</button><button>TIFF</button><button>Before/After</button></div>
+          </div>
+        </div>
+        <div class="grid" id="reviewGrid" style="grid-template-columns:repeat(4,1fr)"></div>
+      </div>
+    </section>
+
+    <!-- ===================== 7 · SETTINGS ===================== -->
+    <section class="screen" data-screen="settings">
+      <div class="wrap" style="max-width:920px">
+        <h2 style="font-size:22px;margin-bottom:18px">Settings</h2>
+        <div class="grid" style="gap:16px">
+          <div class="card"><div class="sec"><h4>General</h4>
+            <div class="row between" style="margin-bottom:14px"><div><b>Default export folder</b><div class="tip">Where edited photos are written.</div></div><button class="btn sm" onclick="pickFolder()">Choose…</button></div>
+            <div class="kv"><b>Cache location</b><span class="v">~/Library/Caches/autoedit</span></div>
+          </div></div>
+          <div class="card"><div class="sec"><h4>Performance</h4>
+            <div class="row between" style="margin-bottom:14px"><div><b>Compute device</b><div class="tip">Apple M-series GPU detected.</div></div>
+              <div class="seg" style="width:200px"><button class="on">Auto (MPS)</button><button>CPU</button></div></div>
+            <label class="lbl">Analysis resolution — higher = sharper masks, slower</label>
+            <input type="range" min="1024" max="2048" value="1536"/>
+          </div></div>
+          <div class="card"><div class="sec"><h4>SAM / Segmentation</h4>
+            <div class="kv"><b>Backend</b><span class="v">SAM 3 (facebook/sam3) · ready</span></div>
+            <div class="kv"><b>Weights</b><span class="v">cached · 3.1 GB</span></div>
+            <div class="row between" style="margin-top:12px"><div><b>Min mask confidence</b><div class="tip">Drop low-confidence detections.</div></div><span class="v">0.40</span></div>
+            <input type="range" min="0" max="100" value="40" style="margin-top:8px"/>
+          </div></div>
+          <div class="card"><div class="sec"><h4>AI brief planner (optional)</h4>
+            <label class="lbl">Anthropic API key — used only if the planner is on</label>
+            <input class="input" type="password" placeholder="sk-ant-… (stored locally)"/>
+            <div class="note warn" style="margin-top:12px"><span>⚠</span> When the planner is on, a small thumbnail + image stats are sent to your provider. Full-res pixels never leave your machine.</div>
+          </div></div>
+          <div class="card"><div class="sec"><h4>Privacy</h4>
+            <div class="row between"><div><b>Local-only mode</b><div class="tip">Hard-disable all network calls, including the planner.</div></div><div class="toggle on" data-toggle></div></div>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+/* ============================================================================
+   AutoEdit Studio — prototype interactions.
+   Self-contained: fake "photos" are drawn to <canvas>; repetitive UI is rendered
+   from mock arrays. When SERVED by `autoedit ui`, real endpoints (/api/styles,
+   /api/list, /api/preview, /api/pick) progressively enhance the experience.
+   ========================================================================== */
+const $ = s => document.querySelector(s);
+const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
+
+/* ---- mock data ---------------------------------------------------------- */
+const STEPS=[['home','Import'],['setup','Setup'],['concepts','Concepts'],['preview','Preview'],['running','Run'],['review','Review']];
+const STYLES=[
+  ['Natural','True-to-life, balanced','#6ea8ff'],['Editorial','High-contrast, crisp','#b98bff'],
+  ['Warm Film','Golden, soft rolloff','#ffb877'],['Punchy Landscape','Deep skies, vivid','#4fd1a0'],
+  ['Clean Portrait','Flattering, subtle','#ff9bb0'],['Moody Cinematic','Teal-orange grade','#5fb6d6']];
+const LOOKS=['overcast','bluesky','sunset','forest','lake','glacier'];
+const PHOTOS=Array.from({length:12},(_,i)=>({n:i+1,name:`3D6A${1738+i*7}.JPG`,look:LOOKS[i%LOOKS.length],
+  status:['done','done','review','done','done','fail','done','done','done','review','done','done'][i]}));
+const CONCEPTS=[['Sky',96,'#5b86ff'],['Mountains',88,'#9b8cff'],['Snow',83,'#7fe0ff'],['Foliage',79,'#54d08a'],
+  ['Water',0,'#36b5d8'],['Subject',0,'#ff9d57'],['Skin',0,'#ff8aa0'],['Background',71,'#8a93a2'],['Road',0,'#c8b08a'],['Animal',0,'#e0b34a']];
+const GLOBALS=[['Exposure','+0.05 EV'],['Contrast','+18'],['Highlights','−42'],['Shadows','+24'],['Whites','−14'],['Blacks','−10'],
+  ['White balance','−6 cool'],['Vibrance','+22'],['Saturation','+4'],['Dehaze','+18'],['Clarity','+12'],['Tone curve','S +10'],['Color grade','teal/orange'],['Sharpen','+18']];
+const REGIONS=[['Sky','darkened · dehazed · cooled, richer blue','#5b86ff'],['Snow','highlights pulled, texture restored','#7fe0ff'],
+  ['Mountain','dehaze +22 · clarity +26, ridges defined','#9b8cff'],['Foliage','warmed, neon greens tamed','#54d08a'],['Grass','lifted + warm gold, clarity added','#a9c34a']];
+const WHY=['Scene classified as landscape (sky + mountain + snow detected).','Highlights recovered −42 to hold pale sky and snow texture.',
+  'Sky darkened and cooled for weight; clarity/dehaze on mountains defines ridgelines.','Foreground grass warmed and lifted out of shadow.',
+  'Cool-shadow / warm-highlight grade + gentle S-curve + vignette for a finished look.','No skin or people detected → portrait protections skipped.'];
+
+/* ---- fake photo renderer (canvas) -------------------------------------- */
+const PAL={
+  overcast:{sky:['#9aa6b4','#b9c2cc'],land:['#3c4a3a','#5d6b4a'],snow:'#e9eef3',edit:1},
+  bluesky:{sky:['#2f6fd6','#7fb0ee'],land:['#33402f','#566b3f'],snow:'#f3f7fb',edit:1},
+  sunset:{sky:['#3a3760','#e6975a'],land:['#241f2e','#4a3550'],snow:'#f0d9c4',edit:1},
+  forest:{sky:['#7e8a93','#aeb9c2'],land:['#22331f','#3f5a2c'],snow:'#dfe7ec',edit:1},
+  lake:{sky:['#3360b0','#86b6e6'],land:['#2a3b30','#46603f'],snow:'#eef5fb',edit:1},
+  glacier:{sky:['#48597a','#9fb3cf'],land:['#1f2630','#3a4659'],snow:'#eef6fb',edit:1},
+  portrait:{sky:['#7c8a78','#a9b59c'],land:['#5a4636','#7b5f49'],snow:'#efe2d6',edit:1}};
+function draw(cv, look, after){
+  const p=PAL[look]||PAL.overcast, w=cv.width=cv.clientWidth*2, h=cv.height=cv.clientHeight*2, x=cv.getContext('2d');
+  const boost=after?1:0;
+  // sky
+  let g=x.createLinearGradient(0,0,0,h*.62);
+  g.addColorStop(0,shade(p.sky[0],after?-18:0));g.addColorStop(1,shade(p.sky[1],after?-6:0));
+  x.fillStyle=g;x.fillRect(0,0,w,h*.66);
+  // mountains (two ridges)
+  ridge(x,w,h,.58,p.land[0],after); ridge(x,w,h,.50,shade(p.land[0],-8),after,true);
+  // snow caps
+  x.fillStyle=shade(p.snow,after?6:0); snowcaps(x,w,h);
+  // land
+  g=x.createLinearGradient(0,h*.6,0,h);g.addColorStop(0,shade(p.land[1],boost? 6:0));g.addColorStop(1,shade(p.land[0],after?8:0));
+  x.fillStyle=g;x.fillRect(0,h*.6,w,h*.4);
+  // vignette (after only)
+  if(after){const rg=x.createRadialGradient(w/2,h/2,h*.3,w/2,h/2,h*.8);rg.addColorStop(0,'rgba(0,0,0,0)');rg.addColorStop(1,'rgba(0,0,0,.34)');x.fillStyle=rg;x.fillRect(0,0,w,h);}
+  // grain
+}
+function ridge(x,w,h,base,col,after,back){x.fillStyle=shade(col,after?(back?-4:8):0);x.beginPath();x.moveTo(0,h);let y=h*base;x.lineTo(0,y);
+  for(let i=0;i<=w;i+=w/10){y=h*base+Math.sin(i/w*6+(back?1:0))*h*.06-(back?h*.04:0);x.lineTo(i,y);}x.lineTo(w,h);x.closePath();x.fill();}
+function snowcaps(x,w,h){x.globalAlpha=.85;for(let i=0;i<6;i++){const cx=w*(.1+i*.16);x.beginPath();x.moveTo(cx,h*.5);x.lineTo(cx+w*.05,h*.44);x.lineTo(cx+w*.1,h*.52);x.closePath();x.fill();}x.globalAlpha=1;}
+function shade(hex,amt){const n=parseInt(hex.slice(1),16);let r=(n>>16)+amt,g=(n>>8&255)+amt,b=(n&255)+amt;
+  r=Math.max(0,Math.min(255,r));g=Math.max(0,Math.min(255,g));b=Math.max(0,Math.min(255,b));return`rgb(${r},${g},${b})`;}
+function photoInto(node,look,after=true){node.classList.add('photo');node.innerHTML='';const c=el('canvas');c._look=look;c._after=after;node.appendChild(c);
+  requestAnimationFrame(()=>{draw(c,look,after);});}
+function baInto(node,look){const b=node.querySelector('.before'),a=node.querySelector('.after');
+  photoInto(b,look,false);photoInto(a,look,true);}
+
+/* ---- navigation --------------------------------------------------------- */
+let cur='home';
+function go(id){cur=id;document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
+  renderStepper();window.scrollTo?.(0,0);onEnter(id);}
+function renderStepper(){const idx=STEPS.findIndex(s=>s[0]===cur);
+  $('#stepper').innerHTML='';STEPS.forEach((s,i)=>{const b=el('div','step'+(s[0]===cur?' active':(i<idx?' done':'')));
+    b.innerHTML=`<span class="n">${i<idx?'✓':i+1}</span>${s[1]}`;b.onclick=()=>go(s[0]);$('#stepper').appendChild(b);
+    if(i<STEPS.length-1)$('#stepper').appendChild(el('span','sep','›'));});}
+
+function onEnter(id){
+  const sc=document.querySelector(`.screen[data-screen="${id}"]`);
+  requestAnimationFrame(()=>sc&&sc.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);}));
+  if(id==='setup'){photoInto($('#setup-prev'),'overcast');}
+  if(id==='concepts'){baInto($('#concept-ba'),'overcast');drawMask();}
+  if(id==='preview'){baInto($('#prev-ba'),'overcast');initSplit($('#prev-ba'));}
+  if(id==='running'){photoInto($('#run-thumb'),'bluesky');}
+}
+
+/* ---- render mock UI ----------------------------------------------------- */
+function recentCard(name,n,style,when){const c=el('div','card');c.style.cssText='padding:10px;cursor:pointer';
+  c.innerHTML=`<div class="photo" style="height:104px;border-radius:9px"></div>
+    <div class="row between" style="margin-top:10px"><b style="font-size:13px">${name}</b><span class="tip">${when}</span></div>
+    <div class="row between" style="margin-top:3px"><span class="tip">${n} photos</span><span class="badge b-edit">${style}</span></div>`;
+  c.onclick=()=>go('setup');photoInto(c.querySelector('.photo'),LOOKS[(n)%LOOKS.length]);return c;}
+function renderHome(){const r=$('#recent');r.innerHTML='';
+  [['Alaska — Summer 2026',1238,'Punchy Landscape','2d ago'],['Wedding · Bennett',412,'Clean Portrait','5d ago'],['Iceland ring road',863,'Moody Cinematic','1w ago']]
+  .forEach(p=>r.appendChild(recentCard(...p)));}
+function renderRail(){const r=$('#rail');r.innerHTML='';$('#imp-count').textContent=PHOTOS.length+' photos';
+  PHOTOS.forEach((p,i)=>{const t=el('div','thumb'+(i===0?' sel':''));t.style.height='84px';
+    t.innerHTML=`<div class="no">${p.n}</div><div class="st">${badge(p.status)}</div><div class="photo" style="position:absolute;inset:0"></div>`;
+    t.onclick=()=>{document.querySelectorAll('#rail .thumb').forEach(x=>x.classList.remove('sel'));t.classList.add('sel');$('#setup-name').textContent=p.name;photoInto($('#setup-prev'),p.look);};
+    r.appendChild(t);photoInto(t.querySelector('.photo'),p.look);});}
+function badge(s){const m={done:['b-done','Finished'],review:['b-review','Review'],fail:['b-fail','Failed'],run:['b-run','Editing'],wait:['b-wait','Waiting'],edit:['b-edit','Analyzing']};
+  const [c,l]=m[s]||m.wait;return `<span class="badge ${c}"><span class="b-led"></span>${l}</span>`;}
+function renderStyles(){const s=$('#styles');s.innerHTML='';STYLES.forEach((st,i)=>{const c=el('div','card');
+  c.style.cssText='padding:11px;cursor:pointer;'+(i===0?'border-color:rgba(91,124,255,.55);background:var(--grad-soft)':'');
+  c.innerHTML=`<div style="height:6px;border-radius:99px;background:${st[2]};margin-bottom:9px"></div><b style="font-size:13px">${st[0]}</b><div class="tip" style="margin-top:2px">${st[1]}</div>`;
+  c.onclick=()=>{[...s.children].forEach(x=>x.style.cssText='padding:11px;cursor:pointer');c.style.cssText='padding:11px;cursor:pointer;border-color:rgba(91,124,255,.55);background:var(--grad-soft)';};
+  s.appendChild(c);});}
+function renderConcepts(){const c=$('#concepts');c.innerHTML='';CONCEPTS.forEach(([name,conf,col])=>{
+  const present=conf>0,on=conf>=70;const chip=el('div','chip'+(on?' on':''));
+  chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:${col}"></span><span class="grow">${name}</span>
+    ${present?`<span class="conf">${conf}%</span>`:'<span class="conf" style="color:var(--ink-4)">—</span>'}<span class="ed">✎</span>`;
+  chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);});}
+function renderGlobals(){const g=$('#globals');g.innerHTML='';GLOBALS.forEach(([k,v])=>{
+  g.appendChild(el('div','', `<div style="background:#14171d;border:1px solid var(--line);border-radius:9px;padding:8px 10px">
+    <div class="tip" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em">${k}</div>
+    <b style="font-variant-numeric:tabular-nums">${v}</b></div>`));});}
+function renderRegions(){const r=$('#regions');r.innerHTML='';REGIONS.forEach(([name,desc,col])=>{
+  r.appendChild(el('div','', `<div class="row" style="gap:10px;padding:9px 11px;background:#14171d;border:1px solid var(--line);border-radius:10px">
+    <span class="sw" style="width:10px;height:24px;border-radius:4px;background:${col};flex:none"></span>
+    <div><b style="font-size:12.5px">${name}</b><div class="tip">${desc}</div></div></div>`));});}
+function renderWhy(){$('#why').innerHTML=WHY.map(w=>`<div class="row" style="gap:9px;margin-bottom:8px;align-items:flex-start"><span style="color:var(--accent)">•</span><span style="font-size:12.5px;color:var(--ink-2)">${w}</span></div>`).join('');$('#why').style.display='none';}
+function renderFilters(){const f=$('#filters');f.innerHTML='';
+  [['All',12],['Accepted',9],['Needs review',2],['Failed',1]].forEach(([l,n],i)=>{const c=el('div','chip'+(i===0?' on':''));
+   c.innerHTML=`${l} <span class="conf">${n}</span>`;c.onclick=()=>{[...f.children].forEach(x=>x.classList.remove('on'));c.classList.add('on');};f.appendChild(c);});}
+function renderReview(){const g=$('#reviewGrid');g.innerHTML='';PHOTOS.forEach(p=>{const warn=p.status==='review';
+  const c=el('div','card');c.style.cssText='padding:0;overflow:hidden';
+  c.innerHTML=`<div class="photo" style="height:130px"></div>
+   <div class="sec" style="padding:11px 12px">
+     <div class="row between"><b style="font-size:12.5px">${p.name}</b>${badge(p.status)}</div>
+     <div class="row between" style="margin-top:9px">
+       <span class="tip">score ${p.status==='fail'?'—':(82+p.n%14)}</span>
+       ${warn?'<span class="badge b-review" title="Possible clipped highlights"><span class="b-led"></span>halo risk</span>':p.status==='fail'?'<span class="badge b-fail"><span class="b-led"></span>unreadable</span>':'<span class="badge b-done"><span class="b-led"></span>safe</span>'}
+     </div></div>`;
+  g.appendChild(c);photoInto(c.querySelector('.photo'),p.look);});}
+
+/* ---- before/after split drag ------------------------------------------- */
+function initSplit(node){let drag=false;const set=e=>{const r=node.getBoundingClientRect();
+  const x=Math.max(2,Math.min(98,((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width*100));node.style.setProperty('--split',x+'%');};
+  node.onpointerdown=e=>{drag=true;set(e);};window.addEventListener('pointermove',e=>drag&&set(e));window.addEventListener('pointerup',()=>drag=false);}
+function baMode(m){const n=$('#prev-ba');document.querySelectorAll('#preview .seg button').forEach(b=>b.classList.remove('on'));event.target.classList.add('on');
+  n.style.setProperty('--split',m==='before'?'100%':m==='after'?'0%':'50%');}
+let maskOn=false;
+function toggleMask(){maskOn=!maskOn;$('#cmask').classList.toggle('show',maskOn);$('#maskToggle').classList.toggle('primary',maskOn);}
+function drawMask(){const c=$('#cmask');c.innerHTML=`<svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100">
+  <rect x="0" y="0" width="100" height="42" fill="#5b86ff"/><polygon points="0,58 18,46 40,56 60,44 82,55 100,50 100,66 0,66" fill="#9b8cff"/>
+  <rect x="0" y="64" width="100" height="36" fill="#54d08a"/></svg>`;}
+
+/* ---- workflow actions --------------------------------------------------- */
+function analyze(){go('concepts');}
+function addConcept(){const v=$('#newConcept').value.trim();if(!v)return;const c=$('#concepts');
+  const chip=el('div','chip on');chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:#8b9bb5"></span><span class="grow">${v}</span><span class="conf">new</span><span class="ed">✎</span>`;
+  chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);$('#newConcept').value='';}
+let runT=null,paused=false;
+function startRun(){go('running');runBatch();}
+function togglePause(){paused=!paused;$('#pauseBtn').textContent=paused?'Resume':'Pause';}
+function runBatch(){let i=0,done=0,rev=0,fail=0,pct=0;const total=PHOTOS.length;const q=$('#queue');q.innerHTML='';
+  const rows=PHOTOS.map(p=>{const row=el('div','row between');row.style.cssText='padding:11px 16px;border-bottom:1px solid var(--line)';
+    row.innerHTML=`<div class="row" style="gap:11px"><div class="photo" style="width:46px;height:32px;border-radius:6px"></div><b style="font-size:12.5px">${p.name}</b></div><span class="qs">${badge('wait')}</span>`;
+    q.appendChild(row);photoInto(row.querySelector('.photo'),p.look);return row;});
+  clearInterval(runT);runT=setInterval(()=>{if(paused)return;
+    if(i<total){rows[i].querySelector('.qs').innerHTML=badge('run');
+      $('#run-name').textContent=PHOTOS[i].name;photoInto($('#run-thumb'),PHOTOS[i].look);
+      const st=PHOTOS[i].status;rows[i].querySelector('.qs').innerHTML=badge(st==='fail'?'fail':st==='review'?'review':'done');
+      if(st==='fail')fail++;else if(st==='review')rev++;else done++;
+      $('#c-done').textContent=done;$('#c-rev').textContent=rev;$('#c-fail').textContent=fail;
+      log(`[${i+1}/${total}] ${PHOTOS[i].name}  scene=landscape  regions=[sky,mountain,snow,grass]  ${(900+Math.random()*400|0)}ms`);
+      i++;}
+    pct=Math.round(i/total*100);$('#run-bar').style.width=pct+'%';$('#run-pct').textContent=pct+'%';
+    $('#run-eta').textContent=i<total?`~${Math.ceil((total-i)*0.9)}s remaining`:'done';
+    $('#q-summary').textContent=`${done} finished · ${rev} review · ${fail} failed`;
+    if(i>=total){clearInterval(runT);setTimeout(()=>go('review'),700);}},520);}
+function log(m){const l=$('#log');l.textContent+=m+'\n';l.scrollTop=l.scrollHeight;}
+
+/* ---- toggles + dropzone ------------------------------------------------- */
+document.addEventListener('click',e=>{if(e.target.matches('[data-toggle]'))e.target.classList.toggle('on');
+  if(e.target.closest('.seg')&&e.target.tagName==='BUTTON'&&e.target.closest('[id]')?.id!=='stepper'){const seg=e.target.closest('.seg');if(seg.closest('#preview'))return;seg.querySelectorAll('button').forEach(b=>b.classList.remove('on'));e.target.classList.add('on');}});
+const dz=$('#dropzone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--grad-soft)';});
+dz.addEventListener('dragleave',()=>{dz.style.borderColor='';dz.style.background='';});
+dz.addEventListener('drop',e=>{e.preventDefault();go('setup');});
+dz.addEventListener('click',()=>go('setup'));
+
+/* ---- optional real-backend hooks (no-op when opened as a file) ---------- */
+async function pickFolder(){try{const r=await fetch('/api/pick?kind=folder');const {path}=await r.json();if(path){go('setup');return;}}catch(_){}
+  go('setup');}
+async function tryRealStyles(){try{const s=await(await fetch('/api/styles')).json();if(Array.isArray(s)&&s.length){/* could merge real styles */}}catch(_){}}
+
+/* ---- boot --------------------------------------------------------------- */
+renderHome();renderRail();renderStyles();renderConcepts();renderGlobals();renderRegions();renderWhy();renderFilters();renderReview();renderStepper();
+let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(()=>{
+  document.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);});},120);});
+tryRealStyles();
+</script>
+</body>
+</html>
