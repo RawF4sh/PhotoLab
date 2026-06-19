@@ -19,11 +19,16 @@ def apply_image(
     regions: list[tuple[np.ndarray, Settings]],
     global_settings: Settings,
     compositional: list[tuple[np.ndarray, Settings]] | None = None,
+    guard_mask: np.ndarray | None = None,
+    guard_ops: set[str] | None = None,
 ) -> np.ndarray:
     """full_rgb: float HxWx3 gamma [0,1].
     regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited.
     compositional: [(alpha_full, settings), ...] — radial/linear moves blended independently
-    (they intentionally overlap regions, e.g. a vignette over the background)."""
+    (they intentionally overlap regions, e.g. a vignette over the background).
+    guard_mask / guard_ops: skin-safe guard. Over `guard_mask` (float HxW [0,1]) the final
+    GLOBAL pass skips the high-risk ops in `guard_ops` (e.g. clarity/saturation/grade) so faces
+    keep global exposure/tone but not the aggressive look. Both None → byte-identical to before."""
     out = full_rgb.astype(np.float32).copy()
     claimed = np.zeros(out.shape[:2], dtype=np.float32)
 
@@ -46,6 +51,13 @@ def apply_image(
         out = out * (1.0 - a3) + edited * a3
 
     if global_settings:
-        out = ops.apply_ops(out, global_settings)
+        if guard_mask is not None and guard_ops:
+            full = ops.apply_ops(out, global_settings)
+            kept = {k: v for k, v in global_settings.items() if k not in guard_ops}
+            guarded = ops.apply_ops(out, kept) if kept else out
+            m = guard_mask[..., None]
+            out = full * (1.0 - m) + guarded * m  # protected pixels get global minus guarded ops
+        else:
+            out = ops.apply_ops(out, global_settings)
 
     return np.clip(out, 0.0, 1.0)

@@ -7,6 +7,7 @@
 # Variables available in EVERY block (global stats):
 #   mean_lum, mean_sat, shadow_clip, highlight_clip, haze, intensity
 #   sky_lum, sky_sat, blown_sky, subj_lum, bg_lum   (0.0 when that concept is absent)
+#   iso, exposure_ev                                (EXIF priors; 0.0 when the photo has no metadata)
 # Variables ALSO available inside a non-global region block (about THAT region):
 #   region_lum, region_sat, region_clip_low, region_clip_high, region_coverage,
 #   region_vs_global_lum   (region_lum - mean_lum)
@@ -21,6 +22,16 @@
 # on mountains/snow, warm the foreground. The look (looks.toml) + intensity scale it; the
 # `soft`/`soft_portrait` looks dial it back for a gentle result.
 
+# ─────────────────────────── skin-safe guard ───────────────────────────
+# Global finishing ops that must NOT hit skin/face at full strength (pros reject over-clarified,
+# over-saturated, colour-graded faces fastest). The pipeline applies the global pass everywhere,
+# then over any region flagged `guard_global` in concepts.toml it re-applies the global WITHOUT
+# these ops — so faces keep global exposure/tone/contrast but skip the aggressive look.
+# This is data: edit the list to tune what's protected. Remove the block to fall back to defaults.
+[guard]
+ops = ["clarity", "saturation", "vibrance", "hsl_skin_sat",
+       "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint"]
+
 # ─────────────────────────── people ───────────────────────────
 [people.global]
 exposure   = "clamp(-(mean_lum - 0.45) * 1.2, -0.25, 0.25)"
@@ -31,7 +42,7 @@ whites     = "clamp(4 - highlight_clip * 60, -20, 6)"
 blacks     = "-8"
 vibrance   = "10"
 clarity    = "8"
-sharpen    = "12"
+sharpen    = "12 * (1 - min(iso, 6400) / 12800)"   # ease output sharpening as ISO (noise) rises
 
 # protect skin: lift if underexposed, soften texture, a touch of warmth
 [people.skin]
@@ -46,7 +57,7 @@ vibrance   = "6"
 exposure   = "clamp(0.5 * max(0, bg_lum - subj_lum) + 0.05, 0, 0.6)"
 clarity    = "10"
 contrast   = "8"
-sharpen    = "20"
+sharpen    = "20 * (1 - min(iso, 6400) / 12800)"
 
 # ────────────────────────── landscape ─────────────────────────
 [landscape.global]
@@ -59,7 +70,7 @@ blacks     = "-10"                                           # deep black point 
 vibrance   = "16"
 clarity    = "12"
 dehaze     = "if(haze > 0.25, 18, 7)"
-sharpen    = "18"
+sharpen    = "18 * (1 - min(iso, 6400) / 12800)"
 
 # the REAL sky: darken + cool + deepen (the signature move) — no fabrication
 [landscape.sky]
@@ -79,7 +90,7 @@ clarity    = "26"
 contrast   = "14"
 shadows    = "8"
 vibrance   = "10"
-sharpen    = "14"
+sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
 
 # recover snow texture (never flat white), crisp + slightly cool
 [landscape.snow]
@@ -129,7 +140,7 @@ blacks     = "-8"
 vibrance   = "12"
 clarity    = "12"
 dehaze     = "if(haze > 0.3, 12, 4)"
-sharpen    = "16"
+sharpen    = "16 * (1 - min(iso, 6400) / 12800)"
 
 # subject (e.g. wildlife): lift + clarity for fur/feature detail
 [other.subject]
@@ -137,4 +148,4 @@ exposure   = "clamp(0.4 * max(0, mean_lum - region_lum) + 0.04, 0, 0.45)"
 clarity    = "14"
 contrast   = "8"
 shadows    = "8"
-sharpen    = "20"
+sharpen    = "20 * (1 - min(iso, 6400) / 12800)"

@@ -14,6 +14,7 @@ class ConceptMeta:
     min_coverage: float = 0.02
     feather_px: float = 0.004  # fraction of long edge
     rule_region: str = ""  # which [scene.region] block applies; defaults to name
+    guard_global: bool = False  # protect this region from aggressive global ops (skin-safe guard)
 
     def region(self) -> str:
         return self.rule_region or self.name
@@ -41,6 +42,7 @@ def load_concepts(path: str) -> tuple[dict[str, list[str]], dict[str, ConceptMet
             min_coverage=float(body.get("min_coverage", 0.02)),
             feather_px=float(body.get("feather_px", 0.004)),
             rule_region=str(body.get("rule_region", name)),
+            guard_global=bool(body.get("guard_global", False)),
         )
     return presets, meta
 

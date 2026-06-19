@@ -26,6 +26,7 @@ min_score = 0.45
 min_coverage = 0.01
 feather_px = 0.004
 rule_region = "skin"
+guard_global = true     # skin-safe guard: hold aggressive global ops (see [guard] in rules.toml) off faces
 
 [concept.flowers]
 priority = 80

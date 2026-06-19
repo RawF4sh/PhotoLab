@@ -15,8 +15,13 @@ from dataclasses import dataclass
 
 import numpy as np
 from PIL import Image as PILImage
+from PIL import ImageOps
 
 _SUPPORTED = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
+
+# EXIF tag numbers we read (from the Exif sub-IFD). Kept tiny + standard — nothing proprietary.
+_TAG_ISO = 34855          # ISOSpeedRatings
+_TAG_EXPOSURE_BIAS = 37380  # ExposureBiasValue (rational stops)
 
 
 @dataclass
@@ -26,6 +31,7 @@ class Image:
     rgb: np.ndarray  # float32, HxWx3, sRGB gamma, [0,1]
     source_bits: int = 8
     path: str | None = None
+    exif: dict | None = None  # small normalized metadata dict (iso, exposure_ev) — {} if none
 
     @property
     def height(self) -> int:
@@ -48,6 +54,8 @@ def load_image(path: str) -> Image:
     """Decode any supported image to the working representation."""
     pil = PILImage.open(path)
     source_bits = 16 if pil.mode in ("I;16", "I;16B", "I") else 8
+    exif = _read_exif(pil)
+    pil = ImageOps.exif_transpose(pil)  # honor the orientation tag, then drop it
     pil = pil.convert("RGB")
     arr = np.asarray(pil)
     if arr.dtype == np.uint16:
@@ -55,7 +63,32 @@ def load_image(path: str) -> Image:
         source_bits = 16
     else:
         rgb = arr.astype(np.float32) / 255.0
-    return Image(rgb=np.ascontiguousarray(rgb), source_bits=source_bits, path=path)
+    return Image(rgb=np.ascontiguousarray(rgb), source_bits=source_bits, path=path, exif=exif)
+
+
+def _read_exif(pil: PILImage.Image) -> dict:
+    """Pull a small, normalized prior dict from EXIF: {'iso': float, 'exposure_ev': float}.
+    Camera metadata is messy and optional — any failure just yields {} (neutral defaults)."""
+    out: dict = {}
+    try:
+        ifd = pil.getexif().get_ifd(0x8769)  # the Exif sub-IFD (where ISO / exposure live)
+    except Exception:
+        return out
+    iso = ifd.get(_TAG_ISO)
+    if isinstance(iso, (list, tuple)):
+        iso = iso[0] if iso else None
+    try:
+        if iso is not None and float(iso) > 0:
+            out["iso"] = float(iso)
+    except (TypeError, ValueError):
+        pass
+    ev = ifd.get(_TAG_EXPOSURE_BIAS)
+    try:
+        if ev is not None:
+            out["exposure_ev"] = float(ev)  # PIL IFDRational casts cleanly to float
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return out
 
 
 def downscale_long_edge(img: Image, long_edge: int) -> Image:
@@ -66,7 +99,8 @@ def downscale_long_edge(img: Image, long_edge: int) -> Image:
     new_w = max(1, round(img.width * scale))
     new_h = max(1, round(img.height * scale))
     pil = PILImage.fromarray(_to_u8(img.rgb), mode="RGB").resize((new_w, new_h), PILImage.BILINEAR)
-    return Image(rgb=np.asarray(pil).astype(np.float32) / 255.0, source_bits=img.source_bits, path=img.path)
+    return Image(rgb=np.asarray(pil).astype(np.float32) / 255.0, source_bits=img.source_bits,
+                 path=img.path, exif=img.exif)
 
 
 def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:

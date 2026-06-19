@@ -95,6 +95,9 @@ class GlobalStatsModel(BaseModel):
     blown_sky: float = 0.0
     subj_lum: float = 0.0
     bg_lum: float = 0.0
+    # EXIF-derived priors (0.0 when the photo carries no usable metadata)
+    iso: float = 0.0
+    exposure_ev: float = 0.0
 
 
 class MaskOps(BaseModel):
