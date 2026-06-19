@@ -25,6 +25,14 @@ from .segment import make_segmenter, resolve
 from .segment.base import Segmenter
 from .styles import Style, combine_brief, load_styles, style_for
 
+# High-risk global ops the skin-safe guard holds off protected (skin/face) regions when no
+# [guard] block is present in rules.toml. Exposure/tone/contrast are intentionally NOT guarded —
+# faces should still get global brightness/tonal correction, just not the aggressive look.
+_DEFAULT_GUARD_OPS = {
+    "clarity", "saturation", "vibrance", "hsl_skin_sat",
+    "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
+}
+
 
 @dataclass
 class Pipeline:
@@ -37,6 +45,7 @@ class Pipeline:
     compose_moves: list
     segmenter: Segmenter
     decider: Decider
+    guard_ops: set
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
@@ -44,9 +53,13 @@ class Pipeline:
         moves = compose.load_compose(cfg.compose_path) if cfg.compose else []
         if not cfg.vignette:  # vignette is a toggleable subset of the compositional moves
             moves = [m for m in moves if "vignette" not in m.name]
+        rules = rules_mod.load(cfg.rules_path)
+        # which global ops the skin-safe guard holds off protected regions (rules-as-data; the
+        # [guard] block in rules.toml, with a sane default so older config files still work).
+        guard_ops = set(rules.get("guard", {}).get("ops", []) or _DEFAULT_GUARD_OPS)
         return cls(
             cfg=cfg,
-            rules=rules_mod.load(cfg.rules_path),
+            rules=rules,
             looks=looks_mod.load(cfg.looks_path),
             presets=presets,
             meta=meta,
@@ -54,6 +67,7 @@ class Pipeline:
             compose_moves=moves,
             segmenter=make_segmenter(cfg.backend, cfg.device),
             decider=make_decider(cfg),
+            guard_ops=guard_ops,
         )
 
     def concepts_for(self, style: Style) -> list[str]:
@@ -116,6 +130,7 @@ class Pipeline:
         comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)
 
         out_rgb = None
+        guard_note = None
         if do_apply:
             regions_apply = []
             for r in resolved.regions:  # priority-descending
@@ -126,10 +141,14 @@ class Pipeline:
                 alpha = build_alpha(r.mask, full_hw, cm.feather_px)
                 regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
+            guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings)
             out_rgb = apply_image(
                 img.rgb, regions_apply, global_settings,
                 compositional=[(a, s) for _n, a, s in comp],
+                guard_mask=guard_mask, guard_ops=self.guard_ops,
             )
+            if guard_mask is not None:
+                guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
 
         # Optional finishing grade: match the look of a reference photo (degrades safely).
         ref_note = None
@@ -145,6 +164,8 @@ class Pipeline:
                 ref_note = f"reference match skipped ({e})"
 
         notes = build_notes(gstats, region_stats, resolved.detected)
+        if guard_note:
+            notes.append(guard_note)
         if ref_note:
             notes.append(ref_note)
         result = emit.build_result(
@@ -165,3 +186,20 @@ class Pipeline:
             timing_ms=(time.perf_counter() - t0) * 1000.0,
         )
         return out_rgb, result
+
+    def _build_guard(self, union: dict, full_hw: tuple[int, int], global_settings: dict):
+        """Feathered alpha over the union of guard concepts (skin/face), upsampled to full res.
+        Returns (mask | None, coverage_fraction, held_op_names). None when nothing to guard —
+        no guard concept present, or the global pass touches none of the guarded ops."""
+        held = sorted(self.guard_ops & set(global_settings))
+        if not held:
+            return None, 0.0, []
+        mask = None
+        for name, m in union.items():
+            if not meta_for(name, self.meta).guard_global or m is None or not m.any():
+                continue
+            alpha = build_alpha(m, full_hw, meta_for(name, self.meta).feather_px)
+            mask = alpha if mask is None else np.maximum(mask, alpha)
+        if mask is None:
+            return None, 0.0, []
+        return mask, float(mask.mean()), held

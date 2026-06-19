@@ -34,12 +34,15 @@ def compute(
     sat = _saturation(rgb)
     dark = rgb.min(axis=2)  # dark channel (haze proxy)
 
+    ex = img.exif or {}
     g = GlobalStatsModel(
         mean_lum=float(lum.mean()),
         mean_sat=float(sat.mean()),
         shadow_clip=float((lum < _SHADOW).mean()),
         highlight_clip=float((lum > _HIGHLIGHT).mean()),
         haze=float(np.clip(dark.mean(), 0.0, 1.0)),
+        iso=float(ex.get("iso", 0.0) or 0.0),
+        exposure_ev=float(ex.get("exposure_ev", 0.0) or 0.0),
     )
 
     region_stats: dict[str, RegionStatsModel] = {}
