@@ -19,7 +19,11 @@ import numpy as np
 from PIL import Image as PILImage
 from PIL import ImageOps
 
-_SUPPORTED = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
+# Camera RAW formats — decoded via rawpy/libraw (the `accel` extra) at 16-bit.
+_RAW_EXT = {".dng", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".sr2", ".srf", ".raf",
+            ".orf", ".rw2", ".pef", ".srw", ".raw", ".3fr", ".mrw", ".dcr", ".kdc"}
+_PIXEL_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
+_SUPPORTED = _PIXEL_EXT | _RAW_EXT
 _GRAY16 = {"I;16", "I;16B", "I;16L", "I"}  # Pillow's 16-bit single-channel modes
 
 # EXIF tag numbers we read (from the Exif sub-IFD). Kept tiny + standard — nothing proprietary.
@@ -59,6 +63,12 @@ def load_image(path: str) -> Image:
     Order matters: read 16-bit data BEFORE any RGB conversion (Pillow's `convert("RGB")`
     collapses high-bit-depth data to 8-bit), and convert ICC → sRGB for 8-bit inputs so the
     working space is defined rather than assumed."""
+    # 0) Camera RAW (.dng/.cr2/.nef/.arw/…) → demosaic at 16-bit via rawpy/libraw.
+    raw = _decode_raw(path)
+    if raw is not None:
+        rgb, bits = raw
+        return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif={})
+
     pil = PILImage.open(path)
     exif = _read_exif(pil)
 
@@ -87,6 +97,29 @@ def load_image(path: str) -> Image:
     else:
         rgb, bits = arr.astype(np.float32) / 255.0, 8
     return Image(rgb=np.ascontiguousarray(np.clip(rgb, 0.0, 1.0)), source_bits=bits, path=path, exif=exif)
+
+
+def _decode_raw(path: str):
+    """Demosaic a camera RAW to 16-bit sRGB via rawpy/libraw. Returns (rgb[0,1], 16) or None
+    when the path isn't a RAW. Uses the camera white balance and skips rawpy's auto-brighten so
+    the input reflects the real capture — AutoEdit's own rules then decide exposure."""
+    if not path.lower().endswith(tuple(_RAW_EXT)):
+        return None
+    try:
+        import rawpy
+    except Exception as exc:
+        raise RuntimeError(
+            "RAW files (.dng/.cr2/.nef/.arw/…) need the rawpy decoder — install the accel "
+            "extra: pip install '.[accel]'"
+        ) from exc
+    with rawpy.imread(path) as raw:
+        rgb16 = raw.postprocess(
+            output_bps=16,            # keep 16-bit precision
+            use_camera_wb=True,       # honor the camera's white balance (no green/magenta cast)
+            no_auto_bright=True,      # don't auto-stretch — feed AutoEdit the true exposure
+            gamma=(2.222, 4.5),       # sRGB-ish tone curve → our gamma working space
+        )
+    return np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0), 16
 
 
 def _decode_tiff16(path: str):
