@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -15,6 +15,9 @@ class ConceptMeta:
     feather_px: float = 0.004  # fraction of long edge
     rule_region: str = ""  # which [scene.region] block applies; defaults to name
     guard_global: bool = False  # protect this region from aggressive global ops (skin-safe guard)
+    # Region policy — hard safety rails enforced AFTER the planner (rules OR llm), before apply:
+    forbidden_ops: tuple[str, ...] = ()  # ops dropped entirely on this region (e.g. snow: temp)
+    max_ops: dict[str, float] = field(default_factory=dict)  # per-op magnitude caps (abs value)
 
     def region(self) -> str:
         return self.rule_region or self.name
@@ -43,6 +46,8 @@ def load_concepts(path: str) -> tuple[dict[str, list[str]], dict[str, ConceptMet
             feather_px=float(body.get("feather_px", 0.004)),
             rule_region=str(body.get("rule_region", name)),
             guard_global=bool(body.get("guard_global", False)),
+            forbidden_ops=tuple(body.get("forbidden", [])),
+            max_ops={k: float(v) for k, v in body.get("max", {}).items()},
         )
     return presets, meta
 

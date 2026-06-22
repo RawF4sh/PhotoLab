@@ -5,16 +5,17 @@
 # Global-only finishing the look injects (applied once, to the whole image):
 #   curve_add (filmic S-curve), grade_{shadows,highlights}_{temp,tint} (split-tone)
 
-# the default — assertive-but-clean: a gentle filmic S-curve + the cool-shadow/warm-highlight
-# grade that every good edit has, with a light lift on the rule baseline.
+# the default — TRUE-TO-LIFE: tonal correction only, NO color styling. No split-tone grade
+# (that reads as a teal/orange cast), no vibrance lift, clarity pulled down. Just a whisper of
+# filmic contrast. Color stays honest; the chroma gate (rules.toml [guard]) backstops any
+# oversaturation. If you want a graded/punchy look, that's the `punchy`/`dramatic` styles.
 [natural]
-contrast_mul = 1.15
-vibrance_add = 3.0
-clarity_mul  = 1.15
-dehaze_mul   = 1.15
-curve_add    = 10.0
-grade_shadows_temp = -6.0
-grade_highlights_temp = 6.0
+contrast_mul = 1.0
+vibrance_add = 0.0
+clarity_mul  = 0.7          # pull clarity DOWN → kills the gritty/grainy micro-contrast
+dehaze_mul   = 0.8
+curve_add    = 2.0          # the faintest filmic contrast — keep midtones bright/open
+# (no grade_* — natural does not tint shadows or highlights)
 
 [punchy]
 contrast_mul = 1.4

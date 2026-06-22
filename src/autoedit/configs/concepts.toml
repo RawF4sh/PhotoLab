@@ -7,6 +7,14 @@
 #   min_coverage  below this frame fraction => treat as absent
 #   feather_px    edge softening (fraction of long edge) applied at apply time
 #   rule_region   which [scene.region] block in rules.toml this concept maps to
+#   guard_global  protect this region from the aggressive global ops ([guard] in rules.toml)
+#   forbidden     REGION POLICY: ops that may NEVER run on this region (dropped after planning)
+#   max           REGION POLICY: per-op magnitude caps (abs value), clamped after planning
+#
+# The policy fields (forbidden/max) are HARD safety rails enforced after the rule/LLM planner,
+# before apply (src/autoedit/policies.py). They prevent yellow snow, neon foliage, green skin,
+# etc. no matter what upstream proposes — the rule baseline already stays within them; they
+# mainly backstop the LLM path and future tuning.
 #
 # Anchor probe (scene classification) uses: person, sky, foliage.
 
@@ -22,11 +30,13 @@ concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock"]
 # ── per-concept metadata (priority: smaller/specific beats larger/general) ──
 [concept.skin]
 priority = 90
-min_score = 0.45
-min_coverage = 0.01
+min_score = 0.55         # warm rock/grass can score as "skin"; demand a confident match
+min_coverage = 0.04      # ...and real area — a 1-2% speck is a false positive, not a face (no red dots)
 feather_px = 0.004
 rule_region = "skin"
 guard_global = true     # skin-safe guard: hold aggressive global ops (see [guard] in rules.toml) off faces
+forbidden = ["dehaze", "hsl_green_sat", "hsl_blue_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { clarity = 6, saturation = 4, vibrance = 4, temp = 6, contrast = 6 }
 
 [concept.flowers]
 priority = 80
@@ -62,6 +72,9 @@ min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.004
 rule_region = "foliage"
+# foliage: healthy green, never neon — cap saturation/green push
+forbidden = ["hsl_skin_sat", "hsl_blue_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { saturation = 8, vibrance = 6, hsl_green_sat = 8, hsl_green_lum = 5, temp = 4 }
 
 [concept.snow]
 priority = 55          # snow on a peak should win over the mountain mask beneath it
@@ -69,6 +82,10 @@ min_score = 0.45
 min_coverage = 0.01
 feather_px = 0.005
 rule_region = "snow"
+guard_global = true     # keep snow clean white: hold global vibrance/clarity/grade off it (no yellow/blue snow)
+# snow stays neutral white: no colour ops at all, only tone/texture
+forbidden = ["temp", "tint", "vibrance", "saturation", "hsl_skin_sat", "hsl_green_sat", "hsl_blue_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { clarity = 10, dehaze = 6, contrast = 8, whites = 14 }
 
 [concept.water]
 priority = 35
@@ -76,6 +93,8 @@ min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.005
 rule_region = "water"
+forbidden = ["hsl_skin_sat", "hsl_green_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { saturation = 6, clarity = 8, dehaze = 6, hsl_blue_sat = 6 }
 
 [concept.grass]
 priority = 45
@@ -83,6 +102,8 @@ min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.004
 rule_region = "grass"
+forbidden = ["hsl_skin_sat", "hsl_blue_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { saturation = 8, vibrance = 6, hsl_green_sat = 8, hsl_green_lum = 5, temp = 4 }
 
 [concept.trees]
 priority = 45
@@ -90,6 +111,8 @@ min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.004
 rule_region = "foliage"
+forbidden = ["hsl_skin_sat", "hsl_blue_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { saturation = 8, vibrance = 6, hsl_green_sat = 8, hsl_green_lum = 5, temp = 4 }
 
 [concept.mountain]
 priority = 30
@@ -97,6 +120,8 @@ min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.005
 rule_region = "mountain"
+forbidden = ["hsl_skin_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { saturation = 6, clarity = 16, dehaze = 14, contrast = 10 }
 
 [concept.rock]
 priority = 30
@@ -111,3 +136,6 @@ min_score = 0.45
 min_coverage = 0.02
 feather_px = 0.006
 rule_region = "sky"
+# sky may deepen/dehaze but never drift green/cyan or get a hue cast
+forbidden = ["hsl_green_sat", "hsl_green_lum", "hsl_skin_sat", "grade_shadows_temp", "grade_highlights_temp"]
+max = { saturation = 12, dehaze = 16, hsl_blue_sat = 12, contrast = 10, temp = 4 }

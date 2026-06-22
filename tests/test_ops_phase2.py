@@ -67,6 +67,6 @@ def test_style_injects_grade(tmp_path):
     g_warm = Pipeline.build(RunConfig(backend="stub", style="warm_film")).process_one(str(p), False)[1].global_settings
     g_nat = Pipeline.build(RunConfig(backend="stub", style="natural")).process_one(str(p), False)[1].global_settings
     assert g_warm.get("grade_highlights_temp", 0) > 0     # warm film grades highlights warm
-    # the default now carries a subtle cinematic grade (cool shadows / warm highlights)
-    assert g_nat.get("grade_highlights_temp", 0) > 0
-    assert g_nat.get("grade_shadows_temp", 0) < 0
+    # natural is true-to-life: NO split-tone grade (a grade reads as a colour cast)
+    assert g_nat.get("grade_highlights_temp", 0) == 0
+    assert g_nat.get("grade_shadows_temp", 0) == 0

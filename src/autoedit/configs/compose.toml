@@ -10,25 +10,28 @@
 #   radial:  target ("inside"|"outside"), feather, radius_scale (× the region's half-extent)
 #   linear:  from ("top"|"bottom"|"left"|"right"), coverage (fraction of frame the ramp spans)
 
+# NOTE: these stack (subject + sky + frame can all fire on one photo) and each is scaled by
+# intensity, so keep them SUBTLE — three −0.2 EV moves read as "why is this so dark". The job
+# is a whisper of edge falloff and a hint of an ND grad, never a visible vignette.
 [subject_vignette]
 when = "subject"
 shape = "radial"
 target = "outside"          # darken/desaturate AROUND the subject → pull the eye inward
 feather = 0.20
 radius_scale = 1.5
-ops = { exposure = -0.22, saturation = -5 }
+ops = { exposure = -0.07, saturation = -2 }
 
 [sky_grad]
 when = "sky"
 shape = "linear"
-from = "top"                # graduated darken from the top, like an ND grad
+from = "top"                # graduated darken from the top, like a soft ND grad
 coverage = 0.5
-ops = { exposure = -0.18, highlights = -12 }
+ops = { exposure = -0.05, highlights = -4 }
 
 [frame_vignette]
-when = "always"             # every frame gets a gentle edge falloff (the finished look)
+when = "always"             # every frame gets a barely-there edge falloff (the finished look)
 shape = "radial"
 target = "outside"          # darken/desaturate the corners, centered on the frame
 feather = 0.45
 radius_scale = 1.1
-ops = { exposure = -0.16, saturation = -3 }
+ops = { exposure = -0.03, saturation = -1 }
