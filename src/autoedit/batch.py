@@ -9,7 +9,7 @@ import os
 import time
 from collections import Counter
 
-from . import emit
+from . import consistency, emit
 from .contract import RunConfig
 from .imageio import is_supported
 from .pipeline import Pipeline
@@ -29,11 +29,26 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
     images = list_images(input_dir)
     pipeline = Pipeline.build(cfg)
 
+    # Pass 1 (shoot consistency): cheap brightness per image → lighting groups + per-group target.
+    groups: dict[str, tuple[str, float]] = {}
+    lums: dict[str, float] = {}
+    if len(images) > 1:
+        measured = []
+        for path in images:
+            try:
+                lm = consistency.quick_lum(path)
+                lums[path] = lm
+                measured.append((path, lm))
+            except Exception:
+                continue
+        groups = consistency.plan_groups(measured)
+
     processed = 0
     skipped = 0
     failures: list[dict] = []
     scene_mix: Counter = Counter()
     concept_hits: Counter = Counter()
+    group_mix: Counter = Counter()
     t0 = time.perf_counter()
 
     for i, path in enumerate(images, start=1):
@@ -41,13 +56,18 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         if resume and os.path.exists(sidecar):
             skipped += 1
             continue
+        gid, target = groups.get(path, ("", None))
+        bias = consistency.exposure_bias(lums[path], target) if target is not None and path in lums else 0.0
         try:
-            out_rgb, result = pipeline.process_one(path, do_apply=do_apply)
+            out_rgb, result = pipeline.process_one(path, do_apply=do_apply,
+                                                   exposure_bias=bias, batch_group=gid)
             if do_apply and out_rgb is not None and cfg.emit in ("baked", "both"):
                 emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
             emit.write_sidecar(result, sidecar)
             processed += 1
             scene_mix[result.scene] += 1
+            if result.batch_group:
+                group_mix[result.batch_group] += 1
             for c in result.concepts:
                 if c.present:
                     concept_hits[c.name] += 1
@@ -67,6 +87,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         "failures": failures,
         "scene_mix": dict(scene_mix),
         "concept_hits": dict(concept_hits),
+        "batch_groups": dict(group_mix),
         "decider": cfg.decider,
         "backend": cfg.backend,
         "duration_s": round(time.perf_counter() - t0, 2),

@@ -24,6 +24,39 @@ def _chroma(rgb: np.ndarray) -> np.ndarray:
     return rgb.max(axis=-1) - rgb.min(axis=-1)
 
 
+def assess(pre, post, chroma_limited: float = 0.0) -> tuple[float, bool, str, list[str]]:
+    """Judge the EDITED output against the source (both GlobalStatsModel). Returns
+    (quality_score 0..1, needs_review, review_reason, warnings).
+
+    This is the gate the review queue must read — it inspects post-edit clipping, the
+    saturation delta vs source, and how hard the oversaturation gate had to work. `pre`/`post`
+    are duck-typed (anything with highlight_clip / shadow_clip / mean_sat)."""
+    warnings: list[str] = []
+    score = 1.0
+
+    hi, lo = float(post.highlight_clip), float(post.shadow_clip)
+    if hi > 0.02:
+        warnings.append(f"highlight clipping {hi * 100:.1f}%")
+        score -= min(0.35, (hi - 0.02) * 4.0)
+    if lo > 0.06:
+        warnings.append(f"shadow clipping {lo * 100:.1f}%")
+        score -= min(0.30, (lo - 0.06) * 3.0)
+
+    dsat = float(post.mean_sat) - float(pre.mean_sat)
+    if dsat > 0.10:
+        warnings.append(f"saturation rose +{dsat * 100:.0f}%")
+        score -= min(0.25, (dsat - 0.10) * 2.0)
+
+    if chroma_limited > 0.25:
+        warnings.append(f"oversaturation gate worked hard ({chroma_limited * 100:.0f}% of frame)")
+        score -= 0.05  # the gate already corrected it; flag for a look, don't fail hard
+
+    score = max(0.0, round(score, 3))
+    needs_review = score < 0.85 or hi > 0.05 or lo > 0.12
+    reason = "; ".join(warnings) if needs_review else ""
+    return score, needs_review, reason, warnings
+
+
 def chroma_guard(
     source: np.ndarray,
     edited: np.ndarray,

@@ -56,14 +56,17 @@ _LOCK = threading.Lock()
 
 
 def _safety(result) -> tuple[str, str]:
-    """Heuristic 'needs review' flag from global stats — clipping is the common risk."""
-    g = getattr(result, "global_stats", None)
-    if g is None:
-        return "finished", ""
-    if getattr(g, "highlight_clip", 0.0) > 0.06:
-        return "review", "highlight clipping"
-    if getattr(g, "shadow_clip", 0.0) > 0.12:
-        return "review", "shadow clipping"
+    """'Needs review' verdict from the post-edit gate (measured on the EDITED output, not the
+    source). The pipeline already recomputes output stats + a quality score; trust that."""
+    if getattr(result, "needs_review", False):
+        return "review", getattr(result, "review_reason", "") or "quality gate"
+    # fallback for results that predate the post-edit gate
+    post = getattr(result, "post_edit_stats", None) or getattr(result, "global_stats", None)
+    if post is not None:
+        if getattr(post, "highlight_clip", 0.0) > 0.06:
+            return "review", "highlight clipping"
+        if getattr(post, "shadow_clip", 0.0) > 0.12:
+            return "review", "shadow clipping"
     return "finished", ""
 
 

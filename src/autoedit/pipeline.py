@@ -18,8 +18,8 @@ from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
-from .edit import apply_image, build_alpha
-from .imageio import Image, downscale_long_edge, load_image
+from .edit import apply_image, build_alpha, gates
+from .imageio import Image, downscale_long_edge, load_image, luma
 from .notes import build_notes
 from .segment import make_segmenter, resolve
 from .segment.base import Segmenter
@@ -88,7 +88,8 @@ class Pipeline:
         return self.presets.get("generic") or ["subject", "sky", "skin"]
 
     def process_one(self, path: str, do_apply: bool = True,
-                    image: Image | None = None) -> tuple[np.ndarray | None, Result]:
+                    image: Image | None = None, exposure_bias: float = 0.0,
+                    batch_group: str = "") -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
 
@@ -137,6 +138,14 @@ class Pipeline:
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
         policy_notes = policies.enforce(region_settings, self.meta)
 
+        # Shoot-consistency: a bounded exposure nudge toward this image's batch group target,
+        # so a folder doesn't drift in brightness photo-to-photo (batch normalization, F5).
+        if exposure_bias:
+            base = global_settings.get("exposure", 0.0)
+            global_settings["exposure"] = float(np.clip(base + exposure_bias, -3.0, 3.0))
+            policy_notes.append(
+                f"batch normalize: {exposure_bias:+.2f} EV toward group {batch_group or '?'}")
+
         full_hw = (img.height, img.width)
         comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)
 
@@ -144,16 +153,17 @@ class Pipeline:
         guard_note = None
         notes_extra: list[str] = list(policy_notes)
         if do_apply:
+            guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
             for r in resolved.regions:  # priority-descending
                 s = region_settings.get(r.name)
                 if not s:
                     continue
                 cm = meta_for(r.name, self.meta)
-                alpha = build_alpha(r.mask, full_hw, cm.feather_px)
+                alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                 regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
-            guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings)
+            guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings, guide)
             gate_report: dict = {}
             out_rgb = apply_image(
                 img.rgb, regions_apply, global_settings,
@@ -178,8 +188,28 @@ class Pipeline:
                 out_rgb = color_transfer(out_rgb, ref_proxy.rgb, cfg.reference_strength)
                 ref_note = (f"reference match → {os.path.basename(cfg.reference)} "
                             f"(strength {cfg.reference_strength:.2f})")
+                # Reference transfer runs AFTER apply, so re-run the safety gates over it — a
+                # match can re-introduce oversaturation/cast that the first gate already cleared.
+                if self.chroma_max is not None:
+                    out_rgb, rlim = gates.chroma_guard(
+                        img.rgb.astype(np.float32), out_rgb,
+                        max_increase=self.chroma_max, protect=guard_mask)
+                    out_rgb = np.clip(out_rgb, 0.0, 1.0)
+                    if rlim > 0.005:
+                        notes_extra.append(
+                            f"post-reference gate: pulled chroma back on {rlim * 100:.0f}% of frame")
             except Exception as e:
                 ref_note = f"reference match skipped ({e})"
+
+        # Post-edit safety assessment — measured on the EDITED output, not the source. Drives
+        # the review queue + quality score (Codex review: review gate must read edited output).
+        post_stats = None
+        quality_score, needs_review, review_reason, warnings = 1.0, False, "", []
+        if do_apply and out_rgb is not None:
+            post_proxy = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
+            post_stats, _ = stats_mod.compute(post_proxy, {})
+            quality_score, needs_review, review_reason, warnings = gates.assess(
+                gstats, post_stats, gate_report.get("chroma_limited", 0.0) if do_apply else 0.0)
 
         notes = build_notes(gstats, region_stats, resolved.detected)
         if guard_note:
@@ -187,6 +217,11 @@ class Pipeline:
         notes.extend(notes_extra)
         if ref_note:
             notes.append(ref_note)
+        warnings = list(warnings)
+        if needs_review:
+            notes.append(f"⚠ needs review: {review_reason}")
+        # arbitrated coverage + segmenter confidence per region, for the sidecar audit trail
+        region_meta = {r.name: (float(r.coverage), float(r.score)) for r in resolved.regions}
         result = emit.build_result(
             image_name=os.path.basename(path),
             scene=sc.name,
@@ -200,13 +235,21 @@ class Pipeline:
             region_settings=region_settings,
             compositional=comp_settings,
             notes=notes,
+            region_meta=region_meta,
+            post_edit_stats=post_stats,
+            quality_score=quality_score,
+            needs_review=needs_review,
+            review_reason=review_reason,
+            warnings=warnings,
+            batch_group=batch_group,
             decider=self.decider.name,
             model=cfg.llm_model if cfg.decider == "llm" else None,
             timing_ms=(time.perf_counter() - t0) * 1000.0,
         )
         return out_rgb, result
 
-    def _build_guard(self, union: dict, full_hw: tuple[int, int], global_settings: dict):
+    def _build_guard(self, union: dict, full_hw: tuple[int, int], global_settings: dict,
+                     guide: np.ndarray | None = None):
         """Feathered alpha over the union of guard concepts (skin/face), upsampled to full res.
         Returns (mask | None, coverage_fraction, held_op_names). None when nothing to guard —
         no guard concept present, or the global pass touches none of the guarded ops."""
@@ -217,7 +260,7 @@ class Pipeline:
         for name, m in union.items():
             if not meta_for(name, self.meta).guard_global or m is None or not m.any():
                 continue
-            alpha = build_alpha(m, full_hw, meta_for(name, self.meta).feather_px)
+            alpha = build_alpha(m, full_hw, meta_for(name, self.meta).feather_px, guide=guide)
             mask = alpha if mask is None else np.maximum(mask, alpha)
         if mask is None:
             return None, 0.0, []

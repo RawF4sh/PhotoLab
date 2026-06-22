@@ -103,6 +103,8 @@ class GlobalStatsModel(BaseModel):
 class MaskOps(BaseModel):
     target: str  # region name, e.g. "sky" | "skin" | "subject"
     ops: Settings
+    coverage: float = 0.0    # fraction of frame this (arbitrated) mask claims
+    confidence: float = 0.0  # segmenter score for the concept
 
 
 class Result(BaseModel):
@@ -120,6 +122,13 @@ class Result(BaseModel):
     masks: list[MaskOps] = Field(default_factory=list)
     composition: list[MaskOps] = Field(default_factory=list)  # radial/linear moves
     notes: list[str] = Field(default_factory=list)
+    # ── post-edit safety / explainability (measured on the EDITED output) ──
+    post_edit_stats: GlobalStatsModel | None = None  # stats recomputed after apply (not source)
+    quality_score: float = 1.0      # naturalness 0..1 from the post-edit gate
+    needs_review: bool = False      # output tripped a safety threshold → human should look
+    review_reason: str = ""         # why it needs review (clipping/oversaturation/…)
+    warnings: list[str] = Field(default_factory=list)  # structured safety flags
+    batch_group: str = ""           # shoot-consistency group id (batch normalization)
     decider: str = "rules"
     model: str | None = None
     engine_version: str = ""
