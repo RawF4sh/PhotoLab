@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import compose, emit, looks as looks_mod, rules as rules_mod, scene as scene_mod, stats as stats_mod
+from . import compose, emit, looks as looks_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod
 from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
@@ -32,6 +32,8 @@ _DEFAULT_GUARD_OPS = {
     "clarity", "saturation", "vibrance", "hsl_skin_sat",
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
 }
+# Default oversaturation gate: a pixel's chroma may grow by at most +30% over the source.
+_DEFAULT_CHROMA_MAX = 0.30
 
 
 @dataclass
@@ -46,6 +48,7 @@ class Pipeline:
     segmenter: Segmenter
     decider: Decider
     guard_ops: set
+    chroma_max: float | None
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
@@ -57,6 +60,9 @@ class Pipeline:
         # which global ops the skin-safe guard holds off protected regions (rules-as-data; the
         # [guard] block in rules.toml, with a sane default so older config files still work).
         guard_ops = set(rules.get("guard", {}).get("ops", []) or _DEFAULT_GUARD_OPS)
+        # oversaturation gate: cap each pixel's chroma increase vs the source (None disables).
+        cm = rules.get("guard", {}).get("max_chroma_increase", _DEFAULT_CHROMA_MAX)
+        chroma_max = None if cm in (None, "", "off") else float(cm)
         return cls(
             cfg=cfg,
             rules=rules,
@@ -68,6 +74,7 @@ class Pipeline:
             segmenter=make_segmenter(cfg.backend, cfg.device),
             decider=make_decider(cfg),
             guard_ops=guard_ops,
+            chroma_max=chroma_max,
         )
 
     def concepts_for(self, style: Style) -> list[str]:
@@ -100,7 +107,7 @@ class Pipeline:
 
         gstats, region_stats = stats_mod.compute(proxy, resolved.union)
         present = set(region_stats.keys())
-        sc = scene_mod.classify(gstats, present)
+        sc = scene_mod.classify(gstats, present, region_stats)
         region_rule = {name: meta_for(name, self.meta).region() for name in present}
 
         thumb = None
@@ -126,11 +133,16 @@ class Pipeline:
             for s in region_settings.values():
                 s.pop("sharpen", None)
 
+        # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
+        # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
+        policy_notes = policies.enforce(region_settings, self.meta)
+
         full_hw = (img.height, img.width)
         comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)
 
         out_rgb = None
         guard_note = None
+        notes_extra: list[str] = list(policy_notes)
         if do_apply:
             regions_apply = []
             for r in resolved.regions:  # priority-descending
@@ -142,13 +154,19 @@ class Pipeline:
                 regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
             guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings)
+            gate_report: dict = {}
             out_rgb = apply_image(
                 img.rgb, regions_apply, global_settings,
                 compositional=[(a, s) for _n, a, s in comp],
                 guard_mask=guard_mask, guard_ops=self.guard_ops,
+                chroma_max_increase=self.chroma_max, protect_chroma=guard_mask,
+                report=gate_report,
             )
             if guard_mask is not None:
                 guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
+            limited = gate_report.get("chroma_limited", 0.0)
+            if limited > 0.005:
+                notes_extra.append(f"oversaturation gate: pulled chroma back on {limited * 100:.0f}% of frame")
 
         # Optional finishing grade: match the look of a reference photo (degrades safely).
         ref_note = None
@@ -166,6 +184,7 @@ class Pipeline:
         notes = build_notes(gstats, region_stats, resolved.detected)
         if guard_note:
             notes.append(guard_note)
+        notes.extend(notes_extra)
         if ref_note:
             notes.append(ref_note)
         result = emit.build_result(

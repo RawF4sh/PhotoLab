@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..contract import Settings
-from . import ops
+from . import gates, ops
 
 
 def apply_image(
@@ -21,6 +21,9 @@ def apply_image(
     compositional: list[tuple[np.ndarray, Settings]] | None = None,
     guard_mask: np.ndarray | None = None,
     guard_ops: set[str] | None = None,
+    chroma_max_increase: float | None = None,
+    protect_chroma: np.ndarray | None = None,
+    report: dict | None = None,
 ) -> np.ndarray:
     """full_rgb: float HxWx3 gamma [0,1].
     regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited.
@@ -28,7 +31,10 @@ def apply_image(
     (they intentionally overlap regions, e.g. a vignette over the background).
     guard_mask / guard_ops: skin-safe guard. Over `guard_mask` (float HxW [0,1]) the final
     GLOBAL pass skips the high-risk ops in `guard_ops` (e.g. clarity/saturation/grade) so faces
-    keep global exposure/tone but not the aggressive look. Both None → byte-identical to before."""
+    keep global exposure/tone but not the aggressive look. Both None → byte-identical to before.
+    chroma_max_increase: if set, a final oversaturation gate caps each pixel's chroma increase
+    vs the source by this fraction (snow/skin in `protect_chroma` held tighter). None → off.
+    report: optional dict the gate fills with {'chroma_limited': frac} for the sidecar."""
     out = full_rgb.astype(np.float32).copy()
     claimed = np.zeros(out.shape[:2], dtype=np.float32)
 
@@ -60,4 +66,15 @@ def apply_image(
         else:
             out = ops.apply_ops(out, global_settings)
 
-    return np.clip(out, 0.0, 1.0)
+    out = np.clip(out, 0.0, 1.0)
+
+    # Final safety pass: never let the edit be more saturated than the source allows.
+    if chroma_max_increase is not None:
+        out, limited = gates.chroma_guard(
+            full_rgb.astype(np.float32), out,
+            max_increase=chroma_max_increase, protect=protect_chroma,
+        )
+        if report is not None:
+            report["chroma_limited"] = limited
+
+    return out
