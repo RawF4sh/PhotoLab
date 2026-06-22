@@ -57,6 +57,49 @@ _SEG_CACHE: dict = {}
 _SEG_LOCK = threading.Lock()
 INFERENCE_LOCK = threading.Lock()
 
+# ── filesystem trust boundary (Codex review F4) ───────────────────────────────
+# The web API takes file/dir paths from HTTP requests. To stop a reachable server from reading
+# or writing arbitrary local paths, every request path must descend from a folder the user
+# actually chose via the native picker this session. Set AUTOEDIT_ALLOW_ANY_PATH=1 to opt out.
+_ROOTS_LOCK = threading.Lock()
+_ALLOWED_ROOTS: set[str] = set()
+
+
+def approve_root(path: str) -> None:
+    """Mark a picked folder (or a picked file's folder) as an allowed workspace root."""
+    if not path:
+        return
+    rp = os.path.realpath(path)
+    root = rp if os.path.isdir(rp) else os.path.dirname(rp)
+    with _ROOTS_LOCK:
+        _ALLOWED_ROOTS.add(root)
+
+
+def path_allowed(path: str) -> bool:
+    if os.environ.get("AUTOEDIT_ALLOW_ANY_PATH", "").lower() in ("1", "true", "yes"):
+        return True
+    if not path:
+        return False
+    rp = os.path.realpath(path)
+    with _ROOTS_LOCK:
+        roots = list(_ALLOWED_ROOTS)
+    for root in roots:
+        try:
+            if os.path.commonpath([rp, root]) == root:
+                return True
+        except ValueError:  # different drives on Windows, etc.
+            continue
+    return False
+
+
+def ensure_allowed(*candidate_paths: str | None) -> None:
+    """Raise PermissionError if any given path is outside every approved workspace root."""
+    for p in candidate_paths:
+        if p and not path_allowed(p):
+            raise PermissionError(
+                "path is outside an approved folder — choose it with the folder/file picker "
+                f"first (or set AUTOEDIT_ALLOW_ANY_PATH=1 to disable this check): {p}")
+
 
 def shared_segmenter(cfg: RunConfig):
     key = (cfg.backend, cfg.device)
@@ -165,6 +208,15 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
 
 
 def pick_path(kind: str = "folder") -> str | None:
+    """Open a native picker and return the chosen path, registering it as an approved workspace
+    root (so subsequent API calls for paths under it pass the filesystem trust boundary)."""
+    path = _pick_native(kind)
+    if path:
+        approve_root(path)
+    return path
+
+
+def _pick_native(kind: str = "folder") -> str | None:
     """Open a NATIVE picker on the machine running the server (the user's own Mac/PC) and
     return the chosen absolute path. kind: 'folder' | 'file'. Returns None on cancel.
 

@@ -9,16 +9,31 @@ from . import jobs, service
 
 
 def create_app(configs_dir: str = "configs"):
-    from fastapi import Body, FastAPI, Response
+    from urllib.parse import urlparse
+
+    from fastapi import Body, FastAPI, Request, Response
     from fastapi.responses import HTMLResponse, JSONResponse
 
     app = FastAPI(title="AutoEdit")
     static_dir = os.path.join(os.path.dirname(__file__), "static")
 
+    _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+    @app.middleware("http")
+    async def _origin_guard(request: Request, call_next):
+        """Basic CSRF/cross-origin defense: mutating requests must come from a local origin."""
+        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+            origin = request.headers.get("origin")
+            if origin and urlparse(origin).hostname not in _LOCAL_HOSTS:
+                return JSONResponse(status_code=403, content={"error": "cross-origin request blocked"})
+        return await call_next(request)
+
     def guard(fn):
         """Turn engine errors (bad file, etc.) into a friendly 400 instead of a 500 traceback."""
         try:
             return fn()
+        except PermissionError as e:
+            return JSONResponse(status_code=403, content={"error": str(e)})
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -44,13 +59,16 @@ def create_app(configs_dir: str = "configs"):
 
     @app.get("/api/list")
     def listing(dir: str = ""):
-        return service.list_images(dir)
+        return guard(lambda: (service.ensure_allowed(dir), service.list_images(dir))[1])
 
     @app.get("/api/thumb")
     def thumb(path: str, px: int = 360):
         try:
+            service.ensure_allowed(path)
             return Response(content=service.thumb_bytes(path, px), media_type="image/jpeg",
                             headers={"Cache-Control": "max-age=3600"})
+        except PermissionError as e:
+            return JSONResponse(status_code=403, content={"error": str(e)})
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
 
@@ -62,22 +80,32 @@ def create_app(configs_dir: str = "configs"):
     def preview(payload: dict = Body(...)):
         folder, file = payload.get("dir", ""), payload.get("file", "")
         path = os.path.join(folder, file) if folder and file else (file or folder)
-        return guard(lambda: service.preview(path, payload, configs_dir))
+        return guard(lambda: (service.ensure_allowed(path), service.preview(path, payload, configs_dir))[1])
 
     @app.post("/api/run")
     def run(payload: dict = Body(...)):
-        return guard(lambda: service.run_batch(payload["input_dir"], payload.get("out_dir", "out"), payload, configs_dir))
+        def go():
+            service.ensure_allowed(payload["input_dir"], payload.get("out_dir"))
+            return service.run_batch(payload["input_dir"], payload.get("out_dir", "out"), payload, configs_dir)
+        return guard(go)
 
     @app.post("/api/run-one")
     def run_one(payload: dict = Body(...)):
-        return guard(lambda: service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir))
+        def go():
+            service.ensure_allowed(payload["file"], payload.get("out_dir"))
+            return service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir)
+        return guard(go)
 
     # ── background batch jobs (live per-photo progress) ──
     @app.post("/api/jobs")
     def start_job(payload: dict = Body(...)):
-        return guard(lambda: jobs.snapshot(jobs.start(
-            payload.get("input_dir"), payload.get("files"), payload.get("out_dir"),
-            payload, configs_dir)))
+        def go():
+            service.ensure_allowed(payload.get("input_dir"), payload.get("out_dir"),
+                                   *(payload.get("files") or []))
+            return jobs.snapshot(jobs.start(
+                payload.get("input_dir"), payload.get("files"), payload.get("out_dir"),
+                payload, configs_dir))
+        return guard(go)
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):
@@ -98,13 +126,21 @@ def create_app(configs_dir: str = "configs"):
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, configs_dir: str = "configs",
-          open_browser: bool = True) -> None:
+          open_browser: bool = True, unsafe_network: bool = False) -> None:
     import uvicorn
 
+    loopback = {"127.0.0.1", "localhost", "::1"}
+    if host not in loopback and not unsafe_network:
+        raise SystemExit(
+            f"refusing to bind a non-loopback host ({host}): the Studio API can read local "
+            "images and write exports. Pass --unsafe-network to override (only on a trusted LAN).")
+    if host not in loopback:
+        print(f"⚠  AutoEdit UI bound to {host} — the local filesystem API is reachable off-machine.")
     if open_browser:
         import threading
         import webbrowser
 
-        threading.Timer(1.0, lambda: webbrowser.open(f"http://{host}:{port}")).start()
+        opn = host if host not in ("0.0.0.0", "::") else "127.0.0.1"
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://{opn}:{port}")).start()
     print(f"AutoEdit UI → http://{host}:{port}  (Ctrl+C to stop)")
     uvicorn.run(create_app(configs_dir), host=host, port=port)

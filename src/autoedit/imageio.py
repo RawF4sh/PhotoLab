@@ -5,8 +5,10 @@ engine linearizes for light-like ops and returns to gamma for perceptual ops. In
 precision is always float; we promote even 8-bit JPEG input to float so intermediate ops
 don't quantize (the recovery ceiling stays low for 8-bit input, but we don't make it worse).
 
-MVP assumes sRGB input (ICC handling is a TODO; most JPEGs are sRGB). 16-bit TIFF output
-uses `tifffile` when installed, else falls back to 8-bit via Pillow.
+Decode preserves bit depth: 16-bit TIFFs are read at 16-bit (via `tifffile` when installed,
+else Pillow's native 16-bit modes) instead of being collapsed to 8-bit by an early RGB
+conversion. Embedded ICC profiles are converted to sRGB so the working space is well-defined.
+16-bit TIFF output uses `tifffile` when installed, else falls back to 8-bit via Pillow.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from PIL import Image as PILImage
 from PIL import ImageOps
 
 _SUPPORTED = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
+_GRAY16 = {"I;16", "I;16B", "I;16L", "I"}  # Pillow's 16-bit single-channel modes
 
 # EXIF tag numbers we read (from the Exif sub-IFD). Kept tiny + standard — nothing proprietary.
 _TAG_ISO = 34855          # ISOSpeedRatings
@@ -51,19 +54,86 @@ def is_supported(path: str) -> bool:
 
 
 def load_image(path: str) -> Image:
-    """Decode any supported image to the working representation."""
+    """Decode any supported image to the working representation, preserving bit depth.
+
+    Order matters: read 16-bit data BEFORE any RGB conversion (Pillow's `convert("RGB")`
+    collapses high-bit-depth data to 8-bit), and convert ICC → sRGB for 8-bit inputs so the
+    working space is defined rather than assumed."""
     pil = PILImage.open(path)
-    source_bits = 16 if pil.mode in ("I;16", "I;16B", "I") else 8
     exif = _read_exif(pil)
+
+    # 1) 16-bit TIFF via tifffile (preserves 48-bit RGB that Pillow truncates to 24-bit).
+    tiff = _decode_tiff16(path)
+    if tiff is not None:
+        rgb, bits = tiff
+        return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif)
+
     pil = ImageOps.exif_transpose(pil)  # honor the orientation tag, then drop it
-    pil = pil.convert("RGB")
+
+    # 2) Pillow's native 16-bit single-channel modes — read the uint16 array directly.
+    if pil.mode in _GRAY16:
+        arr = np.asarray(pil).astype(np.float32)
+        g = np.clip(arr / 65535.0, 0.0, 1.0)
+        rgb = np.repeat(g[..., None], 3, axis=2)
+        return Image(rgb=np.ascontiguousarray(rgb), source_bits=16, path=path, exif=exif)
+
+    # 3) 8-bit path: convert any embedded ICC profile to sRGB, then to RGB.
+    pil = _to_srgb(pil)
+    if pil.mode != "RGB":
+        pil = pil.convert("RGB")
     arr = np.asarray(pil)
-    if arr.dtype == np.uint16:
-        rgb = arr.astype(np.float32) / 65535.0
-        source_bits = 16
+    if arr.dtype == np.uint16:          # 48-bit RGB Pillow kept as uint16
+        rgb, bits = arr.astype(np.float32) / 65535.0, 16
     else:
-        rgb = arr.astype(np.float32) / 255.0
-    return Image(rgb=np.ascontiguousarray(rgb), source_bits=source_bits, path=path, exif=exif)
+        rgb, bits = arr.astype(np.float32) / 255.0, 8
+    return Image(rgb=np.ascontiguousarray(np.clip(rgb, 0.0, 1.0)), source_bits=bits, path=path, exif=exif)
+
+
+def _decode_tiff16(path: str):
+    """Decode a TIFF at full bit depth via tifffile (optional). Returns (rgb[0,1], bits) or
+    None to fall back to Pillow. tifffile is the only reliable 48-bit-RGB TIFF reader here."""
+    if not path.lower().endswith((".tif", ".tiff")):
+        return None
+    try:
+        import tifffile
+    except Exception:
+        return None
+    try:
+        arr = np.asarray(tifffile.imread(path))
+    except Exception:
+        return None
+    if arr.ndim == 2:
+        arr = np.repeat(arr[..., None], 3, axis=2)
+    elif arr.ndim == 3 and arr.shape[2] >= 3:
+        arr = arr[..., :3]
+    else:
+        return None
+    if arr.dtype == np.uint16:
+        return np.clip(arr.astype(np.float32) / 65535.0, 0.0, 1.0), 16
+    if arr.dtype == np.uint8:
+        return np.clip(arr.astype(np.float32) / 255.0, 0.0, 1.0), 8
+    if np.issubdtype(arr.dtype, np.floating):
+        return np.clip(arr.astype(np.float32), 0.0, 1.0), 16
+    return None
+
+
+def _to_srgb(pil: PILImage.Image) -> PILImage.Image:
+    """Convert an embedded ICC profile to sRGB (e.g. AdobeRGB / Display-P3 JPEGs). No profile →
+    assume sRGB and return unchanged. Best-effort: any ICC failure degrades to the original."""
+    icc = pil.info.get("icc_profile")
+    if not icc:
+        return pil
+    try:
+        import io
+
+        from PIL import ImageCms
+
+        src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        dst = ImageCms.createProfile("sRGB")
+        rgb = pil if pil.mode in ("RGB", "RGBA") else pil.convert("RGB")
+        return ImageCms.profileToProfile(rgb, src, dst, outputMode="RGB")
+    except Exception:
+        return pil
 
 
 def _read_exif(pil: PILImage.Image) -> dict:

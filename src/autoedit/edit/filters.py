@@ -36,3 +36,21 @@ def gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
     for _ in range(3):
         out = box_blur(out, r)
     return out
+
+
+def guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float = 1e-4) -> np.ndarray:
+    """Edge-aware smoothing of `src` using `guide` as the structure reference (He et al. 2010),
+    all via O(N) box filters. The output follows `guide`'s edges instead of blurring across them
+    — so a mask alpha snaps to the real sky/mountain/hair boundary instead of haloing over it.
+    guide/src: 2D float [0,1]. Returns a float array the shape of src."""
+    r = max(1, int(radius))
+    I, p = guide.astype(np.float32), src.astype(np.float32)
+    mean_I = box_blur(I, r)
+    mean_p = box_blur(p, r)
+    corr_I = box_blur(I * I, r)
+    corr_Ip = box_blur(I * p, r)
+    var_I = corr_I - mean_I * mean_I
+    cov_Ip = corr_Ip - mean_I * mean_p
+    a = cov_Ip / (var_I + eps)
+    b = mean_p - a * mean_I
+    return box_blur(a, r) * I + box_blur(b, r)

@@ -201,7 +201,7 @@ def _cmd_ui(args) -> int:
 
     try:
         serve(host=args.host, port=args.port, configs_dir=args.configs_dir or paths.configs_dir(),
-              open_browser=not args.no_open)
+              open_browser=not args.no_open, unsafe_network=args.unsafe_network)
     except ImportError as e:
         print(f"The UI needs the [ui] extra:  pip install '.[ui]'   ({e})", file=sys.stderr)
         return 2
@@ -232,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     ui_p.add_argument("--host", default="127.0.0.1")
     ui_p.add_argument("--port", type=int, default=8765)
     ui_p.add_argument("--no-open", dest="no_open", action="store_true", help="don't open the browser")
+    ui_p.add_argument("--unsafe-network", dest="unsafe_network", action="store_true",
+                      help="allow binding a non-loopback host (exposes the local-file API off-machine)")
     ui_p.add_argument("--configs-dir", dest="configs_dir")
     ui_p.set_defaults(func=_cmd_ui)
 
