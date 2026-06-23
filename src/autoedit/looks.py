@@ -16,6 +16,7 @@ from .contract import Settings
 class Look:
     contrast_mul: float = 1.0
     vibrance_add: float = 0.0
+    saturation_add: float = 0.0  # uniform global saturation lift (vibrance protects already-saturated px; this doesn't)
     clarity_mul: float = 1.0
     dehaze_mul: float = 1.0
     # global-only finishing the style injects (split-tone + filmic curve)
@@ -40,6 +41,7 @@ def load(path: str) -> LookSet:
         out[name] = Look(
             contrast_mul=float(body.get("contrast_mul", 1.0)),
             vibrance_add=float(body.get("vibrance_add", 0.0)),
+            saturation_add=float(body.get("saturation_add", 0.0)),
             clarity_mul=float(body.get("clarity_mul", 1.0)),
             dehaze_mul=float(body.get("dehaze_mul", 1.0)),
             curve_add=float(body.get("curve_add", 0.0)),
@@ -66,6 +68,8 @@ def shape(settings: Settings, look: Look, intensity: float, is_global: bool = Fa
     if look.vibrance_add:
         settings["vibrance"] = settings.get("vibrance", 0.0) + look.vibrance_add
     if is_global:
+        if look.saturation_add:  # global-only so the skin-safe guard (which strips saturation) protects faces
+            settings["saturation"] = settings.get("saturation", 0.0) + look.saturation_add
         if look.curve_add:
             settings["curve"] = settings.get("curve", 0.0) + look.curve_add
         for k in _GRADE_FIELDS:
