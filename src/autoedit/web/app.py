@@ -61,6 +61,11 @@ def create_app(configs_dir: str = "configs"):
     def listing(dir: str = ""):
         return guard(lambda: (service.ensure_allowed(dir), service.list_images(dir))[1])
 
+    @app.get("/api/groups")
+    def groups(dir: str = ""):
+        # RAW+JPEG pairs collapsed into one logical photo (the Studio UI consumes this)
+        return guard(lambda: (service.ensure_allowed(dir), service.group_images(dir))[1])
+
     @app.get("/api/thumb")
     def thumb(path: str, px: int = 360):
         try:

@@ -19,7 +19,7 @@ from PIL import Image as PILImage
 from .. import batch, emit, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
-from ..imageio import downscale_long_edge, is_supported, load_image
+from ..imageio import downscale_long_edge, is_raw, is_supported, load_image
 from ..pipeline import Pipeline
 from ..styles import load_styles
 
@@ -139,6 +139,32 @@ def list_images(folder: str) -> list[str]:
         return []
     return [n for n in sorted(os.listdir(folder))
             if os.path.isfile(os.path.join(folder, n)) and is_supported(n)]
+
+
+def group_images(folder: str) -> list[dict]:
+    """Group files that share a basename — a camera's RAW+JPEG pair (IMG_001.dng + IMG_001.jpg)
+    is one logical photo. Returns, in listing order, one dict per group:
+        {stem, members:[{name, kind}], raw, pixel}
+    where `raw`/`pixel` name the preferred file of each kind (None if absent). The UI shows one
+    row per group and edits a single chosen source — RAW preferred for latitude — so a paired
+    shoot isn't processed twice."""
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+    for f in list_images(folder):
+        stem = os.path.splitext(f)[0]
+        key = stem.lower()
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"stem": stem, "members": []}
+            order.append(key)
+        g["members"].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
+    out: list[dict] = []
+    for key in order:
+        g = groups[key]
+        raw = next((m["name"] for m in g["members"] if m["kind"] == "raw"), None)
+        pixel = next((m["name"] for m in g["members"] if m["kind"] == "pixel"), None)
+        out.append({"stem": g["stem"], "members": g["members"], "raw": raw, "pixel": pixel})
+    return out
 
 
 def _png_b64(rgb01: np.ndarray, max_px: int = 900) -> str:
