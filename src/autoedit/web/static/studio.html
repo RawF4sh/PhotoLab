@@ -4,751 +4,671 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AutoEdit Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <style>
 /* ============================================================================
-   AutoEdit — Design System (tokens)
+   AutoEdit Studio — a single-workspace editor (Lightroom / Capture One shaped).
+   Color-NEUTRAL charcoal chrome on purpose: the UI must never tint how you read
+   a photo's colour. One restrained accent, flat surfaces, tight pro density.
    ========================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
 :root{
   color-scheme: dark;
-  /* surfaces */
-  --bg:#0F1115; --bg-2:#14161A; --panel:#1A1D23; --panel-2:#1E222A; --raise:#22262F;
-  --line:#2A2F38; --line-2:#343A45;
-  /* text */
-  --ink:#EDF0F4; --ink-2:#AEB6C2; --ink-3:#7E8794; --ink-4:#5B6470;
-  /* accent */
-  --accent:#3B7DFF; --accent-2:#7C5CFF; --accent-ink:#cddeff;
-  --grad:linear-gradient(135deg,#3B7DFF 0%,#7C5CFF 100%);
-  --grad-soft:linear-gradient(135deg,rgba(59,125,255,.18),rgba(124,92,255,.18));
-  /* status */
-  --ok:#3DD68C; --warn:#F5B23D; --danger:#FF6060; --info:#49C0E8;
-  /* shape */
-  --r-sm:8px; --r:12px; --r-lg:16px; --r-xl:22px;
-  --sh-1:0 1px 0 rgba(255,255,255,.03) inset, 0 1px 2px rgba(0,0,0,.4);
-  --sh-2:0 12px 40px -12px rgba(0,0,0,.7);
-  --sh-glow:0 0 0 1px rgba(59,125,255,.35), 0 10px 40px -8px rgba(59,125,255,.35);
+  --stage:#0c0c0d;        /* canvas backdrop — near-black neutral so photos pop */
+  --bg:#161618;           /* workspace */
+  --panel:#1a1a1d;        /* side panels */
+  --elev:#212126;         /* inputs / raised */
+  --elev-2:#26262c;
+  --line:#2a2a30;
+  --line-2:#34343c;
+  --ink:#e7e7ea;
+  --ink-2:#9b9da4;
+  --ink-3:#6c6e76;
+  --ink-4:#4a4c53;
+  --accent:#5b8fd6;       /* the ONLY colour — selection / primary / focus */
+  --accent-ink:#cfe0f6;
+  --accent-dim:rgba(91,143,214,.14);
+  --ok:#5cc08a; --warn:#e0a23c; --danger:#e06a5e; --info:#5bb0d6;
+  --r:7px; --r-lg:10px;
   --ease:cubic-bezier(.4,0,.2,1);
-  --font:'Inter',-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:
-  radial-gradient(1200px 600px at 80% -10%, rgba(124,92,255,.10), transparent 60%),
-  radial-gradient(900px 500px at -10% 10%, rgba(59,125,255,.10), transparent 55%),
-  var(--bg);
-  color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
-  letter-spacing:.1px;overflow:hidden}
-h1,h2,h3,h4{margin:0;font-weight:650;letter-spacing:-.2px}
-button{font-family:inherit}
-::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-thumb{background:#2c313b;border-radius:20px;border:3px solid transparent;background-clip:content-box}
-::-webkit-scrollbar-thumb:hover{background:#3a4150;background-clip:content-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:13px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;overflow:hidden;user-select:none}
+h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
+button{font-family:inherit;color:inherit}
+svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fill:none;
+  stroke-linecap:round;stroke-linejoin:round}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#34343c;border-radius:20px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#42424c;background-clip:content-box}
+.tab{font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-3)} .cap{text-transform:uppercase;letter-spacing:.07em;font-size:10.5px;font-weight:600;color:var(--ink-3)}
 
-/* ============================================================================ Typography */
-.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--ink-3);font-weight:600}
-.muted{color:var(--ink-3)} .dim{color:var(--ink-4)}
-.h-display{font-size:30px;line-height:1.1;font-weight:700}
+/* ---- app grid -------------------------------------------------------------- */
+.app{display:grid;grid-template-rows:46px 1fr 24px;height:100vh}
+.work{display:grid;grid-template-columns:236px 1fr 312px;min-height:0;overflow:hidden}
 
-/* ============================================================================ App shell */
-.app{display:flex;flex-direction:column;height:100vh}
-.topbar{display:flex;align-items:center;gap:18px;height:58px;padding:0 18px;
-  border-bottom:1px solid var(--line);background:rgba(20,22,26,.72);backdrop-filter:blur(14px);z-index:30}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.3px}
-.brand .dot{width:22px;height:22px;border-radius:7px;background:var(--grad);box-shadow:var(--sh-glow)}
-.brand small{color:var(--ink-3);font-weight:500}
-.stepper{display:flex;align-items:center;gap:2px;margin:0 auto}
-.step{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:99px;color:var(--ink-3);
-  font-size:12.5px;font-weight:550;cursor:pointer;border:1px solid transparent;transition:.18s var(--ease);white-space:nowrap}
-.step .n{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;font-size:11px;
-  background:var(--raise);color:var(--ink-3);border:1px solid var(--line-2)}
-.step:hover{color:var(--ink-2);background:#1b1f27}
-.step.active{color:var(--ink);background:var(--grad-soft);border-color:rgba(91,124,255,.4)}
-.step.active .n{background:var(--grad);color:#fff;border-color:transparent}
-.step.done .n{background:rgba(61,214,140,.16);color:var(--ok);border-color:rgba(61,214,140,.35)}
-.step .sep{color:var(--ink-4)}
-.topbar .right{display:flex;align-items:center;gap:10px}
-.pill{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:99px;font-size:12px;
-  border:1px solid var(--line-2);color:var(--ink-2);background:#171a20}
-.pill .led{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
-.iconbtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--line);background:#171a20;color:var(--ink-2);
-  display:grid;place-items:center;cursor:pointer;transition:.15s}
-.iconbtn:hover{color:var(--ink);border-color:var(--line-2);background:var(--raise)}
+/* ---- top bar --------------------------------------------------------------- */
+.topbar{display:flex;align-items:center;gap:14px;padding:0 12px;border-bottom:1px solid var(--line);background:#141416}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;letter-spacing:-.01em;padding-right:4px}
+.brand .mk{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#6f9fe0,#4a78c0)}
+.brand span{color:var(--ink-3);font-weight:450}
+.tdiv{width:1px;height:20px;background:var(--line)}
+.folder{font-size:12px;color:var(--ink-2);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spacer{flex:1}
+.tbtn{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:var(--r);
+  border:1px solid var(--line-2);background:var(--elev);color:var(--ink-2);font-size:12px;font-weight:500;cursor:pointer;
+  transition:.14s var(--ease)}
+.tbtn:hover{color:var(--ink);background:var(--elev-2);border-color:#3d3d46}
+.tbtn svg{width:15px;height:15px}
+.tbtn.primary{background:var(--accent);border-color:transparent;color:#fff}
+.tbtn.primary:hover{background:#6b9ce0}
+.tbtn[disabled]{opacity:.4;cursor:not-allowed}
+.iconbtn{width:30px;height:30px;border-radius:var(--r);border:1px solid var(--line-2);background:var(--elev);color:var(--ink-2);
+  display:grid;place-items:center;cursor:pointer;transition:.14s}
+.iconbtn:hover{color:var(--ink);background:var(--elev-2)}
+.seg{display:flex;background:var(--elev);border:1px solid var(--line-2);border-radius:var(--r);padding:2px}
+.seg button{height:24px;padding:0 11px;border:0;background:transparent;color:var(--ink-3);font-size:11.5px;font-weight:550;
+  border-radius:5px;cursor:pointer;transition:.13s;white-space:nowrap}
+.seg button:hover{color:var(--ink-2)}
+.seg button.on{background:var(--elev-2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-2)}
 
-.screens{flex:1;position:relative;overflow:hidden}
-.screen{position:absolute;inset:0;opacity:0;visibility:hidden;transform:translateY(8px);
-  transition:opacity .28s var(--ease),transform .28s var(--ease);overflow:auto}
-.screen.active{opacity:1;visibility:visible;transform:none}
+/* ---- left filmstrip -------------------------------------------------------- */
+.film{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.film-head{display:flex;align-items:center;justify-content:space-between;height:34px;padding:0 12px;
+  border-bottom:1px solid var(--line);color:var(--ink-3)}
+.film-head b{font-size:11px;font-weight:600;color:var(--ink-2);letter-spacing:.02em}
+.film-list{flex:1;overflow:auto;padding:8px}
+.frow{display:flex;align-items:center;gap:9px;padding:6px;border-radius:var(--r);cursor:pointer;margin-bottom:3px;
+  border:1px solid transparent;transition:.12s}
+.frow:hover{background:#202024}
+.frow.sel{background:var(--accent-dim);border-color:rgba(91,143,214,.4)}
+.frow .tn{width:54px;height:38px;border-radius:5px;object-fit:cover;background:var(--stage);flex:none;border:1px solid var(--line)}
+.frow .meta{min-width:0;flex:1}
+.frow .nm{font-size:11.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frow .sub{font-size:10px;color:var(--ink-3)}
+.frow .idx{font-size:10px;color:var(--ink-4);font-variant-numeric:tabular-nums;width:18px;text-align:right;flex:none}
+.frow .fck{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--line-2);display:grid;place-items:center;
+  color:transparent;flex:none;cursor:pointer;transition:.12s}
+.frow .fck:hover{border-color:var(--accent)}
+.frow .fck.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.frow .fck svg{width:11px;height:11px;stroke-width:2.6}
+/* selection bar (choose a subset to run) */
+.selbar{display:flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-bottom:1px solid var(--line);
+  color:var(--ink-3)}
+.selbar .cap{font-size:10.5px}
+.selbar .sp{flex:1}
+.lnk{background:none;border:0;color:var(--accent);font-size:11px;font-weight:550;cursor:pointer;padding:2px 5px;border-radius:4px}
+.lnk:hover{background:var(--accent-dim)}
 
-/* ============================================================================ Buttons */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 16px;border-radius:10px;
-  font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--line-2);background:var(--raise);color:var(--ink);
-  transition:.16s var(--ease)}
-.btn:hover{background:#272c36;border-color:#3c4350}
-.btn.primary{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 8px 24px -8px rgba(59,125,255,.6)}
-.btn.primary:hover{filter:brightness(1.07)}
-.btn.ghost{background:transparent;border-color:transparent;color:var(--ink-2)}
-.btn.ghost:hover{background:#1b1f27;color:var(--ink)}
-.btn.lg{height:44px;padding:0 22px;font-size:14.5px;border-radius:12px}
-.btn.sm{height:30px;padding:0 11px;font-size:12.5px;border-radius:8px}
-.btn.block{width:100%}
-.btn[disabled]{opacity:.45;cursor:not-allowed}
+/* empty state */
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;
+  padding:30px;color:var(--ink-3)}
+.empty svg{width:30px;height:30px;color:var(--ink-4)}
+.empty .ttl{font-size:13px;color:var(--ink-2);font-weight:550}
+.empty .sub{font-size:11.5px;max-width:200px;line-height:1.5}
 
-/* ============================================================================ Panels / cards */
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg)}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-1)}
-.sec{padding:16px 16px}
-.sec + .sec{border-top:1px solid var(--line)}
-.sec h4{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:12px;font-weight:600}
-.row{display:flex;align-items:center;gap:10px}
-.between{justify-content:space-between}
-.grow{flex:1}
-
-/* ============================================================================ Form controls */
-.input,textarea,select{width:100%;background:#14171d;border:1px solid var(--line-2);color:var(--ink);
-  border-radius:10px;padding:10px 12px;font:inherit;outline:none;transition:.15s}
-.input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,125,255,.18)}
-textarea{resize:vertical;min-height:84px;line-height:1.55}
-label.lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);
-  margin:0 0 7px;font-weight:600}
-
-/* segmented */
-.seg{display:flex;background:#14171d;border:1px solid var(--line-2);border-radius:10px;padding:3px}
-.seg button{flex:1;height:30px;border:0;background:transparent;color:var(--ink-3);font-size:12.5px;font-weight:600;
-  border-radius:7px;cursor:pointer;transition:.15s}
-.seg button.on{background:var(--grad);color:#fff;box-shadow:0 4px 14px -4px rgba(59,125,255,.6)}
-
-/* toggle */
-.toggle{position:relative;width:40px;height:23px;border-radius:99px;background:#2a2f3a;border:1px solid var(--line-2);
-  cursor:pointer;transition:.18s;flex:none}
-.toggle::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#cfd5de;transition:.18s var(--ease)}
-.toggle.on{background:var(--grad);border-color:transparent}
-.toggle.on::after{left:19px;background:#fff}
-
-/* slider */
-input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:99px;background:var(--line-2);outline:none}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
-  background:#fff;border:3px solid var(--accent);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.5)}
-
-/* ============================================================================ Chips */
-.chip{display:inline-flex;align-items:center;gap:9px;padding:8px 12px;border-radius:11px;cursor:pointer;
-  background:#171a20;border:1px solid var(--line-2);transition:.15s;font-size:13px;font-weight:550;user-select:none}
-.chip:hover{border-color:#3d4a66;background:#1b1f28}
-.chip.on{border-color:rgba(91,124,255,.55);background:var(--grad-soft)}
-.chip .sw{width:12px;height:12px;border-radius:4px;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.3) inset}
-.chip .check{width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-2);display:grid;place-items:center;color:transparent;font-size:11px;flex:none}
-.chip.on .check{background:var(--accent);border-color:var(--accent);color:#fff}
-.chip .conf{font-size:10.5px;color:var(--ink-3);padding:2px 6px;border-radius:6px;background:#13161b;border:1px solid var(--line)}
-.chip .ed{opacity:0;color:var(--ink-3);transition:.15s}
-.chip:hover .ed{opacity:1}
-
-/* status badges */
-.badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;
-  border:1px solid transparent;text-transform:capitalize;white-space:nowrap}
-.badge .b-led{width:6px;height:6px;border-radius:50%;background:currentColor}
-.b-wait{color:var(--ink-3);background:#171a20;border-color:var(--line-2)}
-.b-run{color:var(--info);background:rgba(73,192,232,.1);border-color:rgba(73,192,232,.3)}
-.b-edit{color:var(--accent-2);background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.35)}
-.b-done{color:var(--ok);background:rgba(61,214,140,.1);border-color:rgba(61,214,140,.3)}
-.b-review{color:var(--warn);background:rgba(245,178,61,.1);border-color:rgba(245,178,61,.3)}
-.b-fail{color:var(--danger);background:rgba(255,96,96,.1);border-color:rgba(255,96,96,.3)}
-
-/* ============================================================================ Fake photo (mockup imagery) */
-.photo{position:relative;border-radius:inherit;overflow:hidden;background:#0c0e12}
-.photo canvas{width:100%;height:100%;display:block}
-
-/* before/after split */
-.ba{position:relative;border-radius:var(--r);overflow:hidden;user-select:none;cursor:ew-resize;background:#0c0e12}
-.ba .layer{position:absolute;inset:0}
+/* ---- center stage ---------------------------------------------------------- */
+.stage{position:relative;background:var(--stage);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.stage-top{position:absolute;top:0;left:0;right:0;height:40px;display:flex;align-items:center;gap:10px;padding:0 14px;z-index:4;
+  pointer-events:none}
+.stage-top > *{pointer-events:auto}
+.stage-name{font-size:12px;color:var(--ink);background:rgba(12,12,13,.7);backdrop-filter:blur(8px);padding:5px 10px;
+  border-radius:var(--r);border:1px solid var(--line)}
+.stage-name b{font-weight:600} .stage-name .sc{color:var(--ink-3);text-transform:capitalize}
+.stage-tools{margin-left:auto;display:flex;align-items:center;gap:8px}
+.canvas-wrap{flex:1;display:grid;place-items:center;padding:46px 20px 18px;min-height:0}
+.ba{position:relative;max-width:100%;max-height:100%;border-radius:var(--r);overflow:hidden;background:var(--stage);
+  box-shadow:0 0 0 1px var(--line),0 20px 60px -30px #000;user-select:none}
+.ba img{display:block;max-width:100%;max-height:calc(100vh - 150px);object-fit:contain;
+  -webkit-user-drag:none;user-select:none;pointer-events:none}  /* no native image-grab while sliding the split */
+.ba .layer{position:absolute;inset:0;overflow:hidden}
+.ba .layer img{width:100%;height:100%}
 .ba .after{clip-path:inset(0 0 0 var(--split,50%))}
 .ba .before{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
-.ba .handle{position:absolute;top:0;bottom:0;left:var(--split,50%);width:2px;background:rgba(255,255,255,.85);
-  transform:translateX(-1px);box-shadow:0 0 12px rgba(0,0,0,.6);pointer-events:none}
-.ba .knob{position:absolute;top:50%;left:var(--split,50%);transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;
-  background:rgba(20,22,28,.7);border:2px solid #fff;backdrop-filter:blur(6px);display:grid;place-items:center;color:#fff;pointer-events:none}
-.ba .tag{position:absolute;top:12px;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:700;letter-spacing:.06em;
-  background:rgba(8,9,12,.66);color:#fff;backdrop-filter:blur(4px)}
-.ba .tag.l{left:12px} .ba .tag.r{right:12px}
-.mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:.0;transition:opacity .25s}
-.mask-ov.show{opacity:.5}
-/* generating state — the before/after is hidden until the edit is actually rendered */
-.ba .genov{position:absolute;inset:0;display:none;flex-direction:column;gap:13px;align-items:center;justify-content:center;
-  background:rgba(10,12,16,.5);backdrop-filter:blur(2px);color:#fff;font-weight:600;font-size:13px;z-index:6;letter-spacing:.01em}
+.ba .sizer{visibility:hidden}
+.ba .handle{position:absolute;top:0;bottom:0;left:var(--split,50%);width:1px;background:rgba(255,255,255,.9);
+  box-shadow:0 0 10px rgba(0,0,0,.7);pointer-events:none;z-index:3}
+.ba .knob{position:absolute;top:50%;left:var(--split,50%);transform:translate(-50%,-50%);width:30px;height:30px;
+  border-radius:50%;background:rgba(20,20,22,.6);border:1.5px solid #fff;backdrop-filter:blur(6px);display:grid;
+  place-items:center;color:#fff;pointer-events:none;z-index:3}
+.ba .knob svg{width:14px;height:14px}
+.ba .tag{position:absolute;top:10px;font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:3px 8px;border-radius:5px;
+  background:rgba(8,8,9,.7);color:#fff;backdrop-filter:blur(4px);z-index:3}
+.ba .tag.l{left:10px} .ba .tag.r{right:10px}
+.ba.mode-before .after,.ba.mode-after .before{display:none}
+.ba.mode-before .handle,.ba.mode-before .knob,.ba.mode-after .handle,.ba.mode-after .knob{display:none}
+.cursor-split{cursor:ew-resize}
+.mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:0;transition:opacity .2s;z-index:2}
+.mask-ov.show{opacity:.45}
+/* generating */
+.genov{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;
+  background:rgba(10,10,11,.55);backdrop-filter:blur(2px);color:#fff;font-size:12px;font-weight:550;z-index:6}
 .ba.gen .genov{display:flex}
 .ba.gen .handle,.ba.gen .knob,.ba.gen .tag{display:none}
-.spin{width:30px;height:30px;border-radius:50%;border:3px solid rgba(255,255,255,.22);border-top-color:#fff;animation:spin 1s linear infinite}
+.spin{width:26px;height:26px;border-radius:50%;border:2.5px solid rgba(255,255,255,.2);border-top-color:#fff;
+  animation:spin .9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* thumbnails */
-.thumb{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line);cursor:pointer;transition:.15s;background:#0c0e12}
-.thumb:hover{border-color:var(--line-2)}
-.thumb.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
-.thumb .no{position:absolute;left:6px;top:6px;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;background:rgba(8,9,12,.6);color:#fff}
-.thumb .st{position:absolute;right:6px;top:6px}
+/* ---- right develop panel --------------------------------------------------- */
+.develop{background:var(--panel);border-left:1px solid var(--line);overflow:auto;min-height:0}
+.dsec{border-bottom:1px solid var(--line)}
+.dsec-h{display:flex;align-items:center;justify-content:space-between;height:33px;padding:0 13px;cursor:default}
+.dsec-h h4{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3);font-weight:600}
+.dsec-h .x{color:var(--ink-4)}
+.dsec-b{padding:4px 13px 14px}
+.collap .dsec-h{cursor:pointer}
+.collap.closed .dsec-b{display:none}
+.collap .chev{transition:.18s;color:var(--ink-4)}
+.collap.closed .chev{transform:rotate(-90deg)}
 
-/* progress */
-.bar{height:8px;border-radius:99px;background:#14171d;border:1px solid var(--line);overflow:hidden}
-.bar > i{display:block;height:100%;background:var(--grad);border-radius:99px;transition:width .4s var(--ease)}
+/* style picker */
+.styles{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.sty{padding:8px 9px;border-radius:var(--r);border:1px solid var(--line-2);background:var(--elev);cursor:pointer;transition:.13s}
+.sty:hover{border-color:#3d3d46;background:var(--elev-2)}
+.sty.on{border-color:var(--accent);background:var(--accent-dim)}
+.sty .nm{font-size:12px;font-weight:550;color:var(--ink)}
+.sty .ds{font-size:10px;color:var(--ink-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* misc layout helpers */
-.wrap{max-width:1320px;margin:0 auto;padding:26px}
-.grid{display:grid;gap:14px}
-.kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed var(--line);font-size:13px}
-.kv:last-child{border:0}
-.kv b{font-weight:600;color:var(--ink)} .kv .v{color:var(--ink-2);font-variant-numeric:tabular-nums}
-.note{display:flex;gap:9px;padding:11px 13px;border-radius:10px;background:#171a20;border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
-.note.warn{background:rgba(245,178,61,.07);border-color:rgba(245,178,61,.3);color:#f0cd8f}
-.tip{font-size:12px;color:var(--ink-3)}
-.divline{height:1px;background:var(--line);margin:14px 0}
+/* segmented (intensity) */
+.iseg{display:flex;background:var(--elev);border:1px solid var(--line-2);border-radius:var(--r);padding:2px}
+.iseg button{flex:1;height:28px;border:0;background:transparent;color:var(--ink-3);font-size:11.5px;font-weight:550;
+  border-radius:5px;cursor:pointer;transition:.13s}
+.iseg button.on{background:var(--accent);color:#fff}
+
+/* concept chips */
+.concept{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--r);background:var(--elev);
+  border:1px solid var(--line-2);cursor:pointer;transition:.12s;margin-bottom:5px}
+.concept:hover{border-color:#3d3d46}
+.concept.on{border-color:rgba(91,143,214,.45);background:var(--accent-dim)}
+.concept .ck{width:15px;height:15px;border-radius:4px;border:1.5px solid var(--line-2);display:grid;place-items:center;
+  color:transparent;flex:none}
+.concept.on .ck{background:var(--accent);border-color:var(--accent);color:#fff}
+.concept .ck svg{width:11px;height:11px;stroke-width:2.4}
+.concept .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.concept .nm{flex:1;font-size:12px;text-transform:capitalize;color:var(--ink-2)}
+.concept.on .nm{color:var(--ink)}
+.concept .cf{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+
+/* adjustment rows (Lightroom basic-panel style) */
+.adj{display:flex;align-items:center;justify-content:space-between;padding:4px 0;font-size:12px}
+.adj .k{color:var(--ink-2)} .adj .v{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:500}
+.adj .v.pos{color:#8fc0a8} .adj .v.neg{color:#d2a0a0}
+.adj + .adj{border-top:1px solid #222226}
+
+/* region rows */
+.region{display:flex;gap:9px;padding:7px 0}
+.region + .region{border-top:1px solid #222226}
+.region .bar{width:3px;border-radius:2px;flex:none}
+.region .nm{font-size:12px;font-weight:550;color:var(--ink);text-transform:capitalize}
+.region .ds{font-size:10.5px;color:var(--ink-3);margin-top:2px;line-height:1.4}
+
+/* why list */
+.why{font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.why li{display:flex;gap:8px;margin-bottom:7px;list-style:none}
+.why li::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--accent);margin-top:7px;flex:none}
+.why ul{margin:0;padding:0}
+
+/* small input */
+.tinput{width:100%;height:30px;background:var(--elev);border:1px solid var(--line-2);color:var(--ink);border-radius:var(--r);
+  padding:0 10px;font:inherit;font-size:12px;outline:none;transition:.13s}
+.tinput:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}
+.minibtn{height:30px;padding:0 11px;border-radius:var(--r);border:1px solid var(--line-2);background:var(--elev);
+  color:var(--ink-2);font-size:12px;cursor:pointer;flex:none}
+.minibtn:hover{color:var(--ink);background:var(--elev-2)}
+
+/* badges */
+.bdg{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;
+  border:1px solid transparent;text-transform:capitalize;white-space:nowrap}
+.bdg i{width:5px;height:5px;border-radius:50%;background:currentColor}
+.b-wait{color:var(--ink-3);background:#202024;border-color:var(--line-2)}
+.b-run{color:var(--info);background:rgba(91,176,214,.1);border-color:rgba(91,176,214,.28)}
+.b-done{color:var(--ok);background:rgba(92,192,138,.1);border-color:rgba(92,192,138,.28)}
+.b-review{color:var(--warn);background:rgba(224,162,60,.1);border-color:rgba(224,162,60,.28)}
+.b-fail{color:var(--danger);background:rgba(224,106,94,.1);border-color:rgba(224,106,94,.28)}
+
+/* ---- status bar ------------------------------------------------------------ */
+.statusbar{display:flex;align-items:center;gap:14px;padding:0 13px;border-top:1px solid var(--line);background:#141416;
+  font-size:11px;color:var(--ink-3)}
+.statusbar b{color:var(--ink-2);font-weight:550}
+.statusbar .led{display:inline-flex;align-items:center;gap:6px}
+.statusbar .led i{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.statusbar .sp{flex:1}
+
+/* ---- run drawer ------------------------------------------------------------ */
+.drawer{position:fixed;left:236px;right:312px;bottom:24px;background:#17171a;border-top:1px solid var(--line-2);
+  box-shadow:0 -18px 50px -30px #000;transform:translateY(110%);transition:transform .3s var(--ease);z-index:40;
+  max-height:46vh;display:flex;flex-direction:column}
+.drawer.open{transform:none}
+.drawer-h{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.drawer-h .ttl{font-size:12.5px;font-weight:600}
+.prog{flex:1;height:5px;border-radius:99px;background:var(--elev);overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .4s var(--ease)}
+.qlist{overflow:auto;padding:6px 10px}
+.qrow{display:flex;align-items:center;gap:10px;padding:6px 6px;border-radius:6px}
+.qrow:hover{background:#1d1d21}
+.qrow img{width:40px;height:28px;border-radius:4px;object-fit:cover;background:var(--stage)}
+.qrow .nm{flex:1;font-size:11.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- modal ----------------------------------------------------------------- */
+.scrim{position:fixed;inset:0;background:rgba(6,6,7,.6);backdrop-filter:blur(3px);z-index:50;display:none}
+.scrim.open{display:grid;place-items:center}
+.modal{background:#17171a;border:1px solid var(--line-2);border-radius:12px;box-shadow:0 30px 80px -30px #000;
+  width:min(1080px,92vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-h{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line)}
+.modal-h h3{font-size:15px}
+.modal-b{padding:16px 18px;overflow:auto}
+.rgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.rcard{border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;background:var(--elev)}
+.rcard .ph{height:118px;background:var(--stage);position:relative}
+.rcard .ph img{width:100%;height:100%;object-fit:cover}
+.rcard .ph .ba2{position:absolute;left:8px;bottom:8px;height:24px;padding:0 9px;border-radius:6px;border:0;
+  background:rgba(8,8,9,.7);color:#fff;font-size:10.5px;font-weight:600;cursor:pointer;backdrop-filter:blur(4px)}
+.rcard .ft{padding:9px 11px}
+.rcard .ft .nm{font-size:11.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:6px;font-weight:550}
+.kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #222226;font-size:12px}
+.kv:last-child{border:0} .kv b{font-weight:550} .kv .v{color:var(--ink-2);font-variant-numeric:tabular-nums}
+.note{display:flex;gap:9px;padding:10px 12px;border-radius:var(--r);background:var(--elev);border:1px solid var(--line);
+  font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.note.warn{background:rgba(224,162,60,.07);border-color:rgba(224,162,60,.28);color:#e3c690}
+.note svg{width:15px;height:15px;flex:none;margin-top:1px;color:var(--ink-3)}
+.tip{font-size:11px;color:var(--ink-3);line-height:1.5}
 </style>
 </head>
 <body>
 <div class="app">
-  <!-- ===================== TOP BAR ===================== -->
+
+  <!-- ===== top bar ===== -->
   <header class="topbar">
-    <div class="brand"><span class="dot"></span> AutoEdit <small>Studio</small></div>
-    <nav class="stepper" id="stepper"></nav>
-    <div class="right">
-      <span class="pill"><span class="led"></span> Runs locally</span>
-      <button class="iconbtn" title="Settings" onclick="go('settings')">⚙</button>
-    </div>
+    <div class="brand"><span class="mk"></span>AutoEdit <span>Studio</span></div>
+    <div class="tdiv"></div>
+    <button class="tbtn" id="openBtn" aria-label="Open folder">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Folder</button>
+    <button class="tbtn" id="openFileBtn" aria-label="Open one photo">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 15l-5-5L5 21"/></svg>Photo</button>
+    <div class="folder" id="folderName">No folder open</div>
+    <div class="spacer"></div>
+    <div class="seg" id="viewseg" style="display:none">
+      <button data-v="before">Before</button><button data-v="after">After</button>
+      <button data-v="split" class="on">Split</button><button data-v="side">Side</button></div>
+    <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" style="display:none">
+      <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
+    <div class="tdiv"></div>
+    <button class="tbtn primary" id="runBtn" disabled aria-label="Run batch">
+      <svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg><span class="lbl">Run batch</span></button>
+    <button class="iconbtn" id="settingsBtn" aria-label="Settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 6.6 19l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 5 13.6H5a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 6.6 7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H11A1.6 1.6 0 0 0 12 3.1V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg></button>
   </header>
 
-  <div class="screens" id="screens">
+  <!-- ===== workspace ===== -->
+  <div class="work">
 
-    <!-- ===================== 1 · HOME ===================== -->
-    <section class="screen active" data-screen="home">
-      <div class="wrap" style="max-width:1080px">
-        <div style="text-align:center;margin:18px 0 30px">
-          <div class="eyebrow">Open-vocabulary batch photo editing</div>
-          <h1 class="h-display" style="margin-top:10px">Edit a whole shoot, intentionally.</h1>
-          <p class="muted" style="max-width:560px;margin:12px auto 0">Pick a style, describe what you want, target any region by name — AutoEdit masks and grades every photo locally, and tells you why.</p>
+    <!-- left filmstrip -->
+    <aside class="film">
+      <div class="film-head"><b>Filmstrip</b><span id="filmCount" class="cap">0</span></div>
+      <div class="selbar" id="selbar" style="display:none">
+        <span class="cap" id="runCount">Run: all</span><span class="sp"></span>
+        <button class="lnk" id="selAll">All</button><button class="lnk" id="selNone">None</button>
+      </div>
+      <div class="film-list" id="film"></div>
+    </aside>
+
+    <!-- center stage -->
+    <main class="stage">
+      <div class="stage-top" id="stageTop" style="display:none">
+        <div class="stage-name"><b id="stName">—</b> <span class="sc" id="stScene"></span></div>
+      </div>
+      <div class="canvas-wrap" id="canvasWrap">
+        <div class="empty" id="stageEmpty">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+          <div class="ttl">No photo open</div>
+          <div class="sub">Open a folder of photos to start. Your images never leave this machine.</div>
+          <button class="tbtn" id="openBtn2"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Open folder…</button>
         </div>
-        <div id="dropzone" class="card" style="border-style:dashed;border-width:1.5px;padding:54px;text-align:center;cursor:pointer;transition:.2s">
-          <div style="width:60px;height:60px;border-radius:16px;background:var(--grad-soft);display:grid;place-items:center;margin:0 auto 16px;font-size:26px">📂</div>
-          <h3 style="font-size:18px">Drop a folder of photos</h3>
-          <p class="muted" style="margin:8px 0 18px">or use a picker — JPG, PNG, TIFF · RAW coming soon</p>
-          <div class="row" style="justify-content:center;gap:10px">
-            <button class="btn primary" onclick="event.stopPropagation();pickFolder()">Choose folder…</button>
-            <button class="btn" onclick="event.stopPropagation();pickSingle()">Choose a single photo</button>
-          </div>
-          <div class="note" style="display:inline-flex;margin-top:22px"><span>🔒</span> Runs locally. Your photos never leave your machine unless you opt in to the cloud brief planner.</div>
-        </div>
-        <div style="margin-top:30px">
-          <div class="row between" style="margin-bottom:12px"><h4 class="eyebrow">Recent projects</h4><button class="btn ghost sm">View all</button></div>
-          <div class="grid" id="recent" style="grid-template-columns:repeat(3,1fr)"></div>
+        <div class="ba mode-split" id="ba" style="display:none">
+          <img class="sizer" id="baSizer" alt="">
+          <div class="layer before"><img id="baBefore" alt="Before"></div>
+          <div class="layer after"><img id="baAfter" alt="After (AutoEdit)"></div>
+          <div class="mask-ov" id="maskOv"></div>
+          <div class="handle"></div>
+          <div class="knob"><svg viewBox="0 0 24 24"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg></div>
+          <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
+          <div class="genov"><span class="spin"></span><span>Generating preview…</span></div>
         </div>
       </div>
-    </section>
+    </main>
 
-    <!-- ===================== 2 · SETUP ===================== -->
-    <section class="screen" data-screen="setup">
-      <div style="display:grid;grid-template-columns:208px 1fr 340px;height:100%">
-        <!-- thumbnail rail -->
-        <aside class="panel" style="border-radius:0;border-top:0;border-left:0;display:flex;flex-direction:column;overflow:hidden">
-          <div class="sec row between" style="border-bottom:1px solid var(--line)"><b style="font-size:13px">Imported</b><span class="pill" id="imp-count" style="padding:3px 8px">— photos</span></div>
-          <div class="grid" id="rail" style="grid-template-columns:1fr 1fr;gap:8px;padding:12px;overflow:auto"></div>
-        </aside>
-        <!-- preview -->
-        <main style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto">
-          <div class="row between"><div><div class="eyebrow">Selected</div><h3 id="setup-name" style="margin-top:4px">3D6A1738.JPG</h3></div>
-            <div class="seg" style="width:210px"><button class="on">Fit</button><button>Fill</button><button>100%</button></div></div>
-          <div class="photo card" id="setup-prev" style="flex:1;min-height:340px;border-radius:var(--r-lg)"></div>
-          <div class="note"><span>💡</span> Tip: your style + brief apply to the whole batch. You can override per-photo later in Review.</div>
-        </main>
-        <!-- controls -->
-        <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
-          <div class="sec"><h4>Style profile</h4><div class="grid" id="styles" style="grid-template-columns:1fr 1fr;gap:9px"></div></div>
-          <div class="sec"><h4>Editing brief</h4>
-            <textarea id="brief" placeholder="Example: Make this a warm cinematic landscape — preserve snow detail, deepen the sky, keep greens natural, lift the foreground."></textarea>
-            <p class="tip" style="margin-top:8px">Plain language. The brief steers which regions get treated and how.</p>
-          </div>
-          <div class="sec"><h4>Intensity</h4>
-            <div class="seg"><button data-i>Subtle</button><button data-i class="on">Balanced</button><button data-i>Strong</button></div>
-          </div>
-          <div class="sec">
-            <div class="row between"><div><b style="font-size:13px">Use AI brief planner</b><div class="tip">Reads a thumbnail + stats to plan edits. BYO API key.</div></div><div class="toggle" data-toggle></div></div>
-            <div class="divline"></div>
-            <div class="row between"><div><b style="font-size:13px">Rules-only mode</b><div class="tip">Deterministic, fully offline. No cloud calls.</div></div><div class="toggle on" data-toggle></div></div>
-          </div>
-          <div class="sec"><button class="btn primary lg block" onclick="analyze()">Analyze photos →</button></div>
-        </aside>
-      </div>
-    </section>
-
-    <!-- ===================== 3 · CONCEPTS ===================== -->
-    <section class="screen" data-screen="concepts">
-      <div style="display:grid;grid-template-columns:1fr 360px;height:100%">
-        <main style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto">
-          <div class="row between">
-            <div><div class="eyebrow">Detected regions · 3D6A1738.JPG</div><h3 style="margin-top:4px">Choose what to edit</h3></div>
-            <div class="row" style="gap:8px">
-              <button class="btn sm" id="maskToggle" onclick="toggleMask()">◐ Mask overlay</button>
-              <div class="seg" style="width:160px"><button>−</button><button class="on">Fit</button><button>+</button></div>
-            </div>
-          </div>
-          <div class="ba" id="concept-ba" style="flex:1;min-height:360px">
-            <div class="layer before"></div><div class="layer after"></div>
-            <div class="mask-ov" id="cmask"></div>
-            <div class="handle"></div><div class="knob">⇄</div>
-            <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
-            <div class="genov"><span class="spin"></span><span>Generating preview…</span></div>
-          </div>
-        </main>
-        <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
-          <div class="sec"><h4>Concepts in this scene</h4>
-            <div class="grid" id="concepts" style="gap:8px"></div>
-          </div>
-          <div class="sec"><h4>Add a concept</h4>
-            <div class="row" style="gap:8px"><input class="input" id="newConcept" placeholder="e.g. dress, glacier, road, hair…"/><button class="btn" onclick="addConcept()">Add</button></div>
-            <p class="tip" style="margin-top:8px">Open-vocabulary — type any noun. SAM 3 will find it if it’s there.</p>
-          </div>
-          <div class="sec"><button class="btn primary lg block" onclick="go('preview')">Preview the edit →</button>
-            <button class="btn ghost block" style="margin-top:8px" onclick="go('setup')">← Back to style</button></div>
-        </aside>
-      </div>
-    </section>
-
-    <!-- ===================== 4 · PREVIEW ===================== -->
-    <section class="screen" data-screen="preview">
-      <div style="display:grid;grid-template-columns:1fr 372px;height:100%">
-        <main style="padding:20px;display:flex;flex-direction:column;gap:14px;overflow:auto">
-          <div class="row between">
-            <div><div class="eyebrow">Preview · Natural · Balanced</div><h3 style="margin-top:4px">3D6A1738.JPG</h3></div>
-            <div class="seg" style="width:300px"><button onclick="baMode('before')">Before</button><button onclick="baMode('after')">After</button><button class="on" onclick="baMode('split')">Split</button><button onclick="baMode('side')">Side&nbsp;by&nbsp;side</button></div>
-          </div>
-          <div class="ba" id="prev-ba" style="flex:1;min-height:380px">
-            <div class="layer before"></div><div class="layer after"></div>
-            <div class="handle"></div><div class="knob">⇄</div>
-            <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
-            <div class="genov"><span class="spin"></span><span>Generating preview…</span></div>
-          </div>
-        </main>
-        <aside class="panel" style="border-radius:0;border-top:0;border-right:0;overflow:auto">
-          <div class="sec"><h4>Global adjustments</h4><div id="globals" class="grid" style="grid-template-columns:1fr 1fr;gap:8px"></div></div>
-          <div class="sec"><h4>Region adjustments</h4><div id="regions" class="grid" style="gap:9px"></div></div>
-          <div class="sec">
-            <div class="row between" style="cursor:pointer" onclick="this.parentNode.classList.toggle('open');document.getElementById('why').style.display=document.getElementById('why').style.display==='none'?'block':'none'">
-              <h4 style="margin:0">Why this edit?</h4><span class="dim">▾</span></div>
-            <div id="why" style="margin-top:12px"></div>
-          </div>
-          <div class="sec">
-            <div class="row" style="gap:8px"><button class="btn primary grow" onclick="startRun()">Run batch</button><button class="btn" onclick="go('concepts')">Adjust</button></div>
-            <div class="row" style="gap:8px;margin-top:8px"><button class="btn ghost grow">Accept</button><button class="btn ghost grow">Apply to similar</button></div>
-          </div>
-        </aside>
-      </div>
-    </section>
-
-    <!-- ===================== 5 · RUNNING ===================== -->
-    <section class="screen" data-screen="running">
-      <div class="wrap" style="max-width:1080px">
-        <div class="card" style="padding:22px;margin-bottom:18px">
-          <div class="row between" style="margin-bottom:14px">
-            <div class="row" style="gap:14px"><div class="photo" id="run-thumb" style="width:84px;height:60px;border-radius:9px"></div>
-              <div><div class="eyebrow">Now editing</div><h3 id="run-name" style="margin-top:3px">3D6A1751.JPG</h3><span class="tip" id="run-sub">Applying region edits · sky, mountain, snow, grass</span></div></div>
-            <div style="text-align:right"><div class="h-display" id="run-pct" style="font-size:26px">0%</div><div class="tip" id="run-eta">estimating…</div></div>
-          </div>
-          <div class="bar"><i id="run-bar" style="width:0"></i></div>
-          <div class="row between" style="margin-top:14px">
-            <div class="row" style="gap:8px"><span class="badge b-done"><span class="b-led"></span><span id="c-done">0</span> finished</span>
-              <span class="badge b-review"><span class="b-led"></span><span id="c-rev">0</span> review</span>
-              <span class="badge b-fail"><span class="b-led"></span><span id="c-fail">0</span> failed</span></div>
-            <div class="row" style="gap:8px"><button class="btn sm" id="pauseBtn" onclick="togglePause()">Pause</button><button class="btn sm" onclick="cancelRun()">Cancel</button></div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="sec row between" style="border-bottom:1px solid var(--line)"><b style="font-size:13px">Queue</b><span class="tip" id="q-summary"></span></div>
-          <div id="queue" style="max-height:320px;overflow:auto"></div>
-          <div class="sec" style="border-top:1px solid var(--line)">
-            <div class="row between" style="cursor:pointer" onclick="document.getElementById('log').style.display=document.getElementById('log').style.display==='none'?'block':'none'">
-              <b class="tip">Technical log</b><span class="dim">▾</span></div>
-            <pre id="log" style="display:none;margin:10px 0 0;font-size:11px;color:var(--ink-3);white-space:pre-wrap;font-family:ui-monospace,monospace"></pre>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===================== 6 · REVIEW ===================== -->
-    <section class="screen" data-screen="review">
-      <div class="wrap">
-        <div class="row between" style="margin-bottom:16px">
-          <div><div class="eyebrow">Batch complete</div><h2 style="font-size:22px;margin-top:4px">Review & export</h2></div>
-          <div class="row" style="gap:8px">
-            <button class="btn">Export notes (JSON)</button>
-            <button class="btn primary" onclick="alert('Exporting batch…')">Export batch →</button>
-          </div>
-        </div>
-        <div class="row between" style="margin-bottom:14px">
-          <div class="row" id="filters" style="gap:8px"></div>
-          <div class="row" style="gap:8px">
-            <span class="tip">Export as</span>
-            <div class="seg" style="width:230px"><button class="on">JPEG</button><button>TIFF</button><button>Before/After</button></div>
-          </div>
-        </div>
-        <div class="grid" id="reviewGrid" style="grid-template-columns:repeat(4,1fr)"></div>
-      </div>
-    </section>
-
-    <!-- ===================== 7 · SETTINGS ===================== -->
-    <section class="screen" data-screen="settings">
-      <div class="wrap" style="max-width:920px">
-        <h2 style="font-size:22px;margin-bottom:18px">Settings</h2>
-        <div class="grid" style="gap:16px">
-          <div class="card"><div class="sec"><h4>General</h4>
-            <div class="row between" style="margin-bottom:14px"><div><b>Default export folder</b><div class="tip">Where edited photos are written.</div></div><button class="btn sm" onclick="pickFolder()">Choose…</button></div>
-            <div class="kv"><b>Cache location</b><span class="v">~/Library/Caches/autoedit</span></div>
-          </div></div>
-          <div class="card"><div class="sec"><h4>Performance</h4>
-            <div class="row between" style="margin-bottom:14px"><div><b>Compute device</b><div class="tip">Apple M-series GPU detected.</div></div>
-              <div class="seg" style="width:200px"><button class="on">Auto (MPS)</button><button>CPU</button></div></div>
-            <label class="lbl">Analysis resolution — higher = sharper masks, slower</label>
-            <input type="range" min="1024" max="2048" value="1536"/>
-          </div></div>
-          <div class="card"><div class="sec"><h4>SAM / Segmentation</h4>
-            <div class="kv"><b>Backend</b><span class="v">SAM 3 (facebook/sam3) · ready</span></div>
-            <div class="kv"><b>Weights</b><span class="v">cached · 3.1 GB</span></div>
-            <div class="row between" style="margin-top:12px"><div><b>Min mask confidence</b><div class="tip">Drop low-confidence detections.</div></div><span class="v">0.40</span></div>
-            <input type="range" min="0" max="100" value="40" style="margin-top:8px"/>
-          </div></div>
-          <div class="card"><div class="sec"><h4>AI brief planner (optional)</h4>
-            <label class="lbl">Anthropic API key — used only if the planner is on</label>
-            <input class="input" type="password" placeholder="sk-ant-… (stored locally)"/>
-            <div class="note warn" style="margin-top:12px"><span>⚠</span> When the planner is on, a small thumbnail + image stats are sent to your provider. Full-res pixels never leave your machine.</div>
-          </div></div>
-          <div class="card"><div class="sec"><h4>Privacy</h4>
-            <div class="row between"><div><b>Local-only mode</b><div class="tip">Hard-disable all network calls, including the planner.</div></div><div class="toggle on" data-toggle></div></div>
-          </div></div>
-        </div>
-      </div>
-    </section>
-
+    <!-- right develop panel -->
+    <aside class="develop" id="develop">
+      <div class="dsec"><div class="dsec-h"><h4>Style</h4></div>
+        <div class="dsec-b"><div class="styles" id="styles"></div></div></div>
+      <div class="dsec"><div class="dsec-h"><h4>Intensity</h4></div>
+        <div class="dsec-b"><div class="iseg" id="intensity">
+          <button data-i="0.5">Subtle</button><button data-i="0.8" class="on">Balanced</button><button data-i="1.0">Strong</button>
+        </div></div></div>
+      <div class="dsec collap"><div class="dsec-h" data-collap><h4>Concepts</h4>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="dsec-b"><div id="concepts"><div class="tip">Open a photo to detect regions.</div></div>
+          <div style="display:flex;gap:7px;margin-top:9px">
+            <input class="tinput" id="newConcept" placeholder="add a concept — e.g. dress, glacier"/>
+            <button class="minibtn" id="addConcept">Add</button></div></div></div>
+      <div class="dsec collap"><div class="dsec-h" data-collap><h4>Adjustments</h4>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="dsec-b"><div id="globals"><div class="tip">No edit yet.</div></div></div></div>
+      <div class="dsec collap"><div class="dsec-h" data-collap><h4>Regions</h4>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="dsec-b"><div id="regions"><div class="tip">No region edits.</div></div></div></div>
+      <div class="dsec collap closed"><div class="dsec-h" data-collap><h4>Why this edit</h4>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="dsec-b"><div id="why" class="why"><div class="tip">No notes yet.</div></div></div></div>
+    </aside>
   </div>
+
+  <!-- ===== status bar ===== -->
+  <footer class="statusbar">
+    <span id="sbCount">No folder</span>
+    <span id="sbSel" class="tab"></span>
+    <span id="sbScene"></span>
+    <span id="sbQuality"></span>
+    <span class="sp"></span>
+    <span id="sbBackend">SAM 3 · MPS</span>
+    <span class="led"><i></i> <span id="sbLocal">Local-only</span></span>
+  </footer>
+
+  <!-- ===== run drawer ===== -->
+  <div class="drawer" id="runDrawer">
+    <div class="drawer-h">
+      <span class="ttl" id="runTitle">Editing batch…</span>
+      <div class="prog"><i id="runBar" style="width:0"></i></div>
+      <span class="tab" id="runPct" style="font-size:12px;font-weight:600">0%</span>
+      <span class="tip" id="runEta">estimating…</span>
+      <span class="bdg b-done"><i></i><span id="cDone">0</span></span>
+      <span class="bdg b-review"><i></i><span id="cRev">0</span></span>
+      <span class="bdg b-fail"><i></i><span id="cFail">0</span></span>
+      <button class="minibtn" id="pauseBtn">Pause</button>
+      <button class="minibtn" id="cancelBtn">Cancel</button>
+    </div>
+    <div class="qlist" id="qlist"></div>
+  </div>
+
+  <!-- ===== review modal ===== -->
+  <div class="scrim" id="reviewScrim"><div class="modal">
+    <div class="modal-h"><h3 id="reviewTitle">Review &amp; export</h3>
+      <div style="display:flex;gap:8px">
+        <button class="minibtn" id="reviewClose">Close</button>
+        <button class="tbtn primary" id="exportBtn"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M5 21h14"/></svg>Export</button></div></div>
+    <div class="modal-b"><div class="rgrid" id="reviewGrid"></div></div>
+  </div></div>
+
+  <!-- ===== settings modal ===== -->
+  <div class="scrim" id="settingsScrim"><div class="modal" style="width:min(640px,92vw)">
+    <div class="modal-h"><h3>Settings</h3><button class="minibtn" id="settingsClose">Done</button></div>
+    <div class="modal-b">
+      <div class="field"><label>Compute device</label>
+        <div class="seg" style="width:200px"><button class="on">Auto (MPS)</button><button>CPU</button></div></div>
+      <div class="field"><label>Output format</label>
+        <div class="seg" style="width:220px"><button class="on">JPEG</button><button>TIFF (16-bit)</button></div></div>
+      <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
+      <div class="kv"><b>RAW decode</b><span class="v">rawpy · .dng/.cr2/.nef/.arw</span></div>
+      <div class="kv"><b>Cache</b><span class="v">~/Library/Caches/autoedit</span></div>
+      <div class="field" style="margin-top:16px"><label>Anthropic API key — only used if the brief planner is on</label>
+        <input class="tinput" type="password" placeholder="sk-ant-… (stored locally)" style="height:34px"/></div>
+      <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        Runs fully on-device. Only a thumbnail + stats leave the machine, and only if you turn the planner on — full-resolution pixels never do.</div>
+    </div>
+  </div></div>
+
 </div>
 
 <script>
 /* ============================================================================
-   AutoEdit Studio — prototype interactions.
-   Self-contained: fake "photos" are drawn to <canvas>; repetitive UI is rendered
-   from mock arrays. When SERVED by `autoedit ui`, real endpoints (/api/styles,
-   /api/list, /api/preview, /api/pick) progressively enhance the experience.
+   AutoEdit Studio — single-workspace editor. All real endpoints preserved:
+   /api/styles /api/list /api/preview /api/pick /api/jobs /api/thumb
    ========================================================================== */
 const $ = s => document.querySelector(s);
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
 
-/* ---- live app state (real photos when served) --------------------------- */
-const STATE={served:false,dir:null,mode:'folder',files:[],sel:0,style:'natural',intensity:0.8,preview:null,loading:false};
+const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural',intensity:0.8,preview:null,loading:false,
+  run:new Set()};  /* paths chosen for the batch; empty = run all */
 const real=()=>STATE.files.length>0;
 const thumbURL=(p,px=360)=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p);
 const joinPath=(d,f)=>d?(d.replace(/\/+$/,'')+'/'+f):f;
 
-/* ---- mock data ---------------------------------------------------------- */
-const STEPS=[['home','Import'],['setup','Setup'],['concepts','Concepts'],['preview','Preview'],['running','Run'],['review','Review']];
 const STYLES=[
-  ['Natural','True-to-life, balanced','#6ea8ff','natural'],['Editorial','High-contrast, crisp','#b98bff','editorial'],
-  ['Warm Film','Golden, soft rolloff','#ffb877','warm_film'],['Punchy Landscape','Deep skies, vivid','#4fd1a0','dramatic'],
-  ['Clean Portrait','Flattering, subtle','#ff9bb0','natural'],['Moody Cinematic','Teal-orange grade','#5fb6d6','dramatic']];
-const LOOKS=['overcast','bluesky','sunset','forest','lake','glacier'];
-const PHOTOS=Array.from({length:12},(_,i)=>({n:i+1,name:`3D6A${1738+i*7}.JPG`,look:LOOKS[i%LOOKS.length],
-  status:['done','done','review','done','done','fail','done','done','done','review','done','done'][i]}));
-const CONCEPTS=[['Sky',96,'#5b86ff'],['Mountains',88,'#9b8cff'],['Snow',83,'#7fe0ff'],['Foliage',79,'#54d08a'],
-  ['Water',0,'#36b5d8'],['Subject',0,'#ff9d57'],['Skin',0,'#ff8aa0'],['Background',71,'#8a93a2'],['Road',0,'#c8b08a'],['Animal',0,'#e0b34a']];
-const GLOBALS=[['Exposure','+0.05 EV'],['Contrast','+18'],['Highlights','−42'],['Shadows','+24'],['Whites','−14'],['Blacks','−10'],
-  ['White balance','−6 cool'],['Vibrance','+22'],['Saturation','+4'],['Dehaze','+18'],['Clarity','+12'],['Tone curve','S +10'],['Color grade','teal/orange'],['Sharpen','+18']];
-const REGIONS=[['Sky','darkened · dehazed · cooled, richer blue','#5b86ff'],['Snow','highlights pulled, texture restored','#7fe0ff'],
-  ['Mountain','dehaze +22 · clarity +26, ridges defined','#9b8cff'],['Foliage','warmed, neon greens tamed','#54d08a'],['Grass','lifted + warm gold, clarity added','#a9c34a']];
-const WHY=['Scene classified as landscape (sky + mountain + snow detected).','Highlights recovered −42 to hold pale sky and snow texture.',
-  'Sky darkened and cooled for weight; clarity/dehaze on mountains defines ridgelines.','Foreground grass warmed and lifted out of shadow.',
-  'Cool-shadow / warm-highlight grade + gentle S-curve + vignette for a finished look.','No skin or people detected → portrait protections skipped.'];
-
-/* ---- fake photo renderer (canvas) -------------------------------------- */
-const PAL={
-  overcast:{sky:['#9aa6b4','#b9c2cc'],land:['#3c4a3a','#5d6b4a'],snow:'#e9eef3',edit:1},
-  bluesky:{sky:['#2f6fd6','#7fb0ee'],land:['#33402f','#566b3f'],snow:'#f3f7fb',edit:1},
-  sunset:{sky:['#3a3760','#e6975a'],land:['#241f2e','#4a3550'],snow:'#f0d9c4',edit:1},
-  forest:{sky:['#7e8a93','#aeb9c2'],land:['#22331f','#3f5a2c'],snow:'#dfe7ec',edit:1},
-  lake:{sky:['#3360b0','#86b6e6'],land:['#2a3b30','#46603f'],snow:'#eef5fb',edit:1},
-  glacier:{sky:['#48597a','#9fb3cf'],land:['#1f2630','#3a4659'],snow:'#eef6fb',edit:1},
-  portrait:{sky:['#7c8a78','#a9b59c'],land:['#5a4636','#7b5f49'],snow:'#efe2d6',edit:1}};
-function draw(cv, look, after){
-  const p=PAL[look]||PAL.overcast, w=cv.width=cv.clientWidth*2, h=cv.height=cv.clientHeight*2, x=cv.getContext('2d');
-  const boost=after?1:0;
-  // sky
-  let g=x.createLinearGradient(0,0,0,h*.62);
-  g.addColorStop(0,shade(p.sky[0],after?-18:0));g.addColorStop(1,shade(p.sky[1],after?-6:0));
-  x.fillStyle=g;x.fillRect(0,0,w,h*.66);
-  // mountains (two ridges)
-  ridge(x,w,h,.58,p.land[0],after); ridge(x,w,h,.50,shade(p.land[0],-8),after,true);
-  // snow caps
-  x.fillStyle=shade(p.snow,after?6:0); snowcaps(x,w,h);
-  // land
-  g=x.createLinearGradient(0,h*.6,0,h);g.addColorStop(0,shade(p.land[1],boost? 6:0));g.addColorStop(1,shade(p.land[0],after?8:0));
-  x.fillStyle=g;x.fillRect(0,h*.6,w,h*.4);
-  // vignette (after only)
-  if(after){const rg=x.createRadialGradient(w/2,h/2,h*.3,w/2,h/2,h*.8);rg.addColorStop(0,'rgba(0,0,0,0)');rg.addColorStop(1,'rgba(0,0,0,.34)');x.fillStyle=rg;x.fillRect(0,0,w,h);}
-  // grain
-}
-function ridge(x,w,h,base,col,after,back){x.fillStyle=shade(col,after?(back?-4:8):0);x.beginPath();x.moveTo(0,h);let y=h*base;x.lineTo(0,y);
-  for(let i=0;i<=w;i+=w/10){y=h*base+Math.sin(i/w*6+(back?1:0))*h*.06-(back?h*.04:0);x.lineTo(i,y);}x.lineTo(w,h);x.closePath();x.fill();}
-function snowcaps(x,w,h){x.globalAlpha=.85;for(let i=0;i<6;i++){const cx=w*(.1+i*.16);x.beginPath();x.moveTo(cx,h*.5);x.lineTo(cx+w*.05,h*.44);x.lineTo(cx+w*.1,h*.52);x.closePath();x.fill();}x.globalAlpha=1;}
-function shade(hex,amt){const n=parseInt(hex.slice(1),16);let r=(n>>16)+amt,g=(n>>8&255)+amt,b=(n&255)+amt;
-  r=Math.max(0,Math.min(255,r));g=Math.max(0,Math.min(255,g));b=Math.max(0,Math.min(255,b));return`rgb(${r},${g},${b})`;}
-function photoInto(node,look,after=true){node.classList.add('photo');node.innerHTML='';const c=el('canvas');c._look=look;c._after=after;node.appendChild(c);
-  requestAnimationFrame(()=>{draw(c,look,after);});}
-function baInto(node,look){const b=node.querySelector('.before'),a=node.querySelector('.after');
-  photoInto(b,look,false);photoInto(a,look,true);}
-
-/* ---- navigation --------------------------------------------------------- */
-let cur='home';
-function go(id){cur=id;document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
-  renderStepper();window.scrollTo?.(0,0);onEnter(id);}
-function renderStepper(){const idx=STEPS.findIndex(s=>s[0]===cur);
-  $('#stepper').innerHTML='';STEPS.forEach((s,i)=>{const b=el('div','step'+(s[0]===cur?' active':(i<idx?' done':'')));
-    b.innerHTML=`<span class="n">${i<idx?'✓':i+1}</span>${s[1]}`;b.onclick=()=>go(s[0]);$('#stepper').appendChild(b);
-    if(i<STEPS.length-1)$('#stepper').appendChild(el('span','sep','›'));});}
-
-function onEnter(id){
-  const sc=document.querySelector(`.screen[data-screen="${id}"]`);
-  requestAnimationFrame(()=>sc&&sc.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);}));
-  if(id==='setup'&&!real()){photoInto($('#setup-prev'),'overcast');}
-  if(id==='concepts'){drawMask();if(!STATE.preview){if(real()&&STATE.served)loadPreview();else baInto($('#concept-ba'),'overcast');}}
-  if(id==='preview'){initSplit($('#prev-ba'));if(!STATE.preview){if(real()&&STATE.served)loadPreview();else baInto($('#prev-ba'),'overcast');}}
-  if(id==='running'&&!real()){photoInto($('#run-thumb'),'bluesky');}
-}
-
-/* ---- render mock UI ----------------------------------------------------- */
-function recentCard(name,n,style,when){const c=el('div','card');c.style.cssText='padding:10px;cursor:pointer';
-  c.innerHTML=`<div class="photo" style="height:104px;border-radius:9px"></div>
-    <div class="row between" style="margin-top:10px"><b style="font-size:13px">${name}</b><span class="tip">${when}</span></div>
-    <div class="row between" style="margin-top:3px"><span class="tip">${n} photos</span><span class="badge b-edit">${style}</span></div>`;
-  c.onclick=()=>go('setup');photoInto(c.querySelector('.photo'),LOOKS[(n)%LOOKS.length]);return c;}
-function renderHome(){const r=$('#recent');r.innerHTML='';
-  [['Alaska — Summer 2026',1238,'Punchy Landscape','2d ago'],['Wedding · Bennett',412,'Clean Portrait','5d ago'],['Iceland ring road',863,'Moody Cinematic','1w ago']]
-  .forEach(p=>r.appendChild(recentCard(...p)));}
-function renderRail(){const r=$('#rail');r.innerHTML='';
-  if(real()){const items=STATE.files.slice(0,60);
-    $('#imp-count').textContent=STATE.files.length+' photos'+(STATE.files.length>60?' (60 shown)':'');
-    items.forEach((p,i)=>{const t=el('div','thumb'+(i===STATE.sel?' sel':''));t.style.height='84px';
-      t.innerHTML=`<div class="no">${i+1}</div><img src="${thumbURL(p.path,160)}" loading="lazy" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"/>`;
-      t.onclick=()=>selectPhoto(i);r.appendChild(t);});
-    return;}
-  $('#imp-count').textContent=PHOTOS.length+' photos';
-  PHOTOS.forEach((p,i)=>{const t=el('div','thumb'+(i===0?' sel':''));t.style.height='84px';
-    t.innerHTML=`<div class="no">${p.n}</div><div class="st">${badge(p.status)}</div><div class="photo" style="position:absolute;inset:0"></div>`;
-    t.onclick=()=>{document.querySelectorAll('#rail .thumb').forEach(x=>x.classList.remove('sel'));t.classList.add('sel');$('#setup-name').textContent=p.name;photoInto($('#setup-prev'),p.look);};
-    r.appendChild(t);photoInto(t.querySelector('.photo'),p.look);});}
-function selectPhoto(i){STATE.sel=i;STATE.preview=null;
-  document.querySelectorAll('#rail .thumb').forEach((t,j)=>t.classList.toggle('sel',j===i));
-  const p=STATE.files[i];$('#setup-name').textContent=p.name;
-  const prev=$('#setup-prev');prev.classList.add('photo');
-  prev.innerHTML=`<img src="${thumbURL(p.path,1100)}" style="width:100%;height:100%;object-fit:contain;background:#0c0e12"/>`;}
-function badge(s){const m={done:['b-done','Finished'],review:['b-review','Review'],fail:['b-fail','Failed'],run:['b-run','Editing'],wait:['b-wait','Waiting'],edit:['b-edit','Analyzing']};
-  const [c,l]=m[s]||m.wait;return `<span class="badge ${c}"><span class="b-led"></span>${l}</span>`;}
-function renderStyles(){const s=$('#styles');s.innerHTML='';
-  const ON='padding:11px;cursor:pointer;border-color:rgba(91,124,255,.55);background:var(--grad-soft)',OFF='padding:11px;cursor:pointer';
-  STYLES.forEach((st,i)=>{const c=el('div','card');c.style.cssText=i===0?ON:OFF;
-  c.innerHTML=`<div style="height:6px;border-radius:99px;background:${st[2]};margin-bottom:9px"></div><b style="font-size:13px">${st[0]}</b><div class="tip" style="margin-top:2px">${st[1]}</div>`;
-  c.onclick=()=>{[...s.children].forEach(x=>x.style.cssText=OFF);c.style.cssText=ON;STATE.style=st[3];STATE.preview=null;};
-  s.appendChild(c);});}
-function renderConcepts(){const c=$('#concepts');c.innerHTML='';CONCEPTS.forEach(([name,conf,col])=>{
-  const present=conf>0,on=conf>=70;const chip=el('div','chip'+(on?' on':''));
-  chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:${col}"></span><span class="grow">${name}</span>
-    ${present?`<span class="conf">${conf}%</span>`:'<span class="conf" style="color:var(--ink-4)">—</span>'}<span class="ed">✎</span>`;
-  chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);});}
-function renderGlobals(){const g=$('#globals');g.innerHTML='';GLOBALS.forEach(([k,v])=>{
-  g.appendChild(el('div','', `<div style="background:#14171d;border:1px solid var(--line);border-radius:9px;padding:8px 10px">
-    <div class="tip" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em">${k}</div>
-    <b style="font-variant-numeric:tabular-nums">${v}</b></div>`));});}
-function renderRegions(){const r=$('#regions');r.innerHTML='';REGIONS.forEach(([name,desc,col])=>{
-  r.appendChild(el('div','', `<div class="row" style="gap:10px;padding:9px 11px;background:#14171d;border:1px solid var(--line);border-radius:10px">
-    <span class="sw" style="width:10px;height:24px;border-radius:4px;background:${col};flex:none"></span>
-    <div><b style="font-size:12.5px">${name}</b><div class="tip">${desc}</div></div></div>`));});}
-function renderWhy(){$('#why').innerHTML=WHY.map(w=>`<div class="row" style="gap:9px;margin-bottom:8px;align-items:flex-start"><span style="color:var(--accent)">•</span><span style="font-size:12.5px;color:var(--ink-2)">${w}</span></div>`).join('');$('#why').style.display='none';}
-function renderFilters(){const f=$('#filters');f.innerHTML='';
-  [['All',12],['Accepted',9],['Needs review',2],['Failed',1]].forEach(([l,n],i)=>{const c=el('div','chip'+(i===0?' on':''));
-   c.innerHTML=`${l} <span class="conf">${n}</span>`;c.onclick=()=>{[...f.children].forEach(x=>x.classList.remove('on'));c.classList.add('on');};f.appendChild(c);});}
-function renderReview(){const g=$('#reviewGrid');g.innerHTML='';PHOTOS.forEach(p=>{const warn=p.status==='review';
-  const c=el('div','card');c.style.cssText='padding:0;overflow:hidden';
-  c.innerHTML=`<div class="photo" style="height:130px"></div>
-   <div class="sec" style="padding:11px 12px">
-     <div class="row between"><b style="font-size:12.5px">${p.name}</b>${badge(p.status)}</div>
-     <div class="row between" style="margin-top:9px">
-       <span class="tip">score ${p.status==='fail'?'—':(82+p.n%14)}</span>
-       ${warn?'<span class="badge b-review" title="Possible clipped highlights"><span class="b-led"></span>halo risk</span>':p.status==='fail'?'<span class="badge b-fail"><span class="b-led"></span>unreadable</span>':'<span class="badge b-done"><span class="b-led"></span>safe</span>'}
-     </div></div>`;
-  g.appendChild(c);photoInto(c.querySelector('.photo'),p.look);});}
-
-/* ---- before/after split drag ------------------------------------------- */
-function initSplit(node){let drag=false;const set=e=>{const r=node.getBoundingClientRect();
-  const x=Math.max(2,Math.min(98,((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width*100));node.style.setProperty('--split',x+'%');};
-  node.onpointerdown=e=>{drag=true;set(e);};window.addEventListener('pointermove',e=>drag&&set(e));window.addEventListener('pointerup',()=>drag=false);}
-function baMode(m){const n=$('#prev-ba');document.querySelectorAll('#preview .seg button').forEach(b=>b.classList.remove('on'));event.target.classList.add('on');
-  n.style.setProperty('--split',m==='before'?'100%':m==='after'?'0%':'50%');}
-let maskOn=false;
-function toggleMask(){maskOn=!maskOn;$('#cmask').classList.toggle('show',maskOn);$('#maskToggle').classList.toggle('primary',maskOn);}
-function drawMask(){const c=$('#cmask');c.innerHTML=`<svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100">
-  <rect x="0" y="0" width="100" height="42" fill="#5b86ff"/><polygon points="0,58 18,46 40,56 60,44 82,55 100,50 100,66 0,66" fill="#9b8cff"/>
-  <rect x="0" y="64" width="100" height="36" fill="#54d08a"/></svg>`;}
-
-/* ---- workflow actions --------------------------------------------------- */
-function analyze(){go('concepts');}   // onEnter loads the real preview when served
-function addConcept(){const v=$('#newConcept').value.trim();if(!v)return;const c=$('#concepts');
-  const chip=el('div','chip on');chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:#8b9bb5"></span><span class="grow">${v}</span><span class="conf">new</span><span class="ed">✎</span>`;
-  chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);$('#newConcept').value='';}
-let runT=null,paused=false,JOB=null,pollT=null;
-function startRun(){
-  if(!real()||!STATE.served){go('running');runBatch();return;}   // standalone demo fallback
-  go('running');$('#queue').innerHTML='';$('#log').textContent='';$('#run-bar').style.width='0';$('#run-pct').textContent='0%';
-  $('#c-done').textContent=$('#c-rev').textContent=$('#c-fail').textContent='0';
-  const body={style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true};
-  if(STATE.mode==='single')body.files=[STATE.files[STATE.sel].path];else body.input_dir=STATE.dir;
-  fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(r=>r.json()).then(j=>{if(j.error){alert(j.error);return;}JOB=j;renderQueueReal(j);pollJob();})
-    .catch(e=>alert('Could not start job: '+e));
-}
+  ['Natural','True-to-life','natural'],['Editorial','High-contrast','editorial'],
+  ['Warm Film','Golden, soft','warm_film'],['Dramatic','Deep, cinematic','dramatic']];
+const CCOL={sky:'#5b8fd6',mountain:'#9b8cff',rock:'#9b8cff',snow:'#86d4ec',foliage:'#5cc08a',trees:'#5cc08a',
+  grass:'#a9c34a',water:'#36b5d8',skin:'#e0908a',subject:'#e0a35a',background:'#8a8d96'};
+const ccol=n=>CCOL[String(n).toLowerCase()]||'#8a8d96';
 const QMAP={waiting:'wait',editing:'run',finished:'done',review:'review',failed:'fail'};
-const cssid=s=>'q_'+String(s).replace(/[^a-z0-9]/gi,'_');
-function renderQueueReal(j){const q=$('#queue');q.innerHTML='';
-  j.items.slice(0,200).forEach(it=>{const row=el('div','row between');row.id=cssid(it.name);
-    row.style.cssText='padding:11px 16px;border-bottom:1px solid var(--line)';
-    row.innerHTML=`<div class="row" style="gap:11px"><img src="${thumbURL(it.src,96)}" style="width:46px;height:32px;border-radius:6px;object-fit:cover"/><b style="font-size:12.5px">${it.name}</b></div><span class="qs">${badge(QMAP[it.status]||'wait')}</span>`;
-    q.appendChild(row);});}
-function pollJob(){clearInterval(pollT);pollT=setInterval(()=>{
-  fetch('/api/jobs/'+JOB.id).then(r=>r.json()).then(j=>{JOB=j;updateRunUI(j);
-    if(['done','cancelled','error'].includes(j.status)){clearInterval(pollT);setTimeout(()=>{renderReviewReal(j);go('review');},600);}
-  }).catch(()=>{});},800);}
-function updateRunUI(j){const pct=j.total?Math.round(j.processed/j.total*100):0;
-  $('#run-bar').style.width=pct+'%';$('#run-pct').textContent=pct+'%';
-  $('#c-done').textContent=j.done;$('#c-rev').textContent=j.review;$('#c-fail').textContent=j.failed;
-  $('#q-summary').textContent=`${j.done} finished · ${j.review} review · ${j.failed} failed`;
-  $('#run-eta').textContent=j.status==='done'?'done':(j.status==='paused'?'paused':(j.eta_s!=null?`~${j.eta_s}s remaining`:'estimating…'));
-  $('#run-sub').textContent='Output → '+j.out_dir;
-  const cur=j.items[j.current];
-  if(cur){$('#run-name').textContent=cur.name;$('#run-thumb').innerHTML=`<img src="${thumbURL(cur.src,160)}" style="width:100%;height:100%;object-fit:cover"/>`;}
-  j.items.slice(0,200).forEach(it=>{const row=document.getElementById(cssid(it.name));if(row)row.querySelector('.qs').innerHTML=badge(QMAP[it.status]||'wait');});}
-function renderReviewReal(j){const g=$('#reviewGrid');g.innerHTML='';
-  document.querySelector('#review .eyebrow').textContent=`Batch complete · ${j.done} edited · saved to ${j.out_dir}`;
-  j.items.slice(0,200).forEach(it=>{const c=el('div','card');c.style.cssText='padding:0;overflow:hidden';
-    const after=it.out?thumbURL(it.out,420):thumbURL(it.src,420);
-    const safe=it.status==='failed'?`<span class="badge b-fail"><span class="b-led"></span>${it.error?'failed':'unreadable'}</span>`
-      :it.warn?`<span class="badge b-review"><span class="b-led"></span>${it.warn}</span>`
-      :`<span class="badge b-done"><span class="b-led"></span>safe</span>`;
-    c.innerHTML=`<div class="photo" style="height:130px"><img class="rv" src="${after}" style="width:100%;height:100%;object-fit:cover"/></div>
-      <div class="sec" style="padding:11px 12px"><div class="row between"><b style="font-size:12.5px">${it.name}</b>${badge(QMAP[it.status]||'wait')}</div>
-      <div class="row between" style="margin-top:9px"><button class="btn sm" data-ba>Before</button><span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${safe}</div></div>`;
-    const img=c.querySelector('.rv'),btn=c.querySelector('[data-ba]');let af=true;
-    btn.onclick=()=>{af=!af;img.src=af?after:thumbURL(it.src,420);btn.textContent=af?'Before':'After';};
-    g.appendChild(c);});
-  $('#filters').innerHTML='';[['All',j.total],['Accepted',j.done],['Needs review',j.review],['Failed',j.failed]]
-    .forEach(([l,n],i)=>{const ch=el('div','chip'+(i===0?' on':''));ch.innerHTML=`${l} <span class="conf">${n}</span>`;
-      ch.onclick=()=>{[...$('#filters').children].forEach(x=>x.classList.remove('on'));ch.classList.add('on');};$('#filters').appendChild(ch);});}
-function togglePause(){
-  if(!JOB){paused=!paused;$('#pauseBtn').textContent=paused?'Resume':'Pause';return;}
-  const act=$('#pauseBtn').textContent==='Pause'?'pause':'resume';
-  fetch('/api/jobs/'+JOB.id+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:act})});
-  $('#pauseBtn').textContent=act==='pause'?'Resume':'Pause';}
-function cancelRun(){if(JOB){fetch('/api/jobs/'+JOB.id+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'cancel'})});}else{clearInterval(runT);go('review');}}
-function runBatch(){let i=0,done=0,rev=0,fail=0,pct=0;const total=PHOTOS.length;const q=$('#queue');q.innerHTML='';
-  const rows=PHOTOS.map(p=>{const row=el('div','row between');row.style.cssText='padding:11px 16px;border-bottom:1px solid var(--line)';
-    row.innerHTML=`<div class="row" style="gap:11px"><div class="photo" style="width:46px;height:32px;border-radius:6px"></div><b style="font-size:12.5px">${p.name}</b></div><span class="qs">${badge('wait')}</span>`;
-    q.appendChild(row);photoInto(row.querySelector('.photo'),p.look);return row;});
-  clearInterval(runT);runT=setInterval(()=>{if(paused)return;
-    if(i<total){rows[i].querySelector('.qs').innerHTML=badge('run');
-      $('#run-name').textContent=PHOTOS[i].name;photoInto($('#run-thumb'),PHOTOS[i].look);
-      const st=PHOTOS[i].status;rows[i].querySelector('.qs').innerHTML=badge(st==='fail'?'fail':st==='review'?'review':'done');
-      if(st==='fail')fail++;else if(st==='review')rev++;else done++;
-      $('#c-done').textContent=done;$('#c-rev').textContent=rev;$('#c-fail').textContent=fail;
-      log(`[${i+1}/${total}] ${PHOTOS[i].name}  scene=landscape  regions=[sky,mountain,snow,grass]  ${(900+Math.random()*400|0)}ms`);
-      i++;}
-    pct=Math.round(i/total*100);$('#run-bar').style.width=pct+'%';$('#run-pct').textContent=pct+'%';
-    $('#run-eta').textContent=i<total?`~${Math.ceil((total-i)*0.9)}s remaining`:'done';
-    $('#q-summary').textContent=`${done} finished · ${rev} review · ${fail} failed`;
-    if(i>=total){clearInterval(runT);setTimeout(()=>go('review'),700);}},520);}
-function log(m){const l=$('#log');l.textContent+=m+'\n';l.scrollTop=l.scrollHeight;}
-
-/* ---- toggles + dropzone ------------------------------------------------- */
-document.addEventListener('click',e=>{if(e.target.matches('[data-toggle]'))e.target.classList.toggle('on');
-  if(e.target.matches('[data-i]')){STATE.intensity={Subtle:0.5,Balanced:0.8,Strong:1.0}[e.target.textContent]||0.8;STATE.preview=null;}
-  if(e.target.closest('.seg')&&e.target.tagName==='BUTTON'&&e.target.closest('[id]')?.id!=='stepper'){const seg=e.target.closest('.seg');if(seg.closest('#preview'))return;seg.querySelectorAll('button').forEach(b=>b.classList.remove('on'));e.target.classList.add('on');}});
-const dz=$('#dropzone');
-dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--grad-soft)';});
-dz.addEventListener('dragleave',()=>{dz.style.borderColor='';dz.style.background='';});
-dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='';dz.style.background='';pickFolder();});
-dz.addEventListener('click',()=>pickFolder());
-
-/* ---- real backend wiring (folder/single pickers + live preview) --------- */
-async function pickFolder(){if(!STATE.served){go('setup');return;}
-  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
-    const files=await(await fetch('/api/list?dir='+encodeURIComponent(path))).json();
-    if(!files.length){alert('No JPG/PNG/TIFF images found in that folder.');return;}
-    STATE.dir=path;STATE.mode='folder';STATE.preview=null;
-    STATE.files=files.map(f=>({name:f,path:joinPath(path,f)}));STATE.sel=0;
-    renderRail();selectPhoto(0);go('setup');
-  }catch(e){alert('Could not open folder: '+e);}}
-async function pickSingle(){if(!STATE.served){go('setup');return;}
-  try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
-    STATE.dir=null;STATE.mode='single';STATE.preview=null;
-    STATE.files=[{name:path.split('/').pop(),path}];STATE.sel=0;
-    renderRail();selectPhoto(0);go('setup');
-  }catch(e){alert('Could not open photo: '+e);}}
-
-const CCOL={sky:'#5b86ff',mountain:'#9b8cff',rock:'#9b8cff',snow:'#7fe0ff',foliage:'#54d08a',trees:'#54d08a',
-  grass:'#a9c34a',water:'#36b5d8',skin:'#ff8aa0',subject:'#ff9d57',background:'#8a93a2'};
-const ccol=n=>CCOL[String(n).toLowerCase()]||'#8b9bb5';
+const BMAP={wait:['b-wait','Waiting'],run:['b-run','Editing'],done:['b-done','Done'],review:['b-review','Review'],fail:['b-fail','Failed']};
+const badge=s=>{const[c,l]=BMAP[s]||BMAP.wait;return`<span class="bdg ${c}"><i></i>${l}</span>`};
 const fmtVal=(k,v)=>k==='exposure'?(v>=0?'+':'')+(+v).toFixed(2)+' EV':(v>=0?'+':'')+Math.round(v);
-function conceptLoading(){$('#concepts').innerHTML='<div class="row" style="gap:10px;color:var(--ink-3)"><span class="b-led" style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>Segmenting with SAM 3… first run downloads/loads the model (~20–40s)</div>';}
-function conceptError(m){$('#concepts').innerHTML=`<div class="note warn"><span>⚠</span> ${m}</div>`;}
-function setBA(sel,before,after){const n=$(sel),b=n.querySelector('.before'),a=n.querySelector('.after');
-  b.classList.add('photo');b.innerHTML=`<img src="${before}" style="width:100%;height:100%;object-fit:cover"/>`;
-  a.classList.add('photo');a.innerHTML=`<img src="${after}" style="width:100%;height:100%;object-fit:cover"/>`;}
-function applyPreview(res){const r=res.result||{};
-  ['#concept-ba','#prev-ba'].forEach(s=>{$(s).classList.remove('gen');$(s).style.setProperty('--split','50%');});
-  setBA('#concept-ba',res.before,res.after);setBA('#prev-ba',res.before,res.after);initSplit($('#prev-ba'));
-  // concepts with REAL confidences
-  const c=$('#concepts');c.innerHTML='';const cs=r.concepts||[];
-  if(!cs.length)c.innerHTML='<span class="tip">No concepts detected in this scene.</span>';
-  cs.forEach(d=>{const conf=Math.round((d.score||0)*100),chip=el('div','chip'+(d.present?' on':''));
-    chip.innerHTML=`<span class="check">✓</span><span class="sw" style="background:${ccol(d.name)}"></span>
-      <span class="grow" style="text-transform:capitalize">${d.name}</span>
-      <span class="conf"${d.present?'':' style="color:var(--ink-4)"'}>${d.present?conf+'%':'not found'}</span><span class="ed">✎</span>`;
-    chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);});
-  // global adjustments (real values)
-  const g=$('#globals');g.innerHTML='';const gs=r.global_settings||{};let any=false;
-  [['exposure','Exposure'],['contrast','Contrast'],['highlights','Highlights'],['shadows','Shadows'],['whites','Whites'],
-   ['blacks','Blacks'],['temp','White balance'],['vibrance','Vibrance'],['saturation','Saturation'],['dehaze','Dehaze'],
-   ['clarity','Clarity'],['curve','Tone curve'],['sharpen','Sharpen']].forEach(([k,l])=>{if(gs[k]){any=true;
-    g.appendChild(el('div','',`<div style="background:#14171d;border:1px solid var(--line);border-radius:9px;padding:8px 10px"><div class="tip" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em">${l}</div><b style="font-variant-numeric:tabular-nums">${fmtVal(k,gs[k])}</b></div>`));}});
-  if(gs.grade_shadows_temp||gs.grade_highlights_temp){any=true;g.appendChild(el('div','',`<div style="background:#14171d;border:1px solid var(--line);border-radius:9px;padding:8px 10px"><div class="tip" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em">Color grade</div><b>teal / orange</b></div>`));}
-  if(!any)g.innerHTML='<span class="tip">No global changes.</span>';
-  // region adjustments (real masks + ops)
-  const rg=$('#regions');rg.innerHTML='';const ms=r.masks||[];
-  if(!ms.length)rg.innerHTML='<span class="tip">No region edits.</span>';
-  ms.forEach(m=>{const ops=m.ops||{};const desc=Object.entries(ops).filter(([k,v])=>v).slice(0,4).map(([k,v])=>`${k} ${fmtVal(k,v)}`).join(' · ')||'—';
-    rg.appendChild(el('div','',`<div class="row" style="gap:10px;padding:9px 11px;background:#14171d;border:1px solid var(--line);border-radius:10px"><span class="sw" style="width:10px;height:24px;border-radius:4px;background:${ccol(m.target)};flex:none"></span><div><b style="font-size:12.5px;text-transform:capitalize">${m.target}</b><div class="tip">${desc}</div></div></div>`));});
-  // why — the real sidecar notes
-  $('#why').innerHTML=(r.notes||[]).map(w=>`<div class="row" style="gap:9px;margin-bottom:8px;align-items:flex-start"><span style="color:var(--accent)">•</span><span style="font-size:12.5px;color:var(--ink-2)">${w}</span></div>`).join('')||'<span class="tip">No notes.</span>';
-  $('#why').style.display='none';
-  document.querySelector('#preview .eyebrow').textContent='Preview · '+(r.style||STATE.style)+(r.scene?' · '+r.scene:'');
-}
-// show the source photo under a "Generating preview…" overlay; the before/after only appears
-// once the edit is actually rendered (applyPreview removes .gen)
-function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].path,1000);
-  ['#concept-ba','#prev-ba'].forEach(s=>{setBA(s,src,src);$(s).classList.add('gen');});conceptLoading();}
+
+/* ---- style + intensity controls ---------------------------------------- */
+function renderStyles(){const s=$('#styles');s.innerHTML='';STYLES.forEach(([nm,ds,id])=>{
+  const c=el('div','sty'+(id===STATE.style?' on':''));c.innerHTML=`<div class="nm">${nm}</div><div class="ds">${ds}</div>`;
+  c.onclick=()=>{STATE.style=id;STATE.preview=null;[...s.children].forEach(x=>x.classList.remove('on'));c.classList.add('on');
+    if(real())loadPreview();};
+  s.appendChild(c);});}
+$('#intensity').addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(!b)return;
+  $('#intensity').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  STATE.intensity=+b.dataset.i;STATE.preview=null;if(real())loadPreview();});
+document.querySelectorAll('[data-collap]').forEach(h=>h.onclick=()=>h.closest('.collap').classList.toggle('closed'));
+
+/* ---- filmstrip ---------------------------------------------------------- */
+function renderFilm(){const f=$('#film');f.innerHTML='';
+  if(!real()){f.appendChild(el('div','empty',
+    `<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+     <div class="ttl">No photos</div><div class="sub">Open a folder to load your shoot.</div>`));
+    $('#filmCount').textContent='0';return;}
+  $('#filmCount').textContent=STATE.files.length;
+  STATE.files.forEach((p,i)=>{const r=el('div','frow'+(i===STATE.sel?' sel':''));r.id='f_'+i;
+    r.innerHTML=`<span class="fck${STATE.run.has(p.path)?' on':''}" title="Include in run">
+        <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
+      <span class="idx">${i+1}</span>
+      <img class="tn" src="${thumbURL(p.path,160)}" loading="lazy" alt="${p.name}">
+      <div class="meta"><div class="nm">${p.name}</div><div class="sub" data-st></div></div>`;
+    r.querySelector('.fck').onclick=ev=>{ev.stopPropagation();toggleRun(p.path);};
+    r.onclick=()=>selectPhoto(i);f.appendChild(r);});}
+
+/* ---- run subset (which photos the batch processes) ---------------------- */
+function toggleRun(path){STATE.run.has(path)?STATE.run.delete(path):STATE.run.add(path);syncRun();}
+function syncRun(){document.querySelectorAll('#film .frow').forEach((r,i)=>{
+    const ck=r.querySelector('.fck');if(ck)ck.classList.toggle('on',STATE.run.has(STATE.files[i].path));});
+  const n=STATE.run.size;$('#runCount').textContent=n?`Run: ${n} of ${STATE.files.length}`:'Run: all';
+  const lbl=$('#runBtn').querySelector('.lbl');if(lbl)lbl.textContent=n?`Run ${n}`:'Run batch';}
+
+function selectPhoto(i){STATE.sel=i;STATE.preview=null;
+  document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
+  const p=STATE.files[i];
+  $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
+  $('#runBtn').disabled=false;
+  $('#stName').textContent=p.name;$('#stScene').textContent='';
+  $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
+  loadPreview();}
+
+/* ---- before/after view -------------------------------------------------- */
+function setView(v){const ba=$('#ba');ba.className='ba mode-'+v+(ba.classList.contains('gen')?' gen':'');
+  if(v==='split'){ba.style.setProperty('--split','50%');ba.classList.add('cursor-split');}
+  $('#viewseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));}
+$('#viewseg').addEventListener('click',e=>{const b=e.target.closest('[data-v]');if(b)setView(b.dataset.v);});
+(function splitDrag(){const ba=$('#ba');let drag=false;
+  const set=e=>{if(!ba.classList.contains('mode-split'))return;const r=ba.getBoundingClientRect();
+    const x=Math.max(1,Math.min(99,((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width*100));
+    ba.style.setProperty('--split',x+'%');};
+  ba.addEventListener('pointerdown',e=>{drag=true;set(e);});
+  window.addEventListener('pointermove',e=>drag&&set(e));window.addEventListener('pointerup',()=>drag=false);})();
+let maskOn=false;
+$('#maskBtn').onclick=()=>{maskOn=!maskOn;$('#maskOv').classList.toggle('show',maskOn);$('#maskBtn').classList.toggle('primary',maskOn);};
+
+/* ---- preview load + apply ---------------------------------------------- */
+function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].path,1100);
+  $('#baSizer').src=src;$('#baBefore').src=src;$('#baAfter').src=src;
+  $('#ba').classList.add('gen');
+  $('#concepts').innerHTML='<div class="tip" style="display:flex;gap:9px;align-items:center"><span class="spin" style="width:13px;height:13px;border-width:2px"></span>Segmenting with SAM 3… first run loads the model (~20–40s)</div>';}
+
 async function loadPreview(){
-  if(STATE.loading||!real()||!STATE.served)return;
+  if(STATE.loading||!real()||!STATE.served){if(!STATE.served)standaloneNote();return;}
   STATE.loading=true;previewLoading();
   try{const p=STATE.files[STATE.sel];
     const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({file:p.path,style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true})})).json();
-    if(res.error)conceptError(res.error);else{STATE.preview=res;applyPreview(res);}
-  }catch(e){conceptError(String(e));}
-  STATE.loading=false;
+    if(res.error){$('#concepts').innerHTML=`<div class="note warn">${res.error}</div>`;$('#ba').classList.remove('gen');}
+    else{STATE.preview=res;applyPreview(res);}
+  }catch(e){$('#concepts').innerHTML=`<div class="note warn">${e}</div>`;$('#ba').classList.remove('gen');}
+  STATE.loading=false;}
+
+function applyPreview(res){const r=res.result||{};const ba=$('#ba');
+  $('#baBefore').src=res.before;$('#baAfter').src=res.after;$('#baSizer').src=res.after;
+  ba.classList.remove('gen');setView('split');
+  $('#stScene').textContent=r.scene?'· '+r.scene:'';
+  $('#sbScene').textContent=r.scene?'Scene: '+r.scene:'';
+  $('#sbQuality').textContent=r.quality_score!=null?'Quality '+(+r.quality_score).toFixed(2)+(r.needs_review?' · review':''):'';
+
+  // concepts (real confidences)
+  const c=$('#concepts');c.innerHTML='';const cs=r.concepts||[];
+  if(!cs.length)c.innerHTML='<div class="tip">No concepts detected.</div>';
+  cs.forEach(d=>{const conf=Math.round((d.score||0)*100);const chip=el('div','concept'+(d.present?' on':''));
+    chip.innerHTML=`<span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
+      <span class="sw" style="background:${ccol(d.name)}"></span><span class="nm">${d.name}</span>
+      <span class="cf">${d.present?conf+'%':'—'}</span>`;
+    chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);});
+
+  // global adjustments (Lightroom-style value rows)
+  const g=$('#globals');g.innerHTML='';const gs=r.global_settings||{};let any=false;
+  [['exposure','Exposure'],['contrast','Contrast'],['highlights','Highlights'],['shadows','Shadows'],['whites','Whites'],
+   ['blacks','Blacks'],['temp','Temp'],['vibrance','Vibrance'],['saturation','Saturation'],['dehaze','Dehaze'],
+   ['clarity','Clarity'],['curve','Curve'],['sharpen','Sharpen']].forEach(([k,l])=>{if(gs[k]){any=true;
+     const v=gs[k];const cls=v>0?'pos':v<0?'neg':'';
+     g.appendChild(el('div','adj',`<span class="k">${l}</span><span class="v ${cls}">${fmtVal(k,v)}</span>`));}});
+  if(gs.grade_shadows_temp||gs.grade_highlights_temp){any=true;
+    g.appendChild(el('div','adj','<span class="k">Color grade</span><span class="v">teal / warm</span>'));}
+  if(!any)g.innerHTML='<div class="tip">No global changes.</div>';
+
+  // regions
+  const rg=$('#regions');rg.innerHTML='';const ms=r.masks||[];
+  if(!ms.length)rg.innerHTML='<div class="tip">No region edits.</div>';
+  ms.forEach(m=>{const ops=m.ops||{};
+    const desc=Object.entries(ops).filter(([k,v])=>v).slice(0,4).map(([k,v])=>`${k} ${fmtVal(k,v)}`).join(' · ')||'—';
+    const cov=m.coverage?` · ${Math.round(m.coverage*100)}%`:'';
+    rg.appendChild(el('div','region',`<span class="bar" style="background:${ccol(m.target)}"></span>
+      <div><div class="nm">${m.target}${cov}</div><div class="ds">${desc}</div></div>`));});
+
+  // why
+  const notes=r.notes||[];
+  $('#why').innerHTML=notes.length?'<ul>'+notes.map(w=>`<li>${w}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>';
 }
 
+/* ---- concepts add ------------------------------------------------------- */
+$('#addConcept').onclick=()=>{const v=$('#newConcept').value.trim();if(!v)return;
+  const chip=el('div','concept on');chip.innerHTML=`<span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
+    <span class="sw" style="background:#8a8d96"></span><span class="nm">${v}</span><span class="cf">new</span>`;
+  chip.onclick=()=>chip.classList.toggle('on');$('#concepts').appendChild(chip);$('#newConcept').value='';};
+
+/* ---- pickers ------------------------------------------------------------ */
+async function pickFolder(){if(!STATE.served){standaloneNote();return;}
+  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+    const files=await(await fetch('/api/list?dir='+encodeURIComponent(path))).json();
+    if(!files.length){alert('No supported images found in that folder.');return;}
+    STATE.dir=path;STATE.mode='folder';STATE.run.clear();
+    STATE.files=files.map(f=>({name:f,path:joinPath(path,f)}));
+    $('#folderName').textContent=path;$('#sbCount').textContent=files.length+' photos';$('#viewseg').style.display='';$('#maskBtn').style.display='';
+    $('#selbar').style.display='';
+    renderFilm();syncRun();selectPhoto(0);
+  }catch(e){alert('Could not open folder: '+e);}}
+async function pickSingle(){if(!STATE.served){standaloneNote();return;}
+  try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+    STATE.dir=null;STATE.mode='single';STATE.run.clear();STATE.files=[{name:path.split('/').pop(),path}];
+    $('#folderName').textContent=path;$('#sbCount').textContent='1 photo';$('#viewseg').style.display='';$('#maskBtn').style.display='';
+    $('#selbar').style.display='none';
+    renderFilm();selectPhoto(0);
+  }catch(e){alert('Could not open photo: '+e);}}
+$('#openBtn').onclick=pickFolder;$('#openBtn2').onclick=pickFolder;$('#openFileBtn').onclick=pickSingle;
+$('#selAll').onclick=()=>{STATE.run=new Set(STATE.files.map(f=>f.path));syncRun();};
+$('#selNone').onclick=()=>{STATE.run.clear();syncRun();};
+function standaloneNote(){$('#folderName').textContent='Launch with `autoedit ui` for live photos';}
+
+/* ---- batch run (real jobs) --------------------------------------------- */
+let JOB=null,pollT=null;
+$('#runBtn').onclick=startRun;
+function startRun(){if(!real()||!STATE.served)return;
+  $('#runDrawer').classList.add('open');$('#qlist').innerHTML='';
+  $('#runBar').style.width='0';$('#runPct').textContent='0%';$('#cDone').textContent=$('#cRev').textContent=$('#cFail').textContent='0';
+  const body={style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true};
+  const subset=[...STATE.run];
+  if(subset.length)body.files=subset;                              // chosen photos only
+  else if(STATE.mode==='single')body.files=[STATE.files[STATE.sel].path];
+  else body.input_dir=STATE.dir;                                   // whole folder
+  fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){alert(j.error);return;}JOB=j;renderQueue(j);pollJob();})
+    .catch(e=>alert('Could not start job: '+e));}
+const qid=s=>'q_'+String(s).replace(/[^a-z0-9]/gi,'_');
+function renderQueue(j){const q=$('#qlist');q.innerHTML='';j.items.slice(0,300).forEach(it=>{
+  const row=el('div','qrow');row.id=qid(it.name);
+  row.innerHTML=`<img src="${thumbURL(it.src,96)}" alt=""><span class="nm">${it.name}</span><span class="qs">${badge(QMAP[it.status]||'wait')}</span>`;
+  q.appendChild(row);});}
+function pollJob(){clearInterval(pollT);pollT=setInterval(()=>{
+  fetch('/api/jobs/'+JOB.id).then(r=>r.json()).then(j=>{JOB=j;updateRun(j);
+    if(['done','cancelled','error'].includes(j.status)){clearInterval(pollT);
+      setTimeout(()=>{$('#runDrawer').classList.remove('open');renderReview(j);$('#reviewScrim').classList.add('open');},700);}
+  }).catch(()=>{});},800);}
+function updateRun(j){const pct=j.total?Math.round(j.processed/j.total*100):0;
+  $('#runBar').style.width=pct+'%';$('#runPct').textContent=pct+'%';
+  $('#cDone').textContent=j.done;$('#cRev').textContent=j.review;$('#cFail').textContent=j.failed;
+  $('#runEta').textContent=j.status==='done'?'done':j.status==='paused'?'paused':(j.eta_s!=null?`~${j.eta_s}s left`:'estimating…');
+  $('#runTitle').textContent=j.status==='paused'?'Paused':'Editing batch → '+(j.out_dir||'');
+  j.items.slice(0,300).forEach(it=>{const row=document.getElementById(qid(it.name));
+    if(row)row.querySelector('.qs').innerHTML=badge(QMAP[it.status]||'wait');
+    const fr=STATE.files.findIndex(f=>f.name===it.name);
+    if(fr>=0){const st=document.querySelector('#f_'+fr+' [data-st]');if(st)st.innerHTML=badge(QMAP[it.status]||'wait');}});}
+$('#pauseBtn').onclick=()=>{if(!JOB)return;const act=$('#pauseBtn').textContent==='Pause'?'pause':'resume';
+  fetch('/api/jobs/'+JOB.id+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:act})});
+  $('#pauseBtn').textContent=act==='pause'?'Resume':'Pause';};
+$('#cancelBtn').onclick=()=>{if(JOB)fetch('/api/jobs/'+JOB.id+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'cancel'})});
+  $('#runDrawer').classList.remove('open');};
+
+/* ---- review modal ------------------------------------------------------- */
+function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';
+  $('#reviewTitle').textContent=`Review · ${j.done} edited · ${j.review} review · ${j.failed} failed → ${j.out_dir||''}`;
+  j.items.slice(0,300).forEach(it=>{const after=it.out?thumbURL(it.out,520):thumbURL(it.src,520);
+    const tail=it.status==='failed'?`<span class="bdg b-fail"><i></i>${it.error?'failed':'unreadable'}</span>`
+      :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`:`<span class="bdg b-done"><i></i>safe</span>`;
+    const c=el('div','rcard');
+    c.innerHTML=`<div class="ph"><img class="rv" src="${after}" alt="${it.name}"><button class="ba2">Before</button></div>
+      <div class="ft"><div class="nm">${it.name}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:7px">
+        <span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${tail}</div></div>`;
+    const img=c.querySelector('.rv'),btn=c.querySelector('.ba2');let af=true;
+    btn.onclick=()=>{af=!af;img.src=af?after:thumbURL(it.src,520);btn.textContent=af?'Before':'After';};
+    g.appendChild(c);});}
+$('#reviewClose').onclick=()=>$('#reviewScrim').classList.remove('open');
+$('#exportBtn').onclick=()=>$('#reviewScrim').classList.remove('open'); /* outputs already written to out_dir */
+
+/* ---- settings ----------------------------------------------------------- */
+$('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
+$('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
+document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s)s.classList.remove('open');}));
+document.querySelectorAll('.modal .seg').forEach(seg=>seg.addEventListener('click',e=>{const b=e.target.closest('button');
+  if(!b)return;seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');}));
+
+/* ---- keyboard ----------------------------------------------------------- */
+window.addEventListener('keydown',e=>{if(!real()||e.target.matches('input,textarea'))return;
+  if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();selectPhoto(Math.min(STATE.sel+1,STATE.files.length-1));}
+  if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();selectPhoto(Math.max(STATE.sel-1,0));}
+  if(e.key==='\\')setView($('#ba').classList.contains('mode-before')?'after':'before');
+  if(e.key===' '&&STATE.mode==='folder'&&STATE.sel>=0){e.preventDefault();toggleRun(STATE.files[STATE.sel].path);}});
+
 /* ---- boot --------------------------------------------------------------- */
-renderHome();renderRail();renderStyles();renderConcepts();renderGlobals();renderRegions();renderWhy();renderFilters();renderReview();renderStepper();
-let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(()=>{
-  document.querySelectorAll('canvas').forEach(c=>{if(c._look)draw(c,c._look,c._after);});},120);});
-// detect a live backend → switch from drawn placeholders to your real photos + segmentation
-fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length)STATE.served=true;}).catch(()=>{});
+renderStyles();renderFilm();
+fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length){STATE.served=true;}
+  if(!STATE.served)standaloneNote();}).catch(()=>standaloneNote());
 </script>
 </body>
 </html>

@@ -1,10 +1,12 @@
 """Segmentation: the Segmenter protocol, backends (stub / SAM 3), and mask resolution."""
 
 from .base import RegionMask, Segmenter
+from .cache import CachingSegmenter
 from .resolve import ResolvedRegions, resolve
 from .stub import StubSegmenter
 
-__all__ = ["RegionMask", "Segmenter", "ResolvedRegions", "resolve", "StubSegmenter", "make_segmenter"]
+__all__ = ["RegionMask", "Segmenter", "ResolvedRegions", "resolve", "StubSegmenter",
+           "CachingSegmenter", "make_segmenter"]
 
 
 def make_segmenter(backend: str = "stub", device: str = "auto", model_id: str = "facebook/sam3") -> Segmenter:
