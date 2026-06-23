@@ -57,6 +57,12 @@ def is_supported(path: str) -> bool:
     return any(path.lower().endswith(ext) for ext in _SUPPORTED)
 
 
+def is_raw(path: str) -> bool:
+    """True for a camera-RAW path (.dng/.cr2/.nef/.arw/…) — used to pair RAW+JPEG and to
+    prefer the RAW as the edit source (more bit depth / latitude)."""
+    return path.lower().endswith(tuple(_RAW_EXT))
+
+
 def load_image(path: str) -> Image:
     """Decode any supported image to the working representation, preserving bit depth.
 

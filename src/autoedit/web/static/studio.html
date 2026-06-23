@@ -104,6 +104,13 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .selbar .sp{flex:1}
 .lnk{background:none;border:0;color:var(--accent);font-size:11px;font-weight:550;cursor:pointer;padding:2px 5px;border-radius:4px}
 .lnk:hover{background:var(--accent-dim)}
+/* RAW+JPEG source tag on a paired filmstrip row */
+.frow .src{display:inline-block;margin-top:1px;font-size:9.5px;letter-spacing:.02em;color:var(--ink-3);cursor:pointer;
+  padding:1px 5px;border-radius:4px;border:1px solid var(--line-2);background:var(--elev)}
+.frow .src b{color:var(--accent-ink);font-weight:700}
+.frow .src:hover{border-color:var(--accent);color:var(--ink-2)}
+.frow .st{font-size:10px;margin-left:6px}
+.selbar .seg{padding:1px}.selbar .seg button{height:20px;padding:0 9px;font-size:10.5px}
 
 /* empty state */
 .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;
@@ -316,6 +323,10 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <span class="cap" id="runCount">Run: all</span><span class="sp"></span>
         <button class="lnk" id="selAll">All</button><button class="lnk" id="selNone">None</button>
       </div>
+      <div class="selbar" id="preferWrap" style="display:none">
+        <span class="cap">RAW+JPEG → edit</span><span class="sp"></span>
+        <div class="seg" id="preferSeg"><button data-pref="raw" class="on">RAW</button><button data-pref="jpg">JPEG</button></div>
+      </div>
       <div class="film-list" id="film"></div>
     </aside>
 
@@ -412,8 +423,9 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="modal-b">
       <div class="field"><label>Compute device</label>
         <div class="seg" style="width:200px"><button class="on">Auto (MPS)</button><button>CPU</button></div></div>
-      <div class="field"><label>Output format</label>
-        <div class="seg" style="width:220px"><button class="on">JPEG</button><button>TIFF (16-bit)</button></div></div>
+      <div class="field"><label>Output format <span class="muted">— how edited photos are written</span></label>
+        <div class="seg" id="fmtSeg" style="width:260px"><button class="on" data-fmt="jpeg">JPEG</button>
+          <button data-fmt="tiff">TIFF (16-bit)</button></div></div>
       <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
       <div class="kv"><b>RAW decode</b><span class="v">rawpy · .dng/.cr2/.nef/.arw</span></div>
       <div class="kv"><b>Cache</b><span class="v">~/Library/Caches/autoedit</span></div>
@@ -435,10 +447,29 @@ const $ = s => document.querySelector(s);
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
 
 const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural',intensity:0.8,preview:null,loading:false,
-  run:new Set()};  /* paths chosen for the batch; empty = run all */
+  run:new Set(),        /* stems chosen for the batch; empty = run all */
+  preferRaw:true,       /* for RAW+JPEG pairs, which source to edit by default */
+  outFormat:'jpeg',     /* batch output format (jpeg | tiff) */
+  hasPairs:false};
 const real=()=>STATE.files.length>0;
 const thumbURL=(p,px=360)=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p);
 const joinPath=(d,f)=>d?(d.replace(/\/+$/,'')+'/'+f):f;
+const extOf=n=>{const i=n.lastIndexOf('.');return i<0?'':n.slice(i+1).toUpperCase();};
+
+/* Build a filmstrip item from an /api/groups entry. A RAW+JPEG pair is ONE item that edits a
+   single chosen source (RAW preferred). The thumbnail always uses the JPEG when present (fast —
+   no rawpy decode just to show a 160px tile). `over` pins a manual per-row source override. */
+function mkItem(g,dir,over){
+  const use=over||((g.raw&&STATE.preferRaw)?'raw':(g.pixel?'pixel':(g.raw?'raw':'pixel')));
+  const name=g[use]||g.raw||g.pixel;
+  const thumbName=g.pixel||g.raw||name;   // prefer the JPEG for the tile
+  return {stem:g.stem,raw:g.raw,pixel:g.pixel,members:g.members||[],over:over||null,
+    use,name,path:joinPath(dir,name),thumbPath:joinPath(dir,thumbName),
+    pair:!!(g.raw&&g.pixel)};
+}
+function reprefer(){ // recompute every paired item's source from the global preference (clears overrides)
+  STATE.files=STATE.files.map(it=>it.pair?mkItem(it,STATE.dir,STATE.preferRaw?'raw':'pixel'):it);
+  if(STATE.sel>=0)STATE.preview=null;renderFilm();if(real()&&STATE.sel>=0)loadPreview();}
 
 const STYLES=[
   ['Natural','True-to-life','natural'],['Editorial','High-contrast','editorial'],
@@ -470,18 +501,28 @@ function renderFilm(){const f=$('#film');f.innerHTML='';
     $('#filmCount').textContent='0';return;}
   $('#filmCount').textContent=STATE.files.length;
   STATE.files.forEach((p,i)=>{const r=el('div','frow'+(i===STATE.sel?' sel':''));r.id='f_'+i;
-    r.innerHTML=`<span class="fck${STATE.run.has(p.path)?' on':''}" title="Include in run">
+    const srctag=p.pair
+      ? `<span class="src" data-i="${i}" title="Editing the ${p.use==='raw'?'RAW':'JPEG'} — click to switch">
+           <b>${p.use==='raw'?'RAW':extOf(p.pixel)}</b> + ${p.use==='raw'?extOf(p.pixel):'RAW'} ⇄</span>`
+      : `<span class="sub">${extOf(p.name)}</span>`;
+    r.innerHTML=`<span class="fck${STATE.run.has(p.stem)?' on':''}" title="Include in run">
         <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
       <span class="idx">${i+1}</span>
-      <img class="tn" src="${thumbURL(p.path,160)}" loading="lazy" alt="${p.name}">
-      <div class="meta"><div class="nm">${p.name}</div><div class="sub" data-st></div></div>`;
-    r.querySelector('.fck').onclick=ev=>{ev.stopPropagation();toggleRun(p.path);};
+      <img class="tn" src="${thumbURL(p.thumbPath,160)}" loading="lazy" alt="${p.stem}">
+      <div class="meta"><div class="nm">${p.stem}</div>${srctag}<span class="st" data-st></span></div>`;
+    r.querySelector('.fck').onclick=ev=>{ev.stopPropagation();toggleRun(p.stem);};
+    const sw=r.querySelector('.src');if(sw)sw.onclick=ev=>{ev.stopPropagation();switchSource(i);};
     r.onclick=()=>selectPhoto(i);f.appendChild(r);});}
 
+/* flip one paired item between editing its RAW vs its JPEG */
+function switchSource(i){const p=STATE.files[i];if(!p.pair)return;
+  STATE.files[i]=mkItem(p,STATE.dir,p.use==='raw'?'pixel':'raw');
+  renderFilm();if(i===STATE.sel){STATE.preview=null;$('#stName').textContent=STATE.files[i].name;loadPreview();}}
+
 /* ---- run subset (which photos the batch processes) ---------------------- */
-function toggleRun(path){STATE.run.has(path)?STATE.run.delete(path):STATE.run.add(path);syncRun();}
+function toggleRun(stem){STATE.run.has(stem)?STATE.run.delete(stem):STATE.run.add(stem);syncRun();}
 function syncRun(){document.querySelectorAll('#film .frow').forEach((r,i)=>{
-    const ck=r.querySelector('.fck');if(ck)ck.classList.toggle('on',STATE.run.has(STATE.files[i].path));});
+    const ck=r.querySelector('.fck');if(ck)ck.classList.toggle('on',STATE.run.has(STATE.files[i].stem));});
   const n=STATE.run.size;$('#runCount').textContent=n?`Run: ${n} of ${STATE.files.length}`:'Run: all';
   const lbl=$('#runBtn').querySelector('.lbl');if(lbl)lbl.textContent=n?`Run ${n}`:'Run batch';}
 
@@ -509,7 +550,7 @@ let maskOn=false;
 $('#maskBtn').onclick=()=>{maskOn=!maskOn;$('#maskOv').classList.toggle('show',maskOn);$('#maskBtn').classList.toggle('primary',maskOn);};
 
 /* ---- preview load + apply ---------------------------------------------- */
-function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].path,1100);
+function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].thumbPath,1100);
   $('#baSizer').src=src;$('#baBefore').src=src;$('#baAfter').src=src;
   $('#ba').classList.add('gen');
   $('#concepts').innerHTML='<div class="tip" style="display:flex;gap:9px;align-items:center"><span class="spin" style="width:13px;height:13px;border-width:2px"></span>Segmenting with SAM 3… first run loads the model (~20–40s)</div>';}
@@ -575,24 +616,35 @@ $('#addConcept').onclick=()=>{const v=$('#newConcept').value.trim();if(!v)return
 /* ---- pickers ------------------------------------------------------------ */
 async function pickFolder(){if(!STATE.served){standaloneNote();return;}
   try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
-    const files=await(await fetch('/api/list?dir='+encodeURIComponent(path))).json();
-    if(!files.length){alert('No supported images found in that folder.');return;}
+    const groups=await(await fetch('/api/groups?dir='+encodeURIComponent(path))).json();
+    if(groups.error){alert(groups.error);return;}
+    if(!groups.length){alert('No supported images found in that folder.');return;}
     STATE.dir=path;STATE.mode='folder';STATE.run.clear();
-    STATE.files=files.map(f=>({name:f,path:joinPath(path,f)}));
-    $('#folderName').textContent=path;$('#sbCount').textContent=files.length+' photos';$('#viewseg').style.display='';$('#maskBtn').style.display='';
-    $('#selbar').style.display='';
+    STATE.files=groups.map(g=>mkItem(g,path));
+    STATE.hasPairs=STATE.files.some(f=>f.pair);
+    const nfiles=groups.reduce((a,g)=>a+g.members.length,0);
+    $('#folderName').textContent=path;
+    $('#sbCount').textContent=groups.length+' photos'+(STATE.hasPairs?` · ${nfiles} files (RAW+JPEG paired)`:'');
+    $('#viewseg').style.display='';$('#maskBtn').style.display='';$('#selbar').style.display='';
+    $('#preferWrap').style.display=STATE.hasPairs?'':'none';
     renderFilm();syncRun();selectPhoto(0);
   }catch(e){alert('Could not open folder: '+e);}}
 async function pickSingle(){if(!STATE.served){standaloneNote();return;}
   try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
-    STATE.dir=null;STATE.mode='single';STATE.run.clear();STATE.files=[{name:path.split('/').pop(),path}];
+    const name=path.split('/').pop(),raw=/\.(dng|cr2|cr3|nef|nrw|arw|sr2|srf|raf|orf|rw2|pef|srw|raw|3fr|mrw|dcr|kdc)$/i.test(name);
+    STATE.dir=null;STATE.mode='single';STATE.run.clear();STATE.hasPairs=false;
+    STATE.files=[mkItem({stem:name.replace(/\.[^.]+$/,''),raw:raw?name:null,pixel:raw?null:name,members:[{name,kind:raw?'raw':'pixel'}]},'')];
+    STATE.files[0].path=path;STATE.files[0].thumbPath=path;   // absolute path, no dir join
     $('#folderName').textContent=path;$('#sbCount').textContent='1 photo';$('#viewseg').style.display='';$('#maskBtn').style.display='';
-    $('#selbar').style.display='none';
+    $('#selbar').style.display='none';$('#preferWrap').style.display='none';
     renderFilm();selectPhoto(0);
   }catch(e){alert('Could not open photo: '+e);}}
 $('#openBtn').onclick=pickFolder;$('#openBtn2').onclick=pickFolder;$('#openFileBtn').onclick=pickSingle;
-$('#selAll').onclick=()=>{STATE.run=new Set(STATE.files.map(f=>f.path));syncRun();};
+$('#selAll').onclick=()=>{STATE.run=new Set(STATE.files.map(f=>f.stem));syncRun();};
 $('#selNone').onclick=()=>{STATE.run.clear();syncRun();};
+$('#preferSeg').addEventListener('click',e=>{const b=e.target.closest('[data-pref]');if(!b)return;
+  $('#preferSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  STATE.preferRaw=b.dataset.pref==='raw';reprefer();});
 function standaloneNote(){$('#folderName').textContent='Launch with `autoedit ui` for live photos';}
 
 /* ---- batch run (real jobs) --------------------------------------------- */
@@ -601,11 +653,11 @@ $('#runBtn').onclick=startRun;
 function startRun(){if(!real()||!STATE.served)return;
   $('#runDrawer').classList.add('open');$('#qlist').innerHTML='';
   $('#runBar').style.width='0';$('#runPct').textContent='0%';$('#cDone').textContent=$('#cRev').textContent=$('#cFail').textContent='0';
-  const body={style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true};
-  const subset=[...STATE.run];
-  if(subset.length)body.files=subset;                              // chosen photos only
-  else if(STATE.mode==='single')body.files=[STATE.files[STATE.sel].path];
-  else body.input_dir=STATE.dir;                                   // whole folder
+  const body={style:STATE.style,intensity:STATE.intensity,backend:'sam3',compose:true,out_format:STATE.outFormat};
+  // Always send explicit source paths (one per group) so a RAW+JPEG pair is edited ONCE, on the
+  // chosen source — never both. Subset = the checked stems; otherwise every group.
+  const items=STATE.run.size?STATE.files.filter(f=>STATE.run.has(f.stem)):STATE.files;
+  body.files=items.map(f=>f.path);
   fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{if(j.error){alert(j.error);return;}JOB=j;renderQueue(j);pollJob();})
     .catch(e=>alert('Could not start job: '+e));}
@@ -657,13 +709,14 @@ $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
 document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s)s.classList.remove('open');}));
 document.querySelectorAll('.modal .seg').forEach(seg=>seg.addEventListener('click',e=>{const b=e.target.closest('button');
   if(!b)return;seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');}));
+$('#fmtSeg').addEventListener('click',e=>{const b=e.target.closest('[data-fmt]');if(b)STATE.outFormat=b.dataset.fmt;});
 
 /* ---- keyboard ----------------------------------------------------------- */
 window.addEventListener('keydown',e=>{if(!real()||e.target.matches('input,textarea'))return;
   if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();selectPhoto(Math.min(STATE.sel+1,STATE.files.length-1));}
   if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();selectPhoto(Math.max(STATE.sel-1,0));}
   if(e.key==='\\')setView($('#ba').classList.contains('mode-before')?'after':'before');
-  if(e.key===' '&&STATE.mode==='folder'&&STATE.sel>=0){e.preventDefault();toggleRun(STATE.files[STATE.sel].path);}});
+  if(e.key===' '&&STATE.mode==='folder'&&STATE.sel>=0){e.preventDefault();toggleRun(STATE.files[STATE.sel].stem);}});
 
 /* ---- boot --------------------------------------------------------------- */
 renderStyles();renderFilm();
