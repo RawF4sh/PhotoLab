@@ -27,6 +27,18 @@ def box_blur(a: np.ndarray, radius: int) -> np.ndarray:
     return (cs[k:, :] - cs[:-k, :]) / k
 
 
+def box_min(a: np.ndarray, radius: int) -> np.ndarray:
+    """Separable sliding-window minimum (morphological erosion) of a 2D array, edge-padded.
+    The patch-min behind the dark-channel prior in `dehaze`."""
+    r = int(radius)
+    if r < 1:
+        return a.copy()
+    ap = np.pad(a, ((0, 0), (r, r)), mode="edge")
+    out = np.minimum.reduce([ap[:, i:i + a.shape[1]] for i in range(2 * r + 1)])
+    ap = np.pad(out, ((r, r), (0, 0)), mode="edge")
+    return np.minimum.reduce([ap[i:i + a.shape[0], :] for i in range(2 * r + 1)])
+
+
 def gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
     """Approximate Gaussian blur via 3 box passes."""
     if sigma <= 0:

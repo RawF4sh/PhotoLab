@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..imageio import linear_to_srgb, luma, srgb_to_linear
-from .filters import gaussian_blur
+from .filters import box_min, gaussian_blur, guided_filter
 
 _EPS = 1e-6
 
@@ -134,10 +134,42 @@ def vibrance(rgb: np.ndarray, vib: float, sat: float) -> np.ndarray:
 
 
 def dehaze(rgb: np.ndarray, amt: float) -> np.ndarray:
-    # MVP approximation: midtone contrast + saturation lift. A dark-channel transmission
-    # model is the Phase-3 upgrade (see plan risks: dehaze is quality-sensitive).
-    out = contrast(rgb, amt * 0.5)
-    return vibrance(out, 0.0, amt * 0.4)
+    """Physical dehaze via the dark-channel prior (He et al. 2009).
+
+    Haze is the atmospheric-scattering model I = J·t + A·(1−t): the captured pixel I is the
+    true scene radiance J attenuated by transmission t, plus airlight A. We estimate A from the
+    haziest pixels, recover per-pixel t from the dark channel, refine t with the guided filter
+    (so it follows real edges, no halos), then invert the model to recover J. `amt` (0..100)
+    blends original→dehazed, so small rule values stay gentle and the look's dehaze_mul scales up.
+
+    Negative amt adds a light atmospheric veil (the inverse) rather than removing haze."""
+    a = amt / 100.0
+    if a == 0.0:
+        return rgb
+    if a < 0.0:                                   # add haze: lift blacks toward a soft veil
+        return rgb * (1.0 + a * 0.5) + (-a * 0.5) * 0.85
+
+    h, w = rgb.shape[0], rgb.shape[1]
+    patch = max(1, int(round(0.006 * max(h, w))))  # ~dark-channel patch radius
+    omega = 0.92                                    # how much haze the *model* removes (fixed); amt blends
+    t0 = 0.12                                       # transmission floor — guards the divide in dense haze
+
+    dark = box_min(rgb.min(axis=2), patch)          # dark channel of the input
+    # atmospheric light A: mean colour of the brightest ~0.1% of dark-channel pixels (≥50 px)
+    flat = dark.reshape(-1)
+    k = max(50, int(flat.size * 0.001))
+    idx = np.argpartition(flat, -k)[-k:]
+    pix = rgb.reshape(-1, 3)[idx]
+    A = np.clip(pix.mean(axis=0), 0.5, 1.0).astype(np.float32)  # bounded so dark scenes don't blow up
+
+    # transmission from the normalised dark channel, refined edge-aware against luma
+    t = 1.0 - omega * box_min((rgb / A).min(axis=2), patch)
+    t = guided_filter(luma(rgb), t.astype(np.float32), max(patch * 4, 8), eps=1e-3)
+    t = np.clip(t, t0, 1.0)[..., None]
+
+    recovered = (rgb - A) / t + A                   # invert the scattering model
+    out = rgb + a * (np.clip(recovered, 0.0, 1.0) - rgb)  # blend toward dehazed by amt
+    return out.astype(np.float32)
 
 
 def curve(rgb: np.ndarray, strength: float) -> np.ndarray:
