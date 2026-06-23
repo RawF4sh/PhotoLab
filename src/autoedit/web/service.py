@@ -106,8 +106,10 @@ def shared_segmenter(cfg: RunConfig):
     with _SEG_LOCK:
         seg = _SEG_CACHE.get(key)
         if seg is None:
-            from ..segment import make_segmenter
-            seg = make_segmenter(cfg.backend, cfg.device)
+            from ..segment import CachingSegmenter, make_segmenter
+            # Wrap in the per-concept cache so re-previewing the same image under a different
+            # style/intensity only segments the *new* concepts (style switches feel instant).
+            seg = CachingSegmenter(make_segmenter(cfg.backend, cfg.device))
             _SEG_CACHE[key] = seg
         return seg
 
