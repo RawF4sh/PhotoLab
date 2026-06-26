@@ -44,6 +44,15 @@ def test_cool_blue_cools_shadows_preserves_lightness():
     assert abs(lab_after[..., 0].mean() - L_before) < 0.01
 
 
+def test_warm_gold_does_not_cool_shadows():
+    pals = _palettes()
+    shadow = _gray(0.2)
+    out = palette_grade(shadow, pals["warm_gold"], strength=1.0)
+    b_before = linear_to_oklab(srgb_to_linear(shadow))[..., 2].mean()
+    b_after = linear_to_oklab(srgb_to_linear(out))[..., 2].mean()
+    assert b_after >= b_before
+
+
 def test_neutral_protection_keeps_highlights_neutral():
     pals = _palettes()
     hi = _gray(0.95)                                      # near-white highlight

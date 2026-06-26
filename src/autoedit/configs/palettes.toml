@@ -1,0 +1,62 @@
+# AutoEdit palettes — regional colour grading targets (the "make it blue/teal/gold" layer).
+#
+# Each palette pushes shadow / midtone / highlight colour toward a per-zone hue+chroma target in
+# OKLab (perceptual), leaving lightness untouched. Whites/highlights resist tinting via
+# neutral_protection, and the skin-safe guard mask (snow/skin) is held fully neutral. This is what
+# makes "make it blue" a regional palette instead of a flat full-frame cast.
+#
+# hue = OKLab hue in degrees (atan2(b, a)). Reference: blue ~264, cyan/teal ~200, green ~142,
+#   olive/yellow-green ~120, yellow ~93, gold/orange ~70, warm-skin ~55, red ~30, magenta ~350.
+# chroma ~0.02–0.05 is natural; 0.06–0.10 is bold; the engine scales this by strength × intensity.
+# Apply with `--palette NAME` / the Studio Palette picker, or type a cue word in the intent box
+# (e.g. "cool blue", "sunset", "teal") to auto-select.
+
+[cool_blue]                      # winter / blue-hour: cool deep shadows, neutral snow
+shadow_hue = 264
+shadow_chroma = 0.055
+mid_hue = 258
+mid_chroma = 0.025
+highlight_hue = 250
+highlight_chroma = 0.006
+neutral_protection = 0.90
+protected = ["snow", "cloud", "skin"]
+
+[teal_orange]                    # cinematic: teal shadows, warm highlights
+shadow_hue = 200
+shadow_chroma = 0.055
+mid_hue = 120
+mid_chroma = 0.0
+highlight_hue = 65
+highlight_chroma = 0.045
+neutral_protection = 0.80
+protected = ["skin"]
+
+[warm_gold]                      # sunset / golden hour: gold highlights, warm mids, neutral shadows
+shadow_hue = 70
+shadow_chroma = 0.0
+mid_hue = 70
+mid_chroma = 0.03
+highlight_hue = 78
+highlight_chroma = 0.05
+neutral_protection = 0.75
+protected = ["snow", "cloud"]
+
+[forest_olive]                   # filmic forest: olive-shifted greens, restrained
+shadow_hue = 150
+shadow_chroma = 0.02
+mid_hue = 120
+mid_chroma = 0.035
+highlight_hue = 90
+highlight_chroma = 0.012
+neutral_protection = 0.85
+protected = ["skin", "water"]
+
+[muted_film]                     # analog-ish: gentle cool shadows + warm highlights, low chroma
+shadow_hue = 250
+shadow_chroma = 0.022
+mid_hue = 70
+mid_chroma = 0.01
+highlight_hue = 70
+highlight_chroma = 0.025
+neutral_protection = 0.85
+protected = ["skin", "snow"]
