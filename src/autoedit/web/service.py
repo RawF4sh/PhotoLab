@@ -25,7 +25,8 @@ from ..styles import load_styles
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
 _ALLOWED = (
-    "style", "prompt", "preset", "look", "intensity", "reference", "reference_strength",
+    "style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
+    "reference", "reference_strength",
     "decider", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
     "emit", "compose", "vignette", "sharpen",
 )
@@ -39,6 +40,8 @@ def make_cfg(opts: dict, configs_dir: str | None = None) -> RunConfig:
         "concepts_path": os.path.join(configs_dir, "concepts.toml"),
         "styles_path": os.path.join(configs_dir, "styles.toml"),
         "compose_path": os.path.join(configs_dir, "compose.toml"),
+        "intents_path": os.path.join(configs_dir, "intents.toml"),
+        "palettes_path": os.path.join(configs_dir, "palettes.toml"),
     }
     for k in _ALLOWED:
         if opts.get(k) is not None:
@@ -167,13 +170,18 @@ def group_images(folder: str) -> list[dict]:
     return out
 
 
-def _png_b64(rgb01: np.ndarray, max_px: int = 900) -> str:
+def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: int = 90) -> str:
+    """Encode a working RGB array as a base64 data-URL. JPEG at q90 keeps a 1600px preview small
+    (~200–500 KB) so we can show it sharp; PNG stays available for lossless needs."""
     arr = np.clip(rgb01, 0.0, 1.0)
     pil = PILImage.fromarray((arr * 255 + 0.5).astype(np.uint8), "RGB")
     if max(pil.size) > max_px:
         scale = max_px / max(pil.size)
-        pil = pil.resize((max(1, int(pil.width * scale)), max(1, int(pil.height * scale))), PILImage.BILINEAR)
+        pil = pil.resize((max(1, int(pil.width * scale)), max(1, int(pil.height * scale))), PILImage.LANCZOS)
     buf = io.BytesIO()
+    if fmt in ("jpg", "jpeg"):
+        pil.save(buf, format="JPEG", quality=quality, subsampling=0)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
     pil.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
@@ -201,17 +209,24 @@ def check_image(path: str) -> None:
                          f"not a sidecar like .xmp")
 
 
-def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 900) -> dict:
-    """Render a single-image before/after preview + the decision sidecar."""
+def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 3200) -> dict:
+    """Render a single-image before/after preview + the decision sidecar.
+
+    The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
+    preview shows the real result — no proxy-scaling softness/blockiness in flat areas like sky.
+    Segmentation stays at the analysis size and is cached per concept, so re-previews (style/palette
+    changes) don't re-pay the SAM cost. The before/after ship as high-quality JPEG capped at max_px."""
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = build_pipeline(cfg)
-    work = downscale_long_edge(load_image(image_path), 1400)  # preview applies on a proxy → fast
+    work = load_image(image_path)
+    if work.long_edge > 4096:                       # bound apply cost on very large files
+        work = downscale_long_edge(work, 4096)
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
     return {
-        "before": _png_b64(work.rgb, max_px),
-        "after": _png_b64(out_rgb, max_px),
+        "before": _img_b64(work.rgb, max_px, quality=92),
+        "after": _img_b64(out_rgb, max_px, quality=92),
         "result": result.model_dump(),
     }
 
