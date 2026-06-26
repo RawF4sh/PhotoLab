@@ -23,7 +23,8 @@ def _flatten(d: dict) -> dict:
     """Map a defaults-shaped TOML ([run]/[segment]/[output]/[llm]) to RunConfig kwargs."""
     run, seg, out, llm = (d.get(k, {}) for k in ("run", "segment", "output", "llm"))
     kw: dict = {}
-    for k in ("style", "prompt", "preset", "look", "intensity", "decider", "emit"):
+    for k in ("style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
+              "decider", "emit"):
         if k in run:
             kw[k] = run[k]
     for k in ("backend", "device", "analysis_long_edge"):
@@ -54,37 +55,44 @@ def load_run_config(args) -> RunConfig:
     kw["rules_path"] = os.path.join(configs_dir, "rules.toml")
     kw["looks_path"] = os.path.join(configs_dir, "looks.toml")
     kw["concepts_path"] = os.path.join(configs_dir, "concepts.toml")
+    kw["styles_path"] = os.path.join(configs_dir, "styles.toml")
+    kw["compose_path"] = os.path.join(configs_dir, "compose.toml")
+    kw["intents_path"] = os.path.join(configs_dir, "intents.toml")
+    kw["palettes_path"] = os.path.join(configs_dir, "palettes.toml")
     if getattr(args, "config", None):
         kw.update(_flatten(_read_toml(args.config)))
 
     # CLI overrides (only when explicitly provided)
     overrides = {
-        "style": args.style,
-        "prompt": args.prompt,
-        "preset": args.preset,
-        "look": args.look,
-        "intensity": args.intensity,
-        "reference": args.reference,
-        "reference_strength": args.reference_strength,
-        "decider": args.decider,
-        "allow_cloud": args.allow_cloud,
-        "api_key": args.api_key,
-        "llm_mode": args.llm_mode,
-        "backend": args.backend,
-        "device": args.device,
-        "out_format": args.format,
-        "quality": args.quality,
-        "analysis_long_edge": args.analysis_long_edge,
-        "emit": args.emit,
-        "compose": args.compose,
-        "vignette": args.vignette,
-        "sharpen": args.sharpen,
+        "style": getattr(args, "style", None),
+        "prompt": getattr(args, "prompt", None),
+        "preset": getattr(args, "preset", None),
+        "look": getattr(args, "look", None),
+        "intensity": getattr(args, "intensity", None),
+        "palette": getattr(args, "palette", None),
+        "palette_strength": getattr(args, "palette_strength", None),
+        "reference": getattr(args, "reference", None),
+        "reference_strength": getattr(args, "reference_strength", None),
+        "decider": getattr(args, "decider", None),
+        "allow_cloud": getattr(args, "allow_cloud", None),
+        "api_key": getattr(args, "api_key", None),
+        "llm_mode": getattr(args, "llm_mode", None),
+        "backend": getattr(args, "backend", None),
+        "device": getattr(args, "device", None),
+        "out_format": getattr(args, "format", None),
+        "quality": getattr(args, "quality", None),
+        "analysis_long_edge": getattr(args, "analysis_long_edge", None),
+        "emit": getattr(args, "emit", None),
+        "compose": getattr(args, "compose", None),
+        "vignette": getattr(args, "vignette", None),
+        "sharpen": getattr(args, "sharpen", None),
     }
     for k, v in overrides.items():
         if v is not None:
             kw[k] = v
-    if args.concepts:
-        kw["concepts"] = [c.strip() for c in args.concepts.split(",") if c.strip()]
+    concepts = getattr(args, "concepts", None)
+    if concepts:
+        kw["concepts"] = [c.strip() for c in concepts.split(",") if c.strip()]
     return RunConfig(**kw)
 
 
@@ -96,6 +104,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--preset", help="concept-set override from concepts.toml")
     p.add_argument("--concepts", help='comma-separated, overrides --preset (e.g. "sky,skin,dress")')
     p.add_argument("--look", help="magnitude profile override (defaults to the style's look)")
+    p.add_argument("--palette", help='palette grade from palettes.toml ("auto", "cool_blue", "teal_orange"; "off" disables)')
+    p.add_argument("--palette-strength", dest="palette_strength", type=float,
+                   help="palette strength 0..1 (default 0.8)")
     p.add_argument("--reference", help="reference photo whose look (palette/tone) to match onto the batch")
     p.add_argument("--reference-strength", dest="reference_strength", type=float,
                    help="reference-match strength 0..1 (default 0.7)")

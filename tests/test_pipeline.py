@@ -30,3 +30,16 @@ def test_pipeline_smoke(tmp_path):
     assert result.scene == "people"
     assert {m.target for m in result.masks} & {"skin", "subject"}
     assert result.global_stats is not None
+
+
+def test_pipeline_auto_palette_note_for_cool_landscape(tmp_path):
+    img_path = tmp_path / "winter.jpg"
+    a = np.full((128, 128, 3), 210, np.uint8)
+    a[:72] = [220, 224, 226]     # bright low-chroma sky
+    a[72:] = [115, 128, 132]     # cool low-chroma water/trees
+    PILImage.fromarray(a, "RGB").save(str(img_path), quality=95)
+
+    cfg = RunConfig(backend="stub", style="natural", concepts=["sky", "water"])
+    result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+
+    assert any("palette: auto cool_blue" in n for n in result.notes)

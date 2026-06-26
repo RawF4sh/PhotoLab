@@ -155,17 +155,28 @@ class Pipeline:
                 intent_note = "look intent: " + ", ".join(terms)
 
         # Regional palette grade (the universal "make it blue/sunset" colour layer). Explicit
-        # cfg.palette wins; "none"/"off" disables; otherwise a cue word in the prompt selects one.
-        # Strength scales by intensity; applied as colour finishing in apply_image.
-        if cfg.palette:
-            pal_name = None if cfg.palette.lower() in ("none", "off", "") else cfg.palette
+        # cfg.palette wins; "none"/"off" disables; cue words in the prompt win next; otherwise
+        # an image-stats auto picker chooses a conservative colour story and strength.
+        palette_scale = 1.0
+        palette_auto_reason = ""
+        if cfg.palette and cfg.palette.lower() not in ("auto", ""):
+            pal_name = None if cfg.palette.lower() in ("none", "off") else cfg.palette
         else:
             pal_name = palette_mod.palette_for_prompt(cfg.prompt, self.palettes)
+            if pal_name is None:
+                pal_name, palette_scale, palette_auto_reason = palette_mod.auto_palette_for_image(
+                    sc.name, gstats, present, self.palettes)
         palette_obj = self.palettes.get(pal_name) if pal_name else None
-        palette_arg = ((palette_obj, cfg.palette_strength * cfg.intensity)
+        palette_arg = ((palette_obj, cfg.palette_strength * cfg.intensity * palette_scale)
                        if palette_obj is not None else None)
-        palette_note = (f"palette: {pal_name} ({cfg.palette_strength:.0%})"
-                        if palette_obj is not None else None)
+        chroma_neutral_allowance = (
+            0.02 + 0.10 * min(1.0, max(0.0, palette_arg[1])) if palette_arg is not None else 0.02
+        )
+        if palette_obj is not None and palette_auto_reason:
+            palette_note = f"palette: auto {pal_name} ({palette_arg[1]:.0%}) — {palette_auto_reason}"
+        else:
+            palette_note = (f"palette: {pal_name} ({cfg.palette_strength:.0%})"
+                            if palette_obj is not None else None)
 
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
@@ -202,7 +213,9 @@ class Pipeline:
                 img.rgb, regions_apply, global_settings,
                 compositional=[(a, s) for _n, a, s in comp],
                 guard_mask=guard_mask, guard_ops=self.guard_ops,
-                chroma_max_increase=self.chroma_max, protect_chroma=guard_mask,
+                chroma_max_increase=self.chroma_max,
+                chroma_neutral_allowance=chroma_neutral_allowance,
+                protect_chroma=guard_mask,
                 palette=palette_arg, report=gate_report,
             )
             if guard_mask is not None:
@@ -228,7 +241,9 @@ class Pipeline:
                         img.rgb, regions_apply, gs2,
                         compositional=[(a, s) for _n, a, s in comp],
                         guard_mask=guard_mask, guard_ops=self.guard_ops,
-                        chroma_max_increase=self.chroma_max, protect_chroma=guard_mask,
+                        chroma_max_increase=self.chroma_max,
+                        chroma_neutral_allowance=chroma_neutral_allowance,
+                        protect_chroma=guard_mask,
                         palette=palette_arg, report={},
                     )
                     notes_extra.append(
