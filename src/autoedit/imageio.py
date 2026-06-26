@@ -247,9 +247,26 @@ def luma(rgb: np.ndarray) -> np.ndarray:
     return rgb @ _LUMA
 
 
-def _to_u8(rgb01: np.ndarray) -> np.ndarray:
-    # round-to-nearest with a tiny ordered dither to reduce banding on smooth gradients
+def _hash_unit(yy: np.ndarray, xx: np.ndarray, a: int, b: int) -> np.ndarray:
+    """Deterministic per-pixel value in [0,1) from integer coords — a cheap hash (no RNG, so
+    output stays reproducible for golden tests)."""
+    v = ((xx.astype(np.uint64) * a) ^ (yy.astype(np.uint64) * b)) * np.uint64(2654435761)
+    return (v & np.uint64(0xFFFFFFFF)).astype(np.float64) / 4294967296.0
+
+
+def _dither(h: int, w: int) -> np.ndarray:
+    """Triangular-PDF dither in ~[-1, 1) LSB from two decorrelated coordinate hashes. Spreading the
+    rounding by ±1 LSB turns hard quantization steps (banded/contoured skies) into imperceptible
+    noise — the standard fix for 8-bit gradient banding. Deterministic (coordinate-hashed)."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    return _hash_unit(yy, xx, 73856093, 19349663) + _hash_unit(yy, xx, 83492791, 2839231) - 1.0
+
+
+def _to_u8(rgb01: np.ndarray, dither: bool = True) -> np.ndarray:
+    # round-to-nearest with ±1 LSB triangular dither to break up banding on smooth gradients
     x = np.clip(rgb01, 0.0, 1.0) * 255.0
+    if dither and x.ndim == 3:
+        x = x + _dither(x.shape[0], x.shape[1])[..., None]
     return np.clip(np.floor(x + 0.5), 0, 255).astype(np.uint8)
 
 

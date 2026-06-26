@@ -173,8 +173,8 @@ def group_images(folder: str) -> list[dict]:
 def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: int = 90) -> str:
     """Encode a working RGB array as a base64 data-URL. JPEG at q90 keeps a 1600px preview small
     (~200–500 KB) so we can show it sharp; PNG stays available for lossless needs."""
-    arr = np.clip(rgb01, 0.0, 1.0)
-    pil = PILImage.fromarray((arr * 255 + 0.5).astype(np.uint8), "RGB")
+    from ..imageio import _to_u8
+    pil = PILImage.fromarray(_to_u8(rgb01), "RGB")  # dithered → no banding in flat preview skies
     if max(pil.size) > max_px:
         scale = max_px / max(pil.size)
         pil = pil.resize((max(1, int(pil.width * scale)), max(1, int(pil.height * scale))), PILImage.LANCZOS)
