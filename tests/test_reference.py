@@ -5,8 +5,11 @@ import numpy as np
 from autoedit.edit.ops import apply_ops
 from autoedit.edit.reference import (
     color_transfer,
+    bottom_gradient_to_reference,
     lab_to_rgb,
     masked_reference_loss,
+    midground_lift_to_reference,
+    mountain_highlight_to_reference,
     reference_loss,
     rgb_to_lab,
     top_gradient_to_reference,
@@ -114,3 +117,51 @@ def test_reference_top_gradient_darkens_stormy_reference_sky():
     assert settings["exposure"] < 0.0
     assert settings["highlights"] < 0.0
     assert report["reference_top"] < report["before_top"]
+
+
+def test_reference_bottom_gradient_lifts_bright_foreground():
+    source = _const(40, 60, [0.42, 0.48, 0.55])
+    source[20:] = [0.18, 0.30, 0.15]
+    reference = source.copy()
+    reference[20:] = apply_ops(reference[20:], {
+        "exposure": 0.35,
+        "shadows": 18.0,
+        "hsl_green_lum": 12.0,
+        "hsl_green_sat": 12.0,
+    })
+
+    settings, report = bottom_gradient_to_reference(source, reference, strength=0.9)
+
+    assert settings["exposure"] > 0.15
+    assert settings["shadows"] > 0.0
+    assert report["reference_bottom"] > report["before_bottom"]
+
+
+def test_reference_midground_lift_targets_lower_middle_band():
+    source = _const(48, 64, [0.44, 0.50, 0.58])
+    source[28:40] = [0.18, 0.30, 0.16]
+    source[40:] = [0.10, 0.18, 0.10]
+    reference = source.copy()
+    reference[28:40] = apply_ops(reference[28:40], {
+        "exposure": 0.30,
+        "shadows": 12.0,
+        "hsl_green_lum": 10.0,
+    })
+
+    settings, report = midground_lift_to_reference(source, reference, strength=0.9)
+
+    assert settings["exposure"] > 0.0
+    assert settings["shadows"] > 0.0
+    assert report["reference_mid"] > report["before_mid"]
+
+
+def test_reference_mountain_highlight_lifts_snow_band():
+    source = _const(48, 64, [0.42, 0.48, 0.56])
+    source[17:31] = [0.24, 0.30, 0.36]
+    reference = source.copy()
+    reference[17:31] = [0.55, 0.60, 0.68]
+
+    settings, report = mountain_highlight_to_reference(source, reference, strength=0.9)
+
+    assert any(settings.get(k, 0.0) > 0.0 for k in ("exposure", "whites", "highlights"))
+    assert report["reference_p90"] > report["before_p90"]

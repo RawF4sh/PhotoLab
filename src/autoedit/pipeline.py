@@ -37,6 +37,16 @@ _DEFAULT_GUARD_OPS = {
 _DEFAULT_CHROMA_MAX = 0.30
 
 
+def _vertical_band_alpha(full_hw: tuple[int, int], top: float, peak: float, bottom: float) -> np.ndarray:
+    h, w = full_hw
+    y = np.linspace(0.0, 1.0, h, dtype=np.float32)
+    up = np.clip((y - top) / max(peak - top, 1e-6), 0.0, 1.0)
+    down = np.clip((bottom - y) / max(bottom - peak, 1e-6), 0.0, 1.0)
+    a = np.minimum(up, down)
+    a = a * a * (3.0 - 2.0 * a)
+    return np.repeat(a[:, None], w, axis=1).astype(np.float32)
+
+
 @dataclass
 class Pipeline:
     cfg: RunConfig
@@ -163,7 +173,12 @@ class Pipeline:
             pal_name = None if cfg.palette.lower() in ("none", "off") else cfg.palette
         else:
             pal_name = palette_mod.palette_for_prompt(cfg.prompt, self.palettes)
-            if pal_name is None:
+            if pal_name is None and cfg.reference:
+                # A reference image is already a color story. Do not stack the generic auto
+                # cool/warm palette on top of it, or reference-matched landscapes can come out
+                # too dark/cool compared with the chosen hero edit.
+                pal_name = None
+            if pal_name is None and not cfg.reference:
                 pal_name, palette_scale, palette_auto_reason = palette_mod.auto_palette_for_image(
                     sc.name, gstats, present, self.palettes)
         palette_obj = self.palettes.get(pal_name) if pal_name else None
@@ -202,6 +217,9 @@ class Pipeline:
             try:
                 from .edit.ops import apply_ops
                 from .edit.reference import (
+                    bottom_gradient_to_reference,
+                    midground_lift_to_reference,
+                    mountain_highlight_to_reference,
                     top_gradient_to_reference,
                     tune_regions_to_reference,
                     tune_settings_to_reference,
@@ -252,6 +270,33 @@ class Pipeline:
                             "reference sky gradient: "
                             f"top luminance {top_report['before_top']:.2f}→"
                             f"{top_report['reference_top']:.2f} ({moves})")
+                bottom_settings, bottom_report = bottom_gradient_to_reference(
+                    globally_rendered, ref_proxy.rgb, strength=cfg.reference_strength)
+                if bottom_settings:
+                    reference_comp_settings["reference_foreground_lift"] = bottom_settings
+                    moves = ", ".join(f"{k} {fmt:+.1f}" for k, fmt in bottom_settings.items())
+                    notes_extra.append(
+                        "reference foreground lift: "
+                        f"lower luminance {bottom_report['before_bottom']:.2f}→"
+                        f"{bottom_report['reference_bottom']:.2f} ({moves})")
+                mid_settings, mid_report = midground_lift_to_reference(
+                    globally_rendered, ref_proxy.rgb, strength=cfg.reference_strength)
+                if mid_settings:
+                    reference_comp_settings["reference_midground_lift"] = mid_settings
+                    moves = ", ".join(f"{k} {fmt:+.1f}" for k, fmt in mid_settings.items())
+                    notes_extra.append(
+                        "reference midground lift: "
+                        f"mid luminance {mid_report['before_mid']:.2f}→"
+                        f"{mid_report['reference_mid']:.2f} ({moves})")
+                mountain_settings, mountain_report = mountain_highlight_to_reference(
+                    globally_rendered, ref_proxy.rgb, strength=cfg.reference_strength)
+                if mountain_settings:
+                    reference_comp_settings["reference_mountain_highlight"] = mountain_settings
+                    moves = ", ".join(f"{k} {fmt:+.1f}" for k, fmt in mountain_settings.items())
+                    notes_extra.append(
+                        "reference mountain highlight: "
+                        f"snow p90 {mountain_report['before_p90']:.2f}→"
+                        f"{mountain_report['reference_p90']:.2f} ({moves})")
             except Exception as e:
                 ref_feedback_note = f"reference feedback skipped ({e})"
 
@@ -277,6 +322,24 @@ class Pipeline:
                     "reference_sky_grad",
                     linear_alpha(full_hw, frm="top", coverage=0.58),
                     reference_comp_settings["reference_sky_grad"],
+                ))
+            if "reference_foreground_lift" in reference_comp_settings:
+                comp.append((
+                    "reference_foreground_lift",
+                    linear_alpha(full_hw, frm="bottom", coverage=0.62),
+                    reference_comp_settings["reference_foreground_lift"],
+                ))
+            if "reference_midground_lift" in reference_comp_settings:
+                comp.append((
+                    "reference_midground_lift",
+                    _vertical_band_alpha(full_hw, top=0.48, peak=0.70, bottom=0.93),
+                    reference_comp_settings["reference_midground_lift"],
+                ))
+            if "reference_mountain_highlight" in reference_comp_settings:
+                comp.append((
+                    "reference_mountain_highlight",
+                    _vertical_band_alpha(full_hw, top=0.30, peak=0.47, bottom=0.66),
+                    reference_comp_settings["reference_mountain_highlight"],
                 ))
             guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings, guide)
             gate_report: dict = {}
@@ -334,13 +397,54 @@ class Pipeline:
         ref_note = None
         if do_apply and out_rgb is not None and cfg.reference:
             try:
-                from .edit.reference import color_transfer
+                from .edit.ops import apply_ops
+                from .edit.reference import (
+                    bottom_gradient_to_reference,
+                    color_transfer,
+                    midground_lift_to_reference,
+                    mountain_highlight_to_reference,
+                )
 
                 if ref_proxy is None:
                     ref_proxy = downscale_long_edge(load_image(cfg.reference), 512)
-                out_rgb = color_transfer(out_rgb, ref_proxy.rgb, cfg.reference_strength)
+                finish_strength = min(float(cfg.reference_strength), 0.72)
+                out_rgb = color_transfer(out_rgb, ref_proxy.rgb, finish_strength)
                 ref_note = (f"reference match → {os.path.basename(cfg.reference)} "
-                            f"(strength {cfg.reference_strength:.2f})")
+                            f"(strength {finish_strength:.2f})")
+                edit_proxy = downscale_long_edge(Image(rgb=out_rgb), ref_proxy.long_edge)
+                post_lift, post_lift_report = bottom_gradient_to_reference(
+                    edit_proxy.rgb, ref_proxy.rgb, strength=cfg.reference_strength * 0.85)
+                if post_lift:
+                    alpha = linear_alpha(out_rgb.shape[:2], frm="bottom", coverage=0.62)
+                    lifted = apply_ops(out_rgb, post_lift)
+                    out_rgb = out_rgb * (1.0 - alpha[..., None]) + lifted * alpha[..., None]
+                    moves = ", ".join(f"{k} {v:+.1f}" for k, v in post_lift.items())
+                    notes_extra.append(
+                        "post-reference foreground lift: "
+                        f"lower luminance {post_lift_report['before_bottom']:.2f}→"
+                        f"{post_lift_report['reference_bottom']:.2f} ({moves})")
+                post_mid, post_mid_report = midground_lift_to_reference(
+                    edit_proxy.rgb, ref_proxy.rgb, strength=cfg.reference_strength * 0.85)
+                if post_mid:
+                    alpha = _vertical_band_alpha(out_rgb.shape[:2], top=0.48, peak=0.70, bottom=0.93)
+                    lifted = apply_ops(out_rgb, post_mid)
+                    out_rgb = out_rgb * (1.0 - alpha[..., None]) + lifted * alpha[..., None]
+                    moves = ", ".join(f"{k} {v:+.1f}" for k, v in post_mid.items())
+                    notes_extra.append(
+                        "post-reference midground lift: "
+                        f"mid luminance {post_mid_report['before_mid']:.2f}→"
+                        f"{post_mid_report['reference_mid']:.2f} ({moves})")
+                post_mountain, post_mountain_report = mountain_highlight_to_reference(
+                    edit_proxy.rgb, ref_proxy.rgb, strength=cfg.reference_strength * 0.85)
+                if post_mountain:
+                    alpha = _vertical_band_alpha(out_rgb.shape[:2], top=0.30, peak=0.47, bottom=0.66)
+                    lifted = apply_ops(out_rgb, post_mountain)
+                    out_rgb = out_rgb * (1.0 - alpha[..., None]) + lifted * alpha[..., None]
+                    moves = ", ".join(f"{k} {v:+.1f}" for k, v in post_mountain.items())
+                    notes_extra.append(
+                        "post-reference mountain highlight: "
+                        f"snow p90 {post_mountain_report['before_p90']:.2f}→"
+                        f"{post_mountain_report['reference_p90']:.2f} ({moves})")
                 # Reference transfer runs AFTER apply, so re-run the safety gates over it — a
                 # match can re-introduce oversaturation/cast that the first gate already cleared.
                 if self.chroma_max is not None:
