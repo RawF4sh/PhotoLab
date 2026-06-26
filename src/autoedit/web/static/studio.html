@@ -135,8 +135,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
   -webkit-user-drag:none;user-select:none;pointer-events:none}  /* no native image-grab while sliding the split */
 .ba .layer{position:absolute;inset:0;overflow:hidden}
 .ba .layer img{width:100%;height:100%}
-.ba .after{clip-path:inset(0 0 0 var(--split,50%))}
-.ba .before{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
+.ba.mode-split .after{clip-path:inset(0 0 0 var(--split,50%))}
+.ba.mode-split .before{clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}
 .ba .sizer{visibility:hidden}
 .ba .handle{position:absolute;top:0;bottom:0;left:var(--split,50%);width:1px;background:rgba(255,255,255,.9);
   box-shadow:0 0 10px rgba(0,0,0,.7);pointer-events:none;z-index:3}
@@ -147,8 +147,16 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .ba .tag{position:absolute;top:10px;font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:3px 8px;border-radius:5px;
   background:rgba(8,8,9,.7);color:#fff;backdrop-filter:blur(4px);z-index:3}
 .ba .tag.l{left:10px} .ba .tag.r{right:10px}
+.ba.mode-before .before,.ba.mode-after .after{clip-path:none}
 .ba.mode-before .after,.ba.mode-after .before{display:none}
 .ba.mode-before .handle,.ba.mode-before .knob,.ba.mode-after .handle,.ba.mode-after .knob{display:none}
+.ba.mode-side{display:flex;align-items:center;justify-content:center;gap:1px;max-width:100%;background:var(--line)}
+.ba.mode-side .sizer{display:none}
+.ba.mode-side .layer{position:relative;inset:auto;clip-path:none;flex:1 1 0;min-width:0;background:var(--stage)}
+.ba.mode-side .layer img{width:100%;height:auto;max-height:calc(100vh - 150px);object-fit:contain}
+.ba.mode-side .handle,.ba.mode-side .knob{display:none}
+.ba.mode-side .tag.l{left:10px}
+.ba.mode-side .tag.r{right:10px}
 .cursor-split{cursor:ew-resize}
 .mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:0;transition:opacity .2s;z-index:2}
 .mask-ov.show{opacity:.45}
