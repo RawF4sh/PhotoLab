@@ -13,12 +13,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import compose, emit, looks as looks_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod
+from . import (compose, emit, intent as intent_mod, looks as looks_mod, palette as palette_mod,
+               policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
 from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
-from .edit import apply_image, build_alpha, gates
+from .edit import apply_image, banding, build_alpha, gates
 from .imageio import Image, downscale_long_edge, load_image, luma
 from .notes import build_notes
 from .segment import make_segmenter, resolve
@@ -49,6 +50,9 @@ class Pipeline:
     decider: Decider
     guard_ops: set
     chroma_max: float | None
+    intents: dict
+    palettes: dict
+    banding: dict
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
@@ -75,6 +79,10 @@ class Pipeline:
             decider=make_decider(cfg),
             guard_ops=guard_ops,
             chroma_max=chroma_max,
+            intents=intent_mod.load_intents(cfg.intents_path),
+            palettes=palette_mod.load_palettes(cfg.palettes_path),
+            banding={k: float(v) for k, v in (rules.get("banding", {}) or {}).items()
+                     if isinstance(v, (int, float))},
         )
 
     def concepts_for(self, style: Style) -> list[str]:
@@ -134,6 +142,31 @@ class Pipeline:
             for s in region_settings.values():
                 s.pop("sharpen", None)
 
+        # Free-text look intent (e.g. "warm sunset, moody") → bounded GLOBAL nudges on top of the
+        # rule baseline, so typing what you want works fully offline. Scaled by intensity; the
+        # oversaturation gate + skin-safe guard still backstop. Skipped under the LLM decider, which
+        # already consumes the prompt via the brief (avoids double-applying the same intent).
+        intent_note = None
+        if cfg.prompt and self.decider.name != "llm":
+            nudge, terms = intent_mod.parse(cfg.prompt, self.intents)
+            if nudge:
+                for k, v in nudge.items():
+                    global_settings[k] = global_settings.get(k, 0.0) + v * cfg.intensity
+                intent_note = "look intent: " + ", ".join(terms)
+
+        # Regional palette grade (the universal "make it blue/sunset" colour layer). Explicit
+        # cfg.palette wins; "none"/"off" disables; otherwise a cue word in the prompt selects one.
+        # Strength scales by intensity; applied as colour finishing in apply_image.
+        if cfg.palette:
+            pal_name = None if cfg.palette.lower() in ("none", "off", "") else cfg.palette
+        else:
+            pal_name = palette_mod.palette_for_prompt(cfg.prompt, self.palettes)
+        palette_obj = self.palettes.get(pal_name) if pal_name else None
+        palette_arg = ((palette_obj, cfg.palette_strength * cfg.intensity)
+                       if palette_obj is not None else None)
+        palette_note = (f"palette: {pal_name} ({cfg.palette_strength:.0%})"
+                        if palette_obj is not None else None)
+
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
         policy_notes = policies.enforce(region_settings, self.meta)
@@ -170,13 +203,39 @@ class Pipeline:
                 compositional=[(a, s) for _n, a, s in comp],
                 guard_mask=guard_mask, guard_ops=self.guard_ops,
                 chroma_max_increase=self.chroma_max, protect_chroma=guard_mask,
-                report=gate_report,
+                palette=palette_arg, report=gate_report,
             )
             if guard_mask is not None:
                 guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
             limited = gate_report.get("chroma_limited", 0.0)
             if limited > 0.005:
                 notes_extra.append(f"oversaturation gate: pulled chroma back on {limited * 100:.0f}% of frame")
+
+            # Banding gate (spec Phase 1): detect posterization in smooth regions of the EDITED
+            # output; if present, reduce the stretch ops (dehaze/contrast/curve/clarity) and re-apply
+            # ONCE. Measured on downscaled copies so it's cheap. Off when [banding] is absent.
+            if self.banding:
+                s_small = downscale_long_edge(Image(rgb=img.rgb), 1280).rgb
+                e_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
+                bscore, baction, _cov = banding.assess(s_small, e_small, self.banding)
+                if baction in ("reduce", "fail"):
+                    red = 0.5 if baction == "fail" else 0.65
+                    gs2 = dict(global_settings)
+                    for k in ("dehaze", "contrast", "curve", "clarity"):
+                        if gs2.get(k):
+                            gs2[k] *= red
+                    out_rgb = apply_image(
+                        img.rgb, regions_apply, gs2,
+                        compositional=[(a, s) for _n, a, s in comp],
+                        guard_mask=guard_mask, guard_ops=self.guard_ops,
+                        chroma_max_increase=self.chroma_max, protect_chroma=guard_mask,
+                        palette=palette_arg, report={},
+                    )
+                    notes_extra.append(
+                        f"banding gate: smooth-region banding {bscore:.2f} → reduced "
+                        f"dehaze/contrast/curve/clarity {int((1 - red) * 100)}% and re-applied")
+                elif baction == "warn":
+                    notes_extra.append(f"banding watch: smooth-region banding {bscore:.2f} (dither applied)")
 
         # Optional finishing grade: match the look of a reference photo (degrades safely).
         ref_note = None
@@ -212,6 +271,10 @@ class Pipeline:
                 gstats, post_stats, gate_report.get("chroma_limited", 0.0) if do_apply else 0.0)
 
         notes = build_notes(gstats, region_stats, resolved.detected)
+        if intent_note:
+            notes.append(intent_note)
+        if palette_note:
+            notes.append(palette_note)
         if guard_note:
             notes.append(guard_note)
         notes.extend(notes_extra)
