@@ -19,7 +19,7 @@ from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
-from .edit import apply_image, banding, build_alpha, gates
+from .edit import apply_image, banding, build_alpha, gates, linear_alpha
 from .imageio import Image, downscale_long_edge, load_image, luma
 from .notes import build_notes
 from .segment import make_segmenter, resolve
@@ -190,12 +190,77 @@ class Pipeline:
             policy_notes.append(
                 f"batch normalize: {exposure_bias:+.2f} EV toward group {batch_group or '?'}")
 
+        notes_extra: list[str] = list(policy_notes)
+
+        # Reference feedback: before touching full-res pixels, learn a bounded set of ordinary
+        # edit-slider nudges from the reference look. This captures "make this image feel like
+        # that one" as reusable settings rather than a one-off color-transfer result.
+        ref_feedback_note = None
+        ref_proxy = None
+        reference_comp_settings: dict[str, dict[str, float]] = {}
+        if cfg.reference:
+            try:
+                from .edit.ops import apply_ops
+                from .edit.reference import (
+                    top_gradient_to_reference,
+                    tune_regions_to_reference,
+                    tune_settings_to_reference,
+                )
+
+                ref_proxy = downscale_long_edge(load_image(cfg.reference), cfg.analysis_long_edge)
+                globally_rendered = apply_ops(proxy.rgb, global_settings)
+                tuned, feedback = tune_settings_to_reference(
+                    proxy.rgb, ref_proxy.rgb, global_settings,
+                    strength=cfg.reference_strength, passes=5,
+                )
+                global_settings = tuned
+                globally_rendered = apply_ops(proxy.rgb, global_settings)
+                moves = feedback.get("moves", [])
+                before_loss = float(feedback.get("before_loss", 0.0))
+                after_loss = float(feedback.get("after_loss", before_loss))
+                if moves and after_loss < before_loss:
+                    preview = ", ".join(str(m) for m in moves[:5])
+                    if len(moves) > 5:
+                        preview += ", ..."
+                    ref_feedback_note = (
+                        f"reference feedback → {os.path.basename(cfg.reference)} "
+                        f"({before_loss:.3f}→{after_loss:.3f}; {preview})")
+                else:
+                    ref_feedback_note = (
+                        f"reference feedback → {os.path.basename(cfg.reference)} "
+                        f"({before_loss:.3f}→{after_loss:.3f}; no slider change needed)")
+                region_settings, region_feedback = tune_regions_to_reference(
+                    globally_rendered, ref_proxy.rgb, region_settings, resolved.union,
+                    strength=cfg.reference_strength, passes=3,
+                )
+                if region_feedback:
+                    parts = []
+                    for item in region_feedback[:3]:
+                        moves = ", ".join(str(m) for m in item.get("moves", [])[:3])
+                        parts.append(f"{item.get('name')} {item.get('before_loss', 0):.3f}→"
+                                     f"{item.get('after_loss', 0):.3f} ({moves})")
+                    if len(region_feedback) > 3:
+                        parts.append("...")
+                    notes_extra.append("reference regional feedback: " + "; ".join(parts))
+                if "sky" in resolved.union:
+                    top_settings, top_report = top_gradient_to_reference(
+                        globally_rendered, ref_proxy.rgb, strength=cfg.reference_strength)
+                    if top_settings:
+                        reference_comp_settings["reference_sky_grad"] = top_settings
+                        moves = ", ".join(f"{k} {fmt:+.1f}" for k, fmt in top_settings.items())
+                        notes_extra.append(
+                            "reference sky gradient: "
+                            f"top luminance {top_report['before_top']:.2f}→"
+                            f"{top_report['reference_top']:.2f} ({moves})")
+            except Exception as e:
+                ref_feedback_note = f"reference feedback skipped ({e})"
+
         full_hw = (img.height, img.width)
         comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)
+        comp_settings.update(reference_comp_settings)
 
         out_rgb = None
         guard_note = None
-        notes_extra: list[str] = list(policy_notes)
         if do_apply:
             guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
@@ -207,6 +272,12 @@ class Pipeline:
                 alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                 regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
+            if "reference_sky_grad" in reference_comp_settings:
+                comp.append((
+                    "reference_sky_grad",
+                    linear_alpha(full_hw, frm="top", coverage=0.58),
+                    reference_comp_settings["reference_sky_grad"],
+                ))
             guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings, guide)
             gate_report: dict = {}
             out_rgb = apply_image(
@@ -265,7 +336,8 @@ class Pipeline:
             try:
                 from .edit.reference import color_transfer
 
-                ref_proxy = downscale_long_edge(load_image(cfg.reference), 512)
+                if ref_proxy is None:
+                    ref_proxy = downscale_long_edge(load_image(cfg.reference), 512)
                 out_rgb = color_transfer(out_rgb, ref_proxy.rgb, cfg.reference_strength)
                 ref_note = (f"reference match → {os.path.basename(cfg.reference)} "
                             f"(strength {cfg.reference_strength:.2f})")
@@ -299,6 +371,8 @@ class Pipeline:
             notes.append(palette_note)
         if guard_note:
             notes.append(guard_note)
+        if ref_feedback_note:
+            notes.append(ref_feedback_note)
         notes.extend(notes_extra)
         if ref_note:
             notes.append(ref_note)

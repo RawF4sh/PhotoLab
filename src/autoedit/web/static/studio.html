@@ -145,7 +145,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
   place-items:center;color:#fff;pointer-events:none;z-index:3}
 .ba .knob svg{width:14px;height:14px}
 .ba .tag{position:absolute;top:10px;font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:3px 8px;border-radius:5px;
-  background:rgba(8,8,9,.7);color:#fff;backdrop-filter:blur(4px);z-index:3}
+  background:rgba(8,8,9,.7);color:#fff;backdrop-filter:blur(4px);z-index:3;display:none}
+.ba.mode-split .tag{display:block}
 .ba .tag.l{left:10px} .ba .tag.r{right:10px}
 .ba.mode-before .before,.ba.mode-after .after{clip-path:none}
 .ba.mode-before .after,.ba.mode-after .before{display:none}
@@ -155,8 +156,6 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .ba.mode-side .layer{position:relative;inset:auto;clip-path:none;flex:1 1 0;min-width:0;background:var(--stage)}
 .ba.mode-side .layer img{width:100%;height:auto;max-height:calc(100vh - 150px);object-fit:contain}
 .ba.mode-side .handle,.ba.mode-side .knob{display:none}
-.ba.mode-side .tag.l{left:10px}
-.ba.mode-side .tag.r{right:10px}
 .cursor-split{cursor:ew-resize}
 .mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:0;transition:opacity .2s;z-index:2}
 .mask-ov.show{opacity:.45}
@@ -310,6 +309,41 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .preview-act .state.ready{color:var(--ok)}
 .preview-act .state.stale{color:var(--warn)}
 .preview-act .state.busy{color:var(--info)}
+
+@media (max-width:1180px){
+  body{overflow:auto}
+  .app{min-height:100vh;height:auto;grid-template-rows:auto 1fr 24px}
+  .topbar{min-height:46px;flex-wrap:wrap;padding:8px 10px;gap:8px}
+  .folder{order:2;flex:1 1 100%;max-width:none}
+  .work{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,70vh) auto;overflow:visible}
+  .film{border-right:0;border-bottom:1px solid var(--line);max-height:190px}
+  .film-list{display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding:8px}
+  .frow{min-width:230px;margin-bottom:0}
+  .stage{min-height:420px;overflow:visible}
+  .canvas-wrap{padding:52px 12px 16px}
+  .develop{border-left:0;border-top:1px solid var(--line);max-height:none}
+  .drawer{left:0;right:0}
+  .rgrid{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:720px){
+  .topbar .tdiv,.topbar .spacer{display:none}
+  .topbar{align-items:stretch}
+  .seg{max-width:100%;overflow:auto}
+  #viewseg{order:3;width:100%}
+  #viewseg button{flex:1}
+  .work{grid-template-rows:auto minmax(360px,64vh) auto}
+  .film{max-height:168px}
+  .frow{min-width:205px}
+  .stage{min-height:360px}
+  .ba img{max-height:calc(100vh - 210px)}
+  .ba.mode-side{flex-direction:column}
+  .ba.mode-side .layer{width:100%;flex:0 0 auto}
+  .ba.mode-side .layer img{max-height:42vh}
+  .styles{grid-template-columns:1fr}
+  .drawer-h{flex-wrap:wrap;gap:8px}
+  .prog{flex-basis:100%}
+  .rgrid{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -328,9 +362,11 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="seg" id="viewseg" style="display:none">
       <button data-v="before">Before</button><button data-v="after">After</button>
       <button data-v="split" class="on">Split</button><button data-v="side">Side</button></div>
-    <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" style="display:none">
+    <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" title="Show detected edit regions on the split preview" style="display:none">
       <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
     <div class="tdiv"></div>
+    <div class="seg" id="runFmtSeg" title="Output format">
+      <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
     <button class="tbtn primary" id="runBtn" disabled aria-label="Run batch">
       <svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg><span class="lbl">Run batch</span></button>
     <button class="iconbtn" id="settingsBtn" aria-label="Settings">
@@ -509,9 +545,14 @@ const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural'
   consistent:true,      /* anchor exposure across the batch */
   hasPairs:false};
 const real=()=>STATE.files.length>0;
-const thumbURL=(p,px=360)=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p);
+const thumbURL=(p,px=360,rev='')=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p)+(rev?'&v='+encodeURIComponent(rev):'');
 const joinPath=(d,f)=>d?(d.replace(/\/+$/,'')+'/'+f):f;
 const extOf=n=>{const i=n.lastIndexOf('.');return i<0?'':n.slice(i+1).toUpperCase();};
+const editOptions=()=>({
+  style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
+  palette:STATE.palette,palette_strength:STATE.paletteStrength,
+  backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent
+});
 
 /* Build a filmstrip item from an /api/groups entry. A RAW+JPEG pair is ONE item that edits a
    single chosen source (RAW preferred). The thumbnail always uses the JPEG when present (fast —
@@ -622,7 +663,8 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
 /* ---- before/after view -------------------------------------------------- */
 function setView(v){const ba=$('#ba');ba.className='ba mode-'+v+(ba.classList.contains('gen')?' gen':'');
   if(v==='split'){ba.style.setProperty('--split','50%');ba.classList.add('cursor-split');}
-  $('#viewseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));}
+  $('#viewseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  updateMaskButton();}
 $('#viewseg').addEventListener('click',e=>{const b=e.target.closest('[data-v]');if(b)setView(b.dataset.v);});
 (function splitDrag(){const ba=$('#ba');let drag=false;
   const set=e=>{if(!ba.classList.contains('mode-split'))return;const r=ba.getBoundingClientRect();
@@ -631,7 +673,13 @@ $('#viewseg').addEventListener('click',e=>{const b=e.target.closest('[data-v]');
   ba.addEventListener('pointerdown',e=>{drag=true;set(e);});
   window.addEventListener('pointermove',e=>drag&&set(e));window.addEventListener('pointerup',()=>drag=false);})();
 let maskOn=false;
-$('#maskBtn').onclick=()=>{maskOn=!maskOn;$('#maskOv').classList.toggle('show',maskOn);$('#maskBtn').classList.toggle('primary',maskOn);};
+function updateMaskButton(){
+  const show=!!(STATE.preview&&$('#ba').classList.contains('mode-split'));
+  $('#maskBtn').style.display=show?'':'none';
+  if(!show){maskOn=false;$('#maskOv').classList.remove('show');$('#maskBtn').classList.remove('primary');}
+}
+$('#maskBtn').onclick=()=>{if(!STATE.preview||!$('#ba').classList.contains('mode-split'))return;
+  maskOn=!maskOn;$('#maskOv').classList.toggle('show',maskOn);$('#maskBtn').classList.toggle('primary',maskOn);};
 
 /* ---- preview load + apply ---------------------------------------------- */
 function setPreviewState(text, cls){
@@ -641,6 +689,7 @@ function setPreviewState(text, cls){
 }
 function markPreviewStale(){
   STATE.preview=null; STATE.previewDirty=true; STATE.previewToken++;
+  updateMaskButton();
   if(STATE.loading){$('#ba').classList.remove('gen');STATE.loading=false;}
   if(real()&&STATE.sel>=0){
     setPreviewState('Needs update','stale');
@@ -661,6 +710,7 @@ function showSourceOnly(markDirty){
   $('#why').innerHTML='<div class="tip">No notes yet.</div>';
   $('#stScene').textContent='';$('#sbScene').textContent='';$('#sbQuality').textContent='';
   STATE.preview=null; STATE.previewDirty=!!markDirty; STATE.previewToken++;
+  updateMaskButton();
   setPreviewState(markDirty?'Ready':'No preview', markDirty?'stale':'');
 }
 function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].thumbPath,1100);
@@ -674,9 +724,9 @@ async function loadPreview(){
   const token=++STATE.previewToken;
   STATE.loading=true;previewLoading();
   try{const p=STATE.files[STATE.sel];
+    const opts=editOptions(); delete opts.out_format; delete opts.consistent;
     const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({file:p.path,style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
-        palette:STATE.palette,palette_strength:STATE.paletteStrength,backend:'sam3',compose:true})})).json();
+      body:JSON.stringify({file:p.path,...opts})})).json();
     if(token!==STATE.previewToken)return;
     if(res.error){$('#concepts').innerHTML=`<div class="note warn">${res.error}</div>`;$('#ba').classList.remove('gen');}
     else{STATE.preview=res;applyPreview(res);}
@@ -689,6 +739,7 @@ function applyPreview(res){const r=res.result||{};const ba=$('#ba');
   STATE.previewDirty=false;
   $('#baBefore').src=res.before;$('#baAfter').src=res.after;$('#baSizer').src=res.after;
   ba.classList.remove('gen');setView('split');
+  $('#maskOv').style.background='linear-gradient(135deg, rgba(91,143,214,.26), rgba(92,192,138,.20), rgba(224,163,90,.18))';
   setPreviewState('Current','ready');
   $('#stScene').textContent=r.scene?'· '+r.scene:'';
   $('#sbScene').textContent=r.scene?'Scene: '+r.scene:'';
@@ -774,9 +825,7 @@ $('#runBtn').onclick=startRun;
 function startRun(){if(!real()||!STATE.served)return;
   $('#runDrawer').classList.add('open');$('#qlist').innerHTML='';
   $('#runBar').style.width='0';$('#runPct').textContent='0%';$('#cDone').textContent=$('#cRev').textContent=$('#cFail').textContent='0';
-  const body={style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
-    palette:STATE.palette,palette_strength:STATE.paletteStrength,backend:'sam3',compose:true,
-    out_format:STATE.outFormat,consistent:STATE.consistent};
+  const body=editOptions();
   // Always send explicit source paths (one per group) so a RAW+JPEG pair is edited ONCE, on the
   // chosen source — never both. Subset = the checked stems; otherwise every group.
   const items=STATE.run.size?STATE.files.filter(f=>STATE.run.has(f.stem)):STATE.files;
@@ -812,7 +861,7 @@ $('#cancelBtn').onclick=()=>{if(JOB)fetch('/api/jobs/'+JOB.id+'/control',{method
 /* ---- review modal ------------------------------------------------------- */
 function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';
   $('#reviewTitle').textContent=`Review · ${j.done} edited · ${j.review} review · ${j.failed} failed → ${j.out_dir||''}`;
-  j.items.slice(0,300).forEach(it=>{const after=it.out?thumbURL(it.out,520):thumbURL(it.src,520);
+  j.items.slice(0,300).forEach(it=>{const after=it.out?thumbURL(it.out,520,j.id||Date.now()):thumbURL(it.src,520);
     const tail=it.status==='failed'?`<span class="bdg b-fail"><i></i>${it.error?'failed':'unreadable'}</span>`
       :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`:`<span class="bdg b-done"><i></i>safe</span>`;
     const c=el('div','rcard');
@@ -832,7 +881,12 @@ $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
 document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s)s.classList.remove('open');}));
 document.querySelectorAll('.modal .seg').forEach(seg=>seg.addEventListener('click',e=>{const b=e.target.closest('button');
   if(!b)return;seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');}));
-$('#fmtSeg').addEventListener('click',e=>{const b=e.target.closest('[data-fmt]');if(b)STATE.outFormat=b.dataset.fmt;});
+function setOutputFormat(fmt){
+  STATE.outFormat=fmt;
+  document.querySelectorAll('#fmtSeg [data-fmt],#runFmtSeg [data-fmt]').forEach(b=>b.classList.toggle('on',b.dataset.fmt===fmt));
+}
+$('#fmtSeg').addEventListener('click',e=>{const b=e.target.closest('[data-fmt]');if(b)setOutputFormat(b.dataset.fmt);});
+$('#runFmtSeg').addEventListener('click',e=>{const b=e.target.closest('[data-fmt]');if(b)setOutputFormat(b.dataset.fmt);});
 
 /* ---- keyboard ----------------------------------------------------------- */
 window.addEventListener('keydown',e=>{if(!real()||e.target.matches('input,textarea'))return;

@@ -39,6 +39,19 @@ def test_job_runs_to_done_and_writes_outputs(tmp_path):
     assert os.path.isdir(str(out))
 
 
+def test_job_respects_output_format(tmp_path):
+    d = tmp_path / "in"; d.mkdir()
+    _img(d / "a.jpg")
+    out = tmp_path / "out"
+    job = jobs.start(str(d), None, str(out), {"backend": "stub", "out_format": "tiff"})
+    _wait(job)
+    snap = jobs.snapshot(job)
+
+    assert snap["status"] == "done"
+    assert snap["items"][0]["out"].endswith(".tif")
+    assert os.path.exists(snap["items"][0]["out"])
+
+
 def test_job_isolates_a_bad_image(tmp_path):
     d = tmp_path / "in"; d.mkdir()
     _img(d / "good.jpg")
