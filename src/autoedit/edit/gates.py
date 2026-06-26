@@ -61,6 +61,7 @@ def chroma_guard(
     source: np.ndarray,
     edited: np.ndarray,
     max_increase: float = 0.35,
+    neutral_allowance: float = 0.02,
     protect: np.ndarray | None = None,
     protect_increase: float = 0.05,
     highlight_lum: float = 0.90,
@@ -70,6 +71,9 @@ def chroma_guard(
     source/edited: float HxWx3 gamma RGB in [0,1] (same shape).
     max_increase:   a pixel's chroma may grow by at most this fraction (0.35 → +35%), plus a
                     tiny additive so near-neutral pixels can still gain a little life.
+    neutral_allowance:
+                    additive chroma budget for near-neutral pixels. Defaults conservative; an
+                    explicit palette can raise it for intentional cool/warm grading.
     protect:        float HxW [0,1] mask (snow/skin) held to `protect_increase` instead.
     highlight_lum:  pixels brighter than this keep ~zero chroma gain (no fringing on whites).
 
@@ -78,7 +82,8 @@ def chroma_guard(
     src_c = _chroma(source)
     out_c = _chroma(edited)
 
-    ceiling = src_c * (1.0 + max_increase) + 0.02
+    allowance = max(0.0, float(neutral_allowance))
+    ceiling = src_c * (1.0 + max_increase) + allowance
     if protect is not None:
         p = protect > 0.5
         ceiling = np.where(p, src_c * (1.0 + protect_increase) + 0.008, ceiling)

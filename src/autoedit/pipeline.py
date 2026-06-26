@@ -232,13 +232,20 @@ class Pipeline:
                 e_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
                 bscore, baction, _cov = banding.assess(s_small, e_small, self.banding)
                 if baction in ("reduce", "fail"):
-                    red = 0.5 if baction == "fail" else 0.65
+                    red = 0.35 if baction == "fail" else 0.55
+
+                    def damp(settings: dict) -> dict:
+                        out = dict(settings)
+                        for k in ("dehaze", "contrast", "curve", "clarity", "sharpen"):
+                            if out.get(k):
+                                out[k] *= red
+                        return out
+
                     gs2 = dict(global_settings)
-                    for k in ("dehaze", "contrast", "curve", "clarity"):
-                        if gs2.get(k):
-                            gs2[k] *= red
+                    gs2 = damp(gs2)
+                    regions2 = [(a, damp(s)) for a, s in regions_apply]
                     out_rgb = apply_image(
-                        img.rgb, regions_apply, gs2,
+                        img.rgb, regions2, gs2,
                         compositional=[(a, s) for _n, a, s in comp],
                         guard_mask=guard_mask, guard_ops=self.guard_ops,
                         chroma_max_increase=self.chroma_max,
@@ -248,7 +255,7 @@ class Pipeline:
                     )
                     notes_extra.append(
                         f"banding gate: smooth-region banding {bscore:.2f} → reduced "
-                        f"dehaze/contrast/curve/clarity {int((1 - red) * 100)}% and re-applied")
+                        f"dehaze/contrast/curve/clarity/sharpen {int((1 - red) * 100)}% and re-applied")
                 elif baction == "warn":
                     notes_extra.append(f"banding watch: smooth-region banding {bscore:.2f} (dither applied)")
 

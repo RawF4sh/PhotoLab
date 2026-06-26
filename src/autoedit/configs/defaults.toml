@@ -7,6 +7,8 @@ decider = "rules"          # "rules" | "llm"
 emit = "baked"             # "baked" | "editable" | "both"
 # look/preset/concepts/prompt are unset here — the style supplies look + concepts;
 # override any of them per-run via CLI flags (--look, --preset, --concepts, --prompt).
+# palette/palette_strength are also unset by default; set --palette cool_blue or type a
+# cue such as "cool blue" in the Studio intent box for the winter-blue grade.
 
 [segment]
 backend = "stub"           # "stub" (no GPU, heuristic) | "sam3"

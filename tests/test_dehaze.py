@@ -37,6 +37,15 @@ def test_dehaze_recovers_contrast_and_blacks():
     assert out.min() >= 0.0 and out.max() <= 1.0
 
 
+def test_dehaze_tapers_smooth_bright_gradients():
+    g = np.linspace(0.82, 0.92, 128)[:, None].repeat(128, 1)
+    smooth_sky = np.repeat(g[..., None], 3, axis=2).astype(np.float32)
+    out = dehaze(smooth_sky, 60.0)
+
+    # Fragile fog/sky gradients should not be stretched into visible contour plateaus.
+    assert float(np.abs(out - smooth_sky).mean()) < 0.025
+
+
 def test_dehaze_negative_adds_veil():
     hazy, _ = _hazy()
     out = dehaze(hazy, -40.0)            # inverse: should reduce contrast, not raise it

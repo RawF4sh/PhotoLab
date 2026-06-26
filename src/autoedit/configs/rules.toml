@@ -89,19 +89,21 @@ whites     = "clamp(3 - highlight_clip * 60 - max(0, mean_lum - 0.62) * 42, -18,
 blacks     = "0"                                             # no black crush — keep shadows alive
 vibrance   = "4"
 clarity    = "6"
-# scale dehaze with actual haze (dark-channel mean) instead of a hard 0.45 gate that missed
-# real fog at ~0.41. Now a real dark-channel inversion (ops.dehaze), so this is % strength.
-dehaze     = "clamp((haze - 0.28) * 110, 0, 35)"
+# scale dehaze with actual haze, but keep the natural baseline gentle: smooth overcast skies
+# posterize quickly when a dark-channel dehaze tries to "recover" fog that should stay soft.
+dehaze     = "clamp((haze - 0.32) * 70, 0, 18)"
 sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
 
 # the REAL sky: keep it natural-blue. Only darken if it's actually blown; never force-dim a
-# good sky (that was the old 'too dark'). No hue push — clean blue, not navy.
+# good sky (that was the old 'too dark'). Avoid local texture/dehaze here: sky/mist masks are
+# often coarse in smooth gradients, and localized tone changes imprint visible contour shapes.
+# Global tone + the smooth sky_grad + auto palette carry the sky look without mask artifacts.
 [landscape.sky]
-exposure   = "clamp(-blown_sky * 0.35, -0.16, 0)"            # weight only a blown sky, else leave it
-highlights = "clamp(-blown_sky * 50, -38, 0)"                # recover only a genuinely blown sky
-contrast   = "6"
-clarity    = "4"
-dehaze     = "clamp((haze - 0.25) * 90, 2, 30)"             # clear a hazy sky proportionally
+exposure   = "0"
+highlights = "0"
+contrast   = "0"
+clarity    = "0"
+dehaze     = "0"
 saturation = "if(region_sat > 0.7, -8, 3)"                   # tame already-saturated skies; tiny lift otherwise
 temp       = "0"                                             # no cooling cast — keep the sky true
 hsl_blue_sat = "3"
@@ -163,7 +165,7 @@ whites     = "clamp(3 - highlight_clip * 55, -16, 5)"
 blacks     = "0"
 vibrance   = "4"
 clarity    = "6"
-dehaze     = "clamp((haze - 0.28) * 110, 0, 35)"
+dehaze     = "clamp((haze - 0.32) * 70, 0, 18)"
 sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
 
 # subject (e.g. wildlife): lift + a little clarity for fur/feature detail

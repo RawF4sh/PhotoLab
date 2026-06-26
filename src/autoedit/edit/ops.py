@@ -168,7 +168,21 @@ def dehaze(rgb: np.ndarray, amt: float) -> np.ndarray:
     t = np.clip(t, t0, 1.0)[..., None]
 
     recovered = (rgb - A) / t + A                   # invert the scattering model
-    out = rgb + a * (np.clip(recovered, 0.0, 1.0) - rgb)  # blend toward dehazed by amt
+
+    # Smooth, bright, low-saturation areas (foggy skies, mist, glassy water highlights) often
+    # have very few real source levels. A full dark-channel dehaze stretches those levels into
+    # visible contour lines, so taper the blend only in those fragile regions while leaving
+    # textured mountains/trees and darker water at full strength.
+    lum = luma(rgb)
+    sigma = 0.006 * max(h, w) + 1.0
+    detail = np.abs(lum - gaussian_blur(lum, sigma))
+    smooth = np.clip((0.018 - detail) / 0.018, 0.0, 1.0)
+    bright = np.clip((lum - 0.50) / 0.30, 0.0, 1.0)
+    neutral = np.clip((0.22 - _pixsat(rgb)) / 0.22, 0.0, 1.0)
+    fragile = smooth * bright * neutral
+    blend = a * (1.0 - 0.94 * fragile)
+
+    out = rgb + blend[..., None] * (np.clip(recovered, 0.0, 1.0) - rgb)
     return out.astype(np.float32)
 
 

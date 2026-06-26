@@ -18,7 +18,8 @@ from ..imageio import luma
 from .filters import gaussian_blur
 
 # Default thresholds (overridable via rules.toml [banding]); from the spec's §11 table.
-DEFAULTS = {"warning": 0.12, "reduce_ops": 0.22, "hard_fail": 0.35, "min_coverage": 0.03}
+DEFAULTS = {"warning": 0.12, "reduce_ops": 0.22, "hard_fail": 0.35, "min_coverage": 0.03,
+            "absolute_weight": 0.65}
 
 
 def smooth_region_mask(lum: np.ndarray, hf_thresh: float = 0.012, sigma: float = 9.0) -> np.ndarray:
@@ -62,6 +63,26 @@ def banding_score(src_lum: np.ndarray, edt_lum: np.ndarray, smooth: np.ndarray) 
     return float(np.clip(0.65 * density_loss + 0.45 * new_plateau, 0.0, 1.0))
 
 
+def absolute_banding_score(edt_lum: np.ndarray, smooth: np.ndarray) -> float:
+    """Absolute posterization risk in the edited smooth region.
+
+    The source-relative score is great for catching newly introduced bands, but it misses images
+    that arrive already quantized or screenshot/JPEG-derived. For those, a smooth sky with sparse
+    occupied luma levels is still risky after edits, so score low tonal density directly.
+    """
+    if smooth.mean() < 0.005:
+        return 0.0
+    q = np.clip(np.round(edt_lum * 255.0), 0, 255)
+    vals = q[smooth]
+    if vals.size < 16:
+        return 0.0
+    span = float(vals.max() - vals.min())
+    if span < 12.0:
+        return 0.0
+    density = _level_density(q, smooth)
+    return float(np.clip((0.72 - density) / 0.72, 0.0, 1.0))
+
+
 def assess(src_rgb: np.ndarray, edt_rgb: np.ndarray, thr: dict | None = None
            ) -> tuple[float, str, float]:
     """Return (score, action, smooth_coverage). action ∈ pass | warn | reduce | fail."""
@@ -70,7 +91,9 @@ def assess(src_rgb: np.ndarray, edt_rgb: np.ndarray, thr: dict | None = None
     cov = float(smooth.mean())
     if cov < t["min_coverage"]:
         return 0.0, "pass", cov
-    score = banding_score(luma(src_rgb), luma(edt_rgb), smooth)
+    rel = banding_score(luma(src_rgb), luma(edt_rgb), smooth)
+    abs_score = absolute_banding_score(luma(edt_rgb), smooth) * t["absolute_weight"]
+    score = max(rel, abs_score)
     if score > t["hard_fail"]:
         action = "fail"
     elif score > t["reduce_ops"]:

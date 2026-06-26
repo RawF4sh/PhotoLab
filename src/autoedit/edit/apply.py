@@ -12,6 +12,7 @@ import numpy as np
 
 from ..contract import Settings
 from . import gates, ops
+from .palette import palette_grade
 
 
 def apply_image(
@@ -22,7 +23,9 @@ def apply_image(
     guard_mask: np.ndarray | None = None,
     guard_ops: set[str] | None = None,
     chroma_max_increase: float | None = None,
+    chroma_neutral_allowance: float = 0.02,
     protect_chroma: np.ndarray | None = None,
+    palette: tuple | None = None,
     report: dict | None = None,
 ) -> np.ndarray:
     """full_rgb: float HxWx3 gamma [0,1].
@@ -66,13 +69,22 @@ def apply_image(
         else:
             out = ops.apply_ops(out, global_settings)
 
+    # Regional palette grade (OKLab split-tone) as colour finishing — luminance-preserving, with the
+    # skin-safe guard mask held neutral. Runs BEFORE the chroma gate so the gate still backstops it.
+    if palette is not None:
+        pal, pstrength = palette
+        if pal is not None and pstrength > 0.0:
+            out = palette_grade(out, pal, pstrength, protect=guard_mask)
+
     out = np.clip(out, 0.0, 1.0)
 
     # Final safety pass: never let the edit be more saturated than the source allows.
     if chroma_max_increase is not None:
         out, limited = gates.chroma_guard(
             full_rgb.astype(np.float32), out,
-            max_increase=chroma_max_increase, protect=protect_chroma,
+            max_increase=chroma_max_increase,
+            neutral_allowance=chroma_neutral_allowance,
+            protect=protect_chroma,
         )
         if report is not None:
             report["chroma_limited"] = limited

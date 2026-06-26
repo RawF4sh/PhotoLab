@@ -1,6 +1,8 @@
 """Web service layer (framework-agnostic — no FastAPI needed to test)."""
 
+import base64
 import importlib
+import io
 import os
 
 import numpy as np
@@ -48,6 +50,18 @@ def test_preview_returns_before_after(tmp_path):
     assert out["after"].startswith("data:image/png;base64,")
     assert out["result"]["scene"] == "people"
     assert out["after"] != out["before"]  # the edit changed the pixels
+
+
+def test_preview_encoder_dithers_after_resize():
+    g = np.linspace(0.80, 0.94, 1024)[:, None].repeat(256, 1)
+    rgb = np.repeat(g[..., None], 3, axis=2).astype(np.float32)
+    url = service._img_b64(rgb, max_px=256, fmt="png")
+    raw = base64.b64decode(url.split(",", 1)[1])
+    arr = np.asarray(PILImage.open(io.BytesIO(raw)))
+
+    assert arr.shape[:2] == (256, 64)
+    mixed_rows = sum(len(np.unique(arr[y, :, 0])) > 1 for y in range(arr.shape[0]))
+    assert mixed_rows > arr.shape[0] // 2
 
 
 def test_run_one_writes_outputs(tmp_path):

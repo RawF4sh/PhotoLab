@@ -174,10 +174,20 @@ def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: 
     """Encode a working RGB array as a base64 data-URL. JPEG at q90 keeps a 1600px preview small
     (~200–500 KB) so we can show it sharp; PNG stays available for lossless needs."""
     from ..imageio import _to_u8
-    pil = PILImage.fromarray(_to_u8(rgb01), "RGB")  # dithered → no banding in flat preview skies
-    if max(pil.size) > max_px:
-        scale = max_px / max(pil.size)
-        pil = pil.resize((max(1, int(pil.width * scale)), max(1, int(pil.height * scale))), PILImage.LANCZOS)
+    rgb = np.clip(rgb01.astype(np.float32), 0.0, 1.0)
+    h, w = rgb.shape[:2]
+    if max(h, w) > max_px:
+        scale = max_px / max(h, w)
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        chans = [
+            np.asarray(
+                PILImage.fromarray(rgb[..., c], "F").resize((new_w, new_h), PILImage.LANCZOS),
+                dtype=np.float32,
+            )
+            for c in range(3)
+        ]
+        rgb = np.stack(chans, axis=-1)
+    pil = PILImage.fromarray(_to_u8(rgb), "RGB")  # final-size dither → no preview sky banding
     buf = io.BytesIO()
     if fmt in ("jpg", "jpeg"):
         pil.save(buf, format="JPEG", quality=quality, subsampling=0)

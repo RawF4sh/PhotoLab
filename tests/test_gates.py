@@ -25,6 +25,17 @@ def test_chroma_guard_caps_oversaturation():
     assert _chroma(out).mean() <= _chroma(src).mean() * 1.30 + 0.05
 
 
+def test_chroma_guard_palette_allowance_permits_intentional_neutral_color():
+    src = np.full((8, 8, 3), 0.5, np.float32)
+    edited = np.full((8, 8, 3), [0.46, 0.52, 0.60], np.float32)
+    default, _ = chroma_guard(src, edited, max_increase=0.30)
+    graded, frac = chroma_guard(src, edited, max_increase=0.30, neutral_allowance=0.16)
+
+    assert _chroma(default).mean() < _chroma(edited).mean()
+    assert np.allclose(graded, edited)
+    assert frac == 0.0
+
+
 def test_chroma_guard_preserves_luma():
     rng = np.random.default_rng(3)
     src = rng.random((16, 16, 3)).astype(np.float32)

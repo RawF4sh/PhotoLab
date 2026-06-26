@@ -31,6 +31,14 @@ def test_clean_gradient_passes():
     assert action == "pass" and score <= banding.DEFAULTS["warning"]
 
 
+def test_already_posterized_source_flags_absolute_banding():
+    src = _posterize(_gradient(), levels=14)
+    score, action, cov = banding.assess(src, src)
+    assert score > banding.DEFAULTS["warning"]
+    assert action in ("warn", "reduce", "fail")
+    assert cov > 0.5
+
+
 def test_textured_region_not_flagged():
     yy, xx = np.mgrid[0:256, 0:256]
     tex = (((xx + yy) % 2)).astype(np.float32)                      # fine checkerboard → all detail
