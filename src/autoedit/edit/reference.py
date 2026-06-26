@@ -410,6 +410,128 @@ def top_gradient_to_reference(source_rgb01: np.ndarray, reference_rgb01: np.ndar
     }
 
 
+def bottom_gradient_to_reference(source_rgb01: np.ndarray, reference_rgb01: np.ndarray,
+                                 strength: float = 0.7) -> tuple[dict[str, float], dict[str, float]]:
+    """Lift/densify the lower frame toward a reference without washing out the sky.
+
+    Landscape references often want a bright, readable foreground under a dramatic sky. A
+    global exposure increase makes the sky too pale, so this returns a gentle bottom gradient
+    using ordinary tone/HSL ops when the reference foreground is brighter or greener.
+    """
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0 or source_rgb01.shape[:2] != reference_rgb01.shape[:2]:
+        return {}, {"before_bottom": 0.0, "reference_bottom": 0.0}
+
+    h = source_rgb01.shape[0]
+    start = min(h - 8, int(round(h * 0.52)))
+    src = reference_features(source_rgb01[start:])
+    ref = reference_features(reference_rgb01[start:])
+    mid_delta = ref["p50"] - src["p50"]
+    shadow_delta = ref["p10"] - src["p10"]
+    green_lum_delta = ref["green_lum"] - src["green_lum"]
+    green_sat_delta = ref["green_sat"] - src["green_sat"]
+    detail_delta = ref["detail"] - src["detail"]
+
+    settings: dict[str, float] = {}
+    if mid_delta > 0.010:
+        settings["exposure"] = float(np.clip(mid_delta * 3.40, 0.06, 0.62) * strength)
+    if shadow_delta > 0.008:
+        settings["shadows"] = float(np.clip(shadow_delta * 150.0, 4.0, 28.0) * strength)
+    if green_lum_delta > 0.006:
+        settings["hsl_green_lum"] = float(np.clip(green_lum_delta * 130.0, 2.0, 24.0) * strength)
+    if green_sat_delta > 0.006:
+        settings["hsl_green_sat"] = float(np.clip(green_sat_delta * 95.0, 2.0, 20.0) * strength)
+    if detail_delta > 0.002:
+        settings["clarity"] = float(np.clip(detail_delta * 100.0, 1.0, 7.0) * strength)
+
+    settings = {k: v for k, v in settings.items() if abs(v) >= 0.05}
+    return settings, {
+        "before_bottom": float(src["p50"]),
+        "reference_bottom": float(ref["p50"]),
+        "green_lum_delta": float(green_lum_delta),
+    }
+
+
+def midground_lift_to_reference(source_rgb01: np.ndarray, reference_rgb01: np.ndarray,
+                                strength: float = 0.7) -> tuple[dict[str, float], dict[str, float]]:
+    """Lift the lower-middle landscape band toward the reference.
+
+    This catches the common case where the sky and front grass are right, but the readable
+    field/stump/mountain-base band remains too muddy compared with the hero edit.
+    """
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0 or source_rgb01.shape[:2] != reference_rgb01.shape[:2]:
+        return {}, {"before_mid": 0.0, "reference_mid": 0.0}
+
+    h = source_rgb01.shape[0]
+    y0 = int(round(h * 0.58))
+    y1 = max(y0 + 8, int(round(h * 0.82)))
+    src = reference_features(source_rgb01[y0:y1])
+    ref = reference_features(reference_rgb01[y0:y1])
+    mid_delta = ref["p50"] - src["p50"]
+    p90_delta = ref["p90"] - src["p90"]
+    green_lum_delta = ref["green_lum"] - src["green_lum"]
+    green_sat_delta = ref["green_sat"] - src["green_sat"]
+    detail_delta = ref["detail"] - src["detail"]
+
+    settings: dict[str, float] = {}
+    if mid_delta > 0.010:
+        settings["exposure"] = float(np.clip(mid_delta * 2.90, 0.05, 0.42) * strength)
+        settings["shadows"] = float(np.clip(mid_delta * 125.0, 2.0, 18.0) * strength)
+    if p90_delta > 0.012:
+        settings["whites"] = float(np.clip(p90_delta * 85.0, 2.0, 18.0) * strength)
+    if green_lum_delta > 0.006:
+        settings["hsl_green_lum"] = float(np.clip(green_lum_delta * 110.0, 1.0, 20.0) * strength)
+    if green_sat_delta > 0.006:
+        settings["hsl_green_sat"] = float(np.clip(green_sat_delta * 80.0, 1.0, 16.0) * strength)
+    if detail_delta > 0.002:
+        settings["clarity"] = float(np.clip(detail_delta * 85.0, 1.0, 6.0) * strength)
+
+    settings = {k: v for k, v in settings.items() if abs(v) >= 0.05}
+    return settings, {
+        "before_mid": float(src["p50"]),
+        "reference_mid": float(ref["p50"]),
+        "green_lum_delta": float(green_lum_delta),
+    }
+
+
+def mountain_highlight_to_reference(source_rgb01: np.ndarray, reference_rgb01: np.ndarray,
+                                    strength: float = 0.7) -> tuple[dict[str, float], dict[str, float]]:
+    """Brighten the mountain/horizon band toward reference snow and ridge highlights."""
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0 or source_rgb01.shape[:2] != reference_rgb01.shape[:2]:
+        return {}, {"before_p90": 0.0, "reference_p90": 0.0}
+
+    h = source_rgb01.shape[0]
+    y0 = int(round(h * 0.35))
+    y1 = max(y0 + 8, int(round(h * 0.62)))
+    src = reference_features(source_rgb01[y0:y1])
+    ref = reference_features(reference_rgb01[y0:y1])
+    mid_delta = ref["p50"] - src["p50"]
+    p90_delta = ref["p90"] - src["p90"]
+    contrast_delta = ref["lstd"] - src["lstd"]
+    detail_delta = ref["detail"] - src["detail"]
+
+    settings: dict[str, float] = {}
+    if mid_delta > 0.010:
+        settings["exposure"] = float(np.clip(mid_delta * 1.55, 0.03, 0.24) * strength)
+    if p90_delta > 0.018:
+        settings["whites"] = float(np.clip(p90_delta * 95.0, 3.0, 22.0) * strength)
+        settings["highlights"] = float(np.clip(p90_delta * 55.0, 2.0, 14.0) * strength)
+    if contrast_delta > 0.010:
+        settings["contrast"] = float(np.clip(contrast_delta * 60.0, 1.0, 9.0) * strength)
+    if detail_delta > 0.002:
+        settings["clarity"] = float(np.clip(detail_delta * 95.0, 1.0, 7.0) * strength)
+
+    settings = {k: v for k, v in settings.items() if abs(v) >= 0.05}
+    return settings, {
+        "before_p90": float(src["p90"]),
+        "reference_p90": float(ref["p90"]),
+        "before_mid": float(src["p50"]),
+        "reference_mid": float(ref["p50"]),
+    }
+
+
 def color_transfer(target_rgb01: np.ndarray, reference_rgb01: np.ndarray,
                    strength: float = 0.7, ratio_clamp: tuple[float, float] = (0.4, 2.5)) -> np.ndarray:
     """Grade `target` toward the look of `reference` (Reinhard LAB mean/std match).

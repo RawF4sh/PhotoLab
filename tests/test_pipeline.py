@@ -85,3 +85,71 @@ def test_pipeline_reference_sky_gradient_records_composition(tmp_path):
 
     assert any(c.target == "reference_sky_grad" for c in result.composition)
     assert any("reference sky gradient" in n for n in result.notes)
+
+
+def test_pipeline_reference_skips_auto_palette_and_lifts_foreground(tmp_path):
+    img_path = tmp_path / "source.jpg"
+    ref_path = tmp_path / "reference.jpg"
+    _make(str(img_path))
+
+    src = np.asarray(PILImage.open(img_path).convert("RGB"), dtype=np.float32) / 255.0
+    ref = src.copy()
+    ref[70:] = apply_ops(ref[70:], {
+        "exposure": 0.35,
+        "shadows": 18.0,
+        "hsl_green_lum": 12.0,
+        "hsl_green_sat": 12.0,
+    })
+    PILImage.fromarray((np.clip(ref, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGB").save(
+        str(ref_path), quality=95)
+
+    cfg = RunConfig(backend="stub", reference=str(ref_path), reference_strength=0.9)
+    result = Pipeline.build(cfg).process_one(str(img_path), do_apply=False)[1]
+
+    assert not any("palette: auto" in n for n in result.notes)
+    assert any(c.target == "reference_foreground_lift" for c in result.composition)
+    assert any("reference foreground lift" in n for n in result.notes)
+
+
+def test_pipeline_reference_midground_lift_records_composition(tmp_path):
+    img_path = tmp_path / "source.jpg"
+    ref_path = tmp_path / "reference.jpg"
+    _make(str(img_path))
+
+    src = np.asarray(PILImage.open(img_path).convert("RGB"), dtype=np.float32) / 255.0
+    ref = src.copy()
+    ref[78:108] = apply_ops(ref[78:108], {
+        "exposure": 0.35,
+        "shadows": 15.0,
+        "hsl_green_lum": 12.0,
+    })
+    PILImage.fromarray((np.clip(ref, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGB").save(
+        str(ref_path), quality=95)
+
+    cfg = RunConfig(backend="stub", reference=str(ref_path), reference_strength=0.9)
+    result = Pipeline.build(cfg).process_one(str(img_path), do_apply=False)[1]
+
+    assert any(c.target == "reference_midground_lift" for c in result.composition)
+    assert any("reference midground lift" in n for n in result.notes)
+
+
+def test_pipeline_reference_mountain_highlight_records_composition(tmp_path):
+    img_path = tmp_path / "source.jpg"
+    ref_path = tmp_path / "reference.jpg"
+    _make(str(img_path))
+
+    src = np.asarray(PILImage.open(img_path).convert("RGB"), dtype=np.float32) / 255.0
+    ref = src.copy()
+    ref[44:76] = apply_ops(ref[44:76], {
+        "exposure": 0.20,
+        "whites": 22.0,
+        "highlights": 12.0,
+    })
+    PILImage.fromarray((np.clip(ref, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGB").save(
+        str(ref_path), quality=95)
+
+    cfg = RunConfig(backend="stub", reference=str(ref_path), reference_strength=0.9)
+    result = Pipeline.build(cfg).process_one(str(img_path), do_apply=False)[1]
+
+    assert any(c.target == "reference_mountain_highlight" for c in result.composition)
+    assert any("reference mountain highlight" in n for n in result.notes)
