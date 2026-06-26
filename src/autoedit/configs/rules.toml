@@ -33,6 +33,16 @@
 [guard]
 ops = ["clarity", "saturation", "vibrance", "hsl_skin_sat",
        "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint"]
+# Banding gate: detect posterization/contour lines in smooth regions (sky/mist/water) of the
+# EDITED output, source-relative. Above `reduce_ops` the pipeline reduces the stretch ops
+# (dehaze/contrast/curve/clarity) and re-applies once; `warning` just notes it. Remove this whole
+# block to disable the gate. Scores ~0 clean … 1 severe.
+[banding]
+warning = 0.12
+reduce_ops = 0.22
+hard_fail = 0.35
+min_coverage = 0.03
+
 # Oversaturation gate (final safety pass): a pixel's colour may be at most this fraction more
 # saturated than the source (0.30 = +30%). Snow/skin (guard_global) and near-white highlights
 # are held far tighter. Set to "off" to disable. This is what keeps the result true-to-life.
