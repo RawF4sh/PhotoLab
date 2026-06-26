@@ -2,6 +2,7 @@
 
 Commands:
   autoedit run INPUT_DIR [OUT_DIR] [flags]   batch-edit a folder
+  autoedit curate INPUT_DIR OUT_DIR          copy a diverse subset for review/training
   autoedit doctor                            report device + backend availability
   autoedit presets                           list concept presets
 
@@ -146,6 +147,30 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_curate(args) -> int:
+    from . import curate
+
+    if not os.path.isdir(args.input_dir):
+        print(f"input_dir not found: {args.input_dir}", file=sys.stderr)
+        return 2
+    manifest = curate.curate(
+        args.input_dir,
+        args.out_dir,
+        count=args.count,
+        recursive=not args.no_recursive,
+        proxy_long_edge=args.analysis_long_edge,
+        scan_limit=args.scan_limit,
+        copy_originals=True,
+    )
+    print(
+        f"\nCopied {manifest['selected']} of {manifest['total_scanned']} scanned photos to "
+        f"{os.path.abspath(os.path.join(args.out_dir, 'selected'))}"
+    )
+    print(f"Review: {os.path.abspath(os.path.join(args.out_dir, 'contact-sheet.html'))}")
+    print(f"Manifest: {os.path.abspath(os.path.join(args.out_dir, 'candidates.json'))}")
+    return 0
+
+
 def _cmd_doctor(args) -> int:
     from .decide import DISCLOSURE
 
@@ -226,6 +251,19 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="batch-edit a folder")
     _add_run_flags(run_p)
     run_p.set_defaults(func=_cmd_run)
+
+    cur_p = sub.add_parser("curate", help="copy a diverse photo subset for style training/review")
+    cur_p.add_argument("input_dir")
+    cur_p.add_argument("out_dir")
+    cur_p.add_argument("--count", type=int, default=200,
+                       help="number of photos to copy into OUT_DIR/selected (default: 200)")
+    cur_p.add_argument("--no-recursive", dest="no_recursive", action="store_true",
+                       help="scan only the top-level input folder")
+    cur_p.add_argument("--scan-limit", dest="scan_limit", type=int,
+                       help="only analyze the first N supported files, useful for quick trials")
+    cur_p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int, default=256,
+                       help="proxy size used for curation features (default: 256)")
+    cur_p.set_defaults(func=_cmd_curate)
 
     doc_p = sub.add_parser("doctor", help="report device + backend availability")
     doc_p.add_argument("--configs-dir", dest="configs_dir")
