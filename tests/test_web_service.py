@@ -44,7 +44,7 @@ def test_preview_returns_before_after(tmp_path):
     PILImage.fromarray(a, "RGB").save(str(p))
 
     out = service.preview(str(p), {"style": "editorial", "backend": "stub"})
-    assert out["before"].startswith("data:image/png;base64,")
+    assert out["before"].startswith("data:image/png;base64,")  # lossless PNG → no JPEG banding in skies
     assert out["after"].startswith("data:image/png;base64,")
     assert out["result"]["scene"] == "people"
     assert out["after"] != out["before"]  # the edit changed the pixels

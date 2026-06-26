@@ -209,13 +209,14 @@ def check_image(path: str) -> None:
                          f"not a sidecar like .xmp")
 
 
-def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 3200) -> dict:
+def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560) -> dict:
     """Render a single-image before/after preview + the decision sidecar.
 
     The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
-    preview shows the real result — no proxy-scaling softness/blockiness in flat areas like sky.
-    Segmentation stays at the analysis size and is cached per concept, so re-previews (style/palette
-    changes) don't re-pay the SAM cost. The before/after ship as high-quality JPEG capped at max_px."""
+    preview shows the real result — no proxy-scaling softness. The before/after ship as **lossless
+    PNG** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
+    re-introduces contour banding, so a quality-critical preview must stay lossless. Capped at
+    max_px (retina-sharp at the on-screen stage). Segmentation is cached, so re-previews are fast."""
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = build_pipeline(cfg)
@@ -225,8 +226,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
     return {
-        "before": _img_b64(work.rgb, max_px, quality=92),
-        "after": _img_b64(out_rgb, max_px, quality=92),
+        "before": _img_b64(work.rgb, max_px, fmt="png"),
+        "after": _img_b64(out_rgb, max_px, fmt="png"),
         "result": result.model_dump(),
     }
 

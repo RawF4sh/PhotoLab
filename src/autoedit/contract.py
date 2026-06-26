@@ -30,6 +30,8 @@ class RunConfig(BaseModel):
     concepts: list[str] | None = None  # explicit concept override; wins over preset
     look: str | None = None  # magnitude profile override; defaults to the style's look
     intensity: float = 0.8
+    palette: str | None = None  # palettes.toml colour-grade ("cool_blue"…); None → infer from prompt / off
+    palette_strength: float = 0.8  # 0 = off, 1 = full palette grade
 
     # reference-style color match (optional): grade the result toward an example image's look
     reference: str | None = None  # path to a reference photo whose palette/tone to match
@@ -53,7 +55,7 @@ class RunConfig(BaseModel):
 
     # output
     out_format: str = "jpeg"  # "jpeg" | "tiff"
-    quality: int = 92
+    quality: int = 95  # higher q preserves the anti-banding dither in flat skies (TIFF stays lossless)
     emit: str = "baked"  # "baked" | "editable" | "both"
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
     vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff
@@ -65,6 +67,8 @@ class RunConfig(BaseModel):
     concepts_path: str = Field(default_factory=lambda: config_path("concepts.toml"))
     styles_path: str = Field(default_factory=lambda: config_path("styles.toml"))
     compose_path: str = Field(default_factory=lambda: config_path("compose.toml"))
+    intents_path: str = Field(default_factory=lambda: config_path("intents.toml"))
+    palettes_path: str = Field(default_factory=lambda: config_path("palettes.toml"))
 
 
 class DetectedConcept(BaseModel):
@@ -98,6 +102,13 @@ class GlobalStatsModel(BaseModel):
     # EXIF-derived priors (0.0 when the photo carries no usable metadata)
     iso: float = 0.0
     exposure_ev: float = 0.0
+    # perceptual stats (default 0.0 so older sidecars/configs stay valid; rules can read them too):
+    # luminance percentiles for tone targeting, and OKLab colourfulness/warmth.
+    lum_p10: float = 0.0   # black-depth / crushed-shadow risk
+    lum_p50: float = 0.0   # median brightness (use over mean for tone targets)
+    lum_p90: float = 0.0   # highlight brightness / wash-out
+    mean_chroma: float = 0.0  # mean OKLab chroma — how colourful the frame is
+    warmth: float = 0.0       # mean OKLab b axis: + = warm/yellow, − = cool/blue
 
 
 class MaskOps(BaseModel):
