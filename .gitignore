@@ -7,7 +7,8 @@ build/
 .venv/
 venv/
 .pytest_cache/
-.tmp/          # repo-local test-runner scratch (AUTOEDIT_TMPDIR fallback)
+# Repo-local test-runner scratch (AUTOEDIT_TMPDIR fallback)
+.tmp/
 
 # Local RAW/test corpora (large, not committed)
 testImages/
@@ -18,6 +19,14 @@ out-*/
 dist/
 *.autoedit.json
 run.json
+
+# Local curation/reference outputs
+curated-*/
+split_before_after_landscapes/
+
+# Local assistant/editor scratch
+.agents/
+.claude/
 
 # Model weights (fetched from Hugging Face on first run — never committed; SAM license)
 models/*.pt
