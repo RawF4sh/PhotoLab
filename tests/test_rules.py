@@ -55,3 +55,35 @@ def test_shipped_landscape_sky_avoids_mask_imprinted_stretch_ops():
     sky = rset["sky"]
     for op in ("exposure", "highlights", "contrast", "clarity", "dehaze"):
         assert sky.get(op, 0.0) == 0.0
+
+
+def test_shipped_rules_recover_channel_clipped_highlights():
+    rules = load_rules(config_path("rules.toml"))
+    clean = GlobalStatsModel(
+        mean_lum=0.55, mean_sat=0.08, shadow_clip=0.0, highlight_clip=0.0, haze=0.1,
+        channel_highlight_clip=0.0,
+    )
+    clipped = clean.model_copy(update={"channel_highlight_clip": 0.25, "r_highlight_clip": 0.25})
+
+    clean_global, _ = apply(rules, "landscape", clean, {}, {}, intensity=1.0)
+    clipped_global, _ = apply(rules, "landscape", clipped, {}, {}, intensity=1.0)
+
+    assert clipped_global["highlights"] < clean_global["highlights"]
+    assert clipped_global["whites"] < clean_global["whites"]
+
+
+def test_region_channel_clip_is_available_to_rules():
+    rules = {"landscape": {
+        "snow": {
+            "highlights": "clamp(-max(region_clip_high, region_channel_highlight_clip) * 55 - 12, -52, -8)"
+        }
+    }}
+    g = GlobalStatsModel(mean_lum=0.55, mean_sat=0.08, shadow_clip=0.0, highlight_clip=0.0, haze=0.0)
+    snow = RegionStatsModel(
+        name="snow", lum=0.72, sat=0.05, clip_low=0.0, clip_high=0.0, coverage=0.2,
+        channel_highlight_clip=0.4, b_highlight_clip=0.4,
+    )
+
+    _, rset = apply(rules, "landscape", g, {"snow": snow}, {"snow": "snow"}, intensity=1.0)
+
+    assert rset["snow"]["highlights"] == -34.0

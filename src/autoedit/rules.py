@@ -123,6 +123,9 @@ def _region_ctx(g: GlobalStatsModel, r: RegionStatsModel, intensity: float) -> d
         region_coverage=r.coverage,
         region_vs_global_lum=r.lum - g.mean_lum,
     )
+    for key, value in r.model_dump().items():
+        if key not in {"name", "lum", "sat", "clip_low", "clip_high", "coverage"}:
+            ctx[f"region_{key}"] = value
     return ctx
 
 

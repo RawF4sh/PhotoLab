@@ -86,6 +86,22 @@ class RegionStatsModel(BaseModel):
     clip_low: float
     clip_high: float
     coverage: float
+    r_shadow_clip: float = 0.0
+    g_shadow_clip: float = 0.0
+    b_shadow_clip: float = 0.0
+    r_highlight_clip: float = 0.0
+    g_highlight_clip: float = 0.0
+    b_highlight_clip: float = 0.0
+    r_highlight_recoverable: float = 0.0
+    g_highlight_recoverable: float = 0.0
+    b_highlight_recoverable: float = 0.0
+    channel_shadow_clip: float = 0.0
+    channel_highlight_clip: float = 0.0
+    rgb_shadow_clip_any: float = 0.0
+    rgb_shadow_clip_all: float = 0.0
+    rgb_highlight_clip_any: float = 0.0
+    rgb_highlight_clip_all: float = 0.0
+    rgb_highlight_recoverable: float = 0.0
 
 
 class GlobalStatsModel(BaseModel):
@@ -109,6 +125,24 @@ class GlobalStatsModel(BaseModel):
     lum_p90: float = 0.0   # highlight brightness / wash-out
     mean_chroma: float = 0.0  # mean OKLab chroma — how colourful the frame is
     warmth: float = 0.0       # mean OKLab b axis: + = warm/yellow, − = cool/blue
+    # Histogram-style per-channel exposure stats. These catch color-channel clipping that luma
+    # alone can miss, e.g. a red channel pinned in clouds while the overall luminance still looks OK.
+    r_shadow_clip: float = 0.0
+    g_shadow_clip: float = 0.0
+    b_shadow_clip: float = 0.0
+    r_highlight_clip: float = 0.0
+    g_highlight_clip: float = 0.0
+    b_highlight_clip: float = 0.0
+    r_highlight_recoverable: float = 0.0
+    g_highlight_recoverable: float = 0.0
+    b_highlight_recoverable: float = 0.0
+    channel_shadow_clip: float = 0.0
+    channel_highlight_clip: float = 0.0
+    rgb_shadow_clip_any: float = 0.0
+    rgb_shadow_clip_all: float = 0.0
+    rgb_highlight_clip_any: float = 0.0
+    rgb_highlight_clip_all: float = 0.0
+    rgb_highlight_recoverable: float = 0.0
 
 
 class MaskOps(BaseModel):
