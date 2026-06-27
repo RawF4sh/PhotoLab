@@ -191,11 +191,21 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
     candidates = scan(input_dir, recursive=recursive, long_edge=proxy_long_edge, scan_limit=scan_limit)
     selected = select_diverse(candidates, count)
     rows = []
-    for rank, cand in enumerate(selected, start=1):
+    skipped = []
+    for cand in selected:
+        rank = len(rows) + 1
         name = _safe_name(cand.path, rank, cand.bucket)
         copied = os.path.join(selected_dir, name)
         if copy_originals:
-            shutil.copy2(cand.path, copied)
+            try:
+                shutil.copy2(cand.path, copied)
+            except OSError as exc:
+                skipped.append({
+                    "source_path": os.path.abspath(cand.path),
+                    "bucket": cand.bucket,
+                    "error": str(exc),
+                })
+                continue
         thumb = os.path.join(thumbs_dir, f"{Path(name).stem}.jpg")
         has_thumb = _write_thumb(cand.path, thumb)
         rows.append({
@@ -213,6 +223,8 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
         "out_dir": os.path.abspath(out_dir),
         "total_scanned": len(candidates),
         "selected": len(rows),
+        "skipped": len(skipped),
+        "skipped_items": skipped,
         "copy_originals": copy_originals,
         "recursive": recursive,
         "items": rows,

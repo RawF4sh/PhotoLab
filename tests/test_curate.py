@@ -56,6 +56,36 @@ def test_curate_non_recursive_scans_top_level_only(tmp_path):
     assert paths == [str(src / "top.jpg")]
 
 
+def test_curate_skips_missing_source_during_copy(tmp_path):
+    src = tmp_path / "library"
+    src.mkdir()
+    missing = src / "gone.jpg"
+    feats = {
+        "lum_mean": 0.5,
+        "lum_std": 0.1,
+        "lum_p10": 0.3,
+        "lum_p90": 0.7,
+        "warmth": 0.0,
+        "green": 0.0,
+        "blue_top": 0.0,
+        "top_lum": 0.5,
+        "dark_frac": 0.0,
+        "bright_frac": 0.0,
+        "snow_frac": 0.0,
+        "aspect": 1.5,
+    }
+    original_scan = curate.scan
+    try:
+        curate.scan = lambda *args, **kwargs: [curate.Candidate(str(missing), feats, "neutral")]
+        manifest = curate.curate(str(src), str(tmp_path / "curated"), count=1)
+    finally:
+        curate.scan = original_scan
+
+    assert manifest["selected"] == 0
+    assert manifest["skipped"] == 1
+    assert manifest["skipped_items"][0]["source_path"] == os.path.abspath(missing)
+
+
 def test_cli_curate_command(tmp_path):
     src = tmp_path / "library"
     src.mkdir()
