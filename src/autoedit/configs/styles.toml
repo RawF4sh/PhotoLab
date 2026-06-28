@@ -27,3 +27,8 @@ brief = "warm filmic tones, soft contrast, gentle highlight rolloff, golden skin
 look = "dramatic"
 concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock"]
 brief = "bold cinematic landscape: deep dramatic sky, dehazed mountains, crisp bright snow, lush warm-green foreground, teal-orange grade, rich contrast"
+
+[cinematic_preserved]
+look = "cinematic_preserved"
+concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock", "subject"]
+brief = "old-cinematic mood with strict Lightroom preservation: dramatic alpine depth, darker sky, strong mountain separation, natural greens, restrained cyan, no generated content"

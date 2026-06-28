@@ -53,3 +53,17 @@ grade_shadows_temp = -12.0    # cool/teal shadows
 grade_shadows_tint = 4.0      # nudge shadows toward teal
 grade_highlights_temp = 11.0  # warmer, more golden highlights
 grade_highlights_tint = 2.0   # a touch of gold in the highlights
+
+# calibrated from eval_3way: old Gemini's mood without its heavy teal/cyan cast or
+# generated-looking saturation. This is meant to be paired with strict preservation.
+[cinematic_preserved]
+contrast_mul = 1.35
+vibrance_add = 11.0
+saturation_add = 4.0
+clarity_mul  = 1.45
+dehaze_mul   = 1.45
+curve_add    = 11.0
+grade_shadows_temp = -3.0
+grade_shadows_tint = 1.0
+grade_highlights_temp = 4.0
+grade_highlights_tint = 1.0

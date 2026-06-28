@@ -1,0 +1,160 @@
+# AutoEdit intents — free-text look terms → bounded GLOBAL edit nudges (local, no cloud).
+#
+# Type what you want in the UI ("warm sunset, moody, vibrant") or pass --prompt on the CLI; the
+# parser (src/autoedit/intent.py) scans the text for the terms below and accumulates these deltas
+# on top of the rule baseline. Each op is clamped (see intent.py::_BOUNDS) so stacking terms can't
+# drive an unnatural result, and the whole nudge is scaled by --intensity. The oversaturation gate
+# + skin-safe guard still backstop everything.
+#
+# This is DATA: add a term + its deltas here, no code change. Units match the apply engine
+# (exposure = EV; everything else ~[-100,100]; temp/tint = WB units). Terms match as substrings,
+# so "golden" also fires inside "golden hour".
+
+[sunset]
+temp = 12
+grade_highlights_temp = 9
+grade_shadows_temp = -4
+exposure = -0.03
+vibrance = 5
+
+[golden]                       # "golden", "golden hour"
+temp = 10
+grade_highlights_temp = 8
+vibrance = 4
+
+[sunrise]
+temp = 6
+grade_highlights_temp = 6
+exposure = 0.03
+
+[warm]
+temp = 10
+
+[cool]
+temp = -10
+
+[cold]
+temp = -12
+
+[blue]                         # "blue hour" — cool, slightly darker
+temp = -10
+exposure = -0.03
+
+[moody]
+exposure = -0.06
+contrast = 9
+shadows = -6
+vibrance = -3
+
+[dark]
+exposure = -0.07
+blacks = -5
+
+[dramatic]
+contrast = 12
+clarity = 8
+dehaze = 8
+vibrance = 5
+
+[airy]
+exposure = 0.06
+shadows = 8
+whites = 4
+contrast = -3
+
+[bright]
+exposure = 0.07
+whites = 4
+
+[vibrant]
+vibrance = 10
+saturation = 6
+contrast = 4
+
+[punchy]
+contrast = 10
+clarity = 6
+vibrance = 6
+
+[muted]
+saturation = -10
+contrast = -4
+
+[matte]                        # lifted-black film matte
+blacks = 8
+contrast = -5
+saturation = -4
+
+[faded]
+blacks = 7
+saturation = -7
+
+[teal]
+grade_shadows_temp = -12
+grade_highlights_temp = 6
+
+[cinematic]
+grade_shadows_temp = -10
+grade_highlights_temp = 9
+contrast = 6
+
+["cinematic preserved"]
+exposure = -0.03
+contrast = 5
+shadows = -3
+whites = -3
+blacks = -3
+dehaze = 8
+clarity = 9
+vibrance = 11
+saturation = 4
+temp = -1
+tint = -2
+hsl_green_sat = 4
+hsl_green_lum = -2
+hsl_blue_sat = 3
+
+[soft]
+clarity = -8
+contrast = -4
+
+[dreamy]
+clarity = -10
+contrast = -5
+exposure = 0.03
+
+[crisp]                        # "crisp", "sharp"
+clarity = 8
+sharpen = 12
+
+[sharp]
+sharpen = 14
+clarity = 4
+
+[clear]                        # cut haze
+dehaze = 14
+clarity = 4
+
+[vintage]
+temp = 6
+contrast = -5
+blacks = 6
+saturation = -6
+
+[film]
+contrast = -4
+blacks = 5
+grade_highlights_temp = 5
+
+# Monochrome: fully desaturate (the gate only caps *increases*, so this passes through).
+["black and white"]
+saturation = -100
+
+["b&w"]
+saturation = -100
+
+[monochrome]
+saturation = -100
+
+[mono]
+saturation = -100
