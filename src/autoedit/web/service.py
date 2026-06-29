@@ -16,7 +16,7 @@ import threading
 import numpy as np
 from PIL import Image as PILImage
 
-from .. import batch, emit, paths
+from .. import batch, curate, emit, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
 from ..imageio import downscale_long_edge, is_raw, is_supported, load_image
@@ -367,6 +367,56 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
     return {"image_out": image_out, "sidecar": sidecar, "result": result.model_dump()}
 
 
+def curate_folder(input_dir: str, out_dir: str, opts: dict) -> dict:
+    """Copy a curated subset of a folder for review/training.
+
+    This is deliberately copy-only; sources are never moved or renamed. The UI calls this for
+    M1 culling, and the CLI uses the same lower-level curator.
+    """
+    if not input_dir or not os.path.isdir(input_dir):
+        raise ValueError(f"input_dir not found: {input_dir}")
+    out_dir = out_dir or os.path.join(input_dir, "autoedit-curated")
+    count = int(opts.get("count") or 200)
+    scan_limit = opts.get("scan_limit")
+    scan_limit = int(scan_limit) if scan_limit not in (None, "", 0, "0") else None
+    mode = opts.get("mode") or "best"
+    if mode not in ("best", "diverse", "aesthetic"):
+        raise ValueError(f"unknown curation mode: {mode}")
+    aesthetic_model = opts.get("aesthetic_model") or None
+    if mode == "aesthetic" and not aesthetic_model:
+        raise ValueError("aesthetic mode requires an aesthetic model")
+    if aesthetic_model:
+        check_file_exists(aesthetic_model, ".json", "aesthetic model")
+
+    manifest = curate.curate(
+        input_dir,
+        out_dir,
+        count=count,
+        recursive=bool(opts.get("recursive", True)),
+        proxy_long_edge=int(opts.get("analysis_long_edge") or 256),
+        scan_limit=scan_limit,
+        copy_originals=True,
+        mode=mode,
+        emit_xmp=bool(opts.get("emit_xmp", False)),
+        aesthetic_model_path=aesthetic_model,
+    )
+    return {
+        "manifest": manifest,
+        "out_dir": os.path.abspath(out_dir),
+        "selected_dir": os.path.abspath(os.path.join(out_dir, "selected")),
+        "contact_sheet": os.path.abspath(os.path.join(out_dir, "contact-sheet.html")),
+        "selected_csv": os.path.abspath(os.path.join(out_dir, "selected.csv")),
+        "candidates_json": os.path.abspath(os.path.join(out_dir, "candidates.json")),
+    }
+
+
+def check_file_exists(path: str, suffix: str, label: str) -> None:
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"{label} not found: {path}")
+    if suffix and not path.lower().endswith(suffix.lower()):
+        raise ValueError(f"{label} must be a {suffix} file: {path}")
+
+
 def pick_path(kind: str = "folder") -> str | None:
     """Open a native picker and return the chosen path, registering it as an approved workspace
     root (so subsequent API calls for paths under it pass the filesystem trust boundary)."""
@@ -378,7 +428,7 @@ def pick_path(kind: str = "folder") -> str | None:
 
 def _pick_native(kind: str = "folder") -> str | None:
     """Open a NATIVE picker on the machine running the server (the user's own Mac/PC) and
-    return the chosen absolute path. kind: 'folder' | 'file'. Returns None on cancel.
+    return the chosen absolute path. kind: 'folder' | 'file' | 'json'. Returns None on cancel.
 
     macOS uses Finder via osascript; other platforms fall back to a tkinter dialog. This is
     why AutoEdit's UI is a *local* app — the server can read local paths and pop a real dialog,
@@ -386,6 +436,8 @@ def _pick_native(kind: str = "folder") -> str | None:
     if sys.platform == "darwin":
         if kind == "folder":
             verb = 'choose folder with prompt "Select a folder for AutoEdit"'
+        elif kind == "json":
+            verb = 'choose file with prompt "Select an AutoEdit aesthetic model JSON"'
         else:  # restrict to images so users can't pick sidecars (.xmp) etc.
             verb = 'choose file of type {"public.image"} with prompt "Select a photo for AutoEdit"'
         try:
@@ -403,6 +455,8 @@ def _pick_native(kind: str = "folder") -> str | None:
         root.attributes("-topmost", True)
         if kind == "folder":
             path = filedialog.askdirectory()
+        elif kind == "json":
+            path = filedialog.askopenfilename(filetypes=[("JSON", "*.json"), ("All", "*.*")])
         else:
             path = filedialog.askopenfilename(
                 filetypes=[("Images", "*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp"), ("All", "*.*")])

@@ -530,6 +530,42 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="modal-b"><div class="rgrid" id="reviewGrid"></div></div>
   </div></div>
 
+  <!-- ===== culling modal ===== -->
+  <div class="scrim" id="cullScrim"><div class="modal" style="width:min(760px,92vw)">
+    <div class="modal-h"><h3>Cull photos</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="cullClose">Close</button>
+        <button class="tbtn primary" id="cullRun"><svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg>Run cull</button></div></div>
+    <div class="modal-b">
+      <div class="field"><label>Source folder</label>
+        <div style="display:flex;gap:7px"><input class="tinput" id="cullInput" placeholder="choose a folder" readonly>
+          <button class="minibtn" id="cullPickInput">Choose…</button></div></div>
+      <div class="field"><label>Output folder <span class="muted">— copies selected photos here</span></label>
+        <div style="display:flex;gap:7px"><input class="tinput" id="cullOut" placeholder="defaults inside source folder">
+          <button class="minibtn" id="cullPickOut">Choose…</button></div></div>
+      <div class="field"><label>Selection mode</label>
+        <div class="seg" id="cullModeSeg" style="width:300px">
+          <button class="on" data-cmode="best">Best</button>
+          <button data-cmode="diverse">Diverse</button>
+          <button data-cmode="aesthetic">Aesthetic</button></div>
+        <div class="tip" style="margin-top:6px">Best uses exposure/detail heuristics. Diverse covers different looks. Aesthetic uses a trained JSON scorer.</div></div>
+      <div class="field" id="cullModelRow" style="display:none"><label>Aesthetic model JSON</label>
+        <div style="display:flex;gap:7px"><input class="tinput" id="cullModel" placeholder="train-aesthetic output" readonly>
+          <button class="minibtn" id="cullPickModel">Choose…</button></div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label>Count</label><input class="tinput" id="cullCount" type="number" min="1" value="200"></div>
+        <div class="field"><label>Scan limit <span class="muted">optional</span></label><input class="tinput" id="cullScanLimit" type="number" min="0" placeholder="all"></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-bottom:14px">
+        <label class="ck-row"><input type="checkbox" id="cullRecursive" checked>Recursive scan</label>
+        <label class="ck-row"><input type="checkbox" id="cullXmp">Write XMP ratings</label>
+      </div>
+      <div class="note"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+        Originals are never moved or renamed. AutoEdit writes copies, thumbnails, a contact sheet, selected.csv, and candidates.json.</div>
+      <div id="cullStatus" class="tip" style="margin-top:12px"></div>
+      <div id="cullResults" style="display:none;margin-top:12px"></div>
+    </div>
+  </div></div>
+
   <!-- ===== settings modal ===== -->
   <div class="scrim" id="settingsScrim"><div class="modal" style="width:min(640px,92vw)">
     <div class="modal-h"><h3>Settings</h3><button class="minibtn" id="settingsClose">Done</button></div>
@@ -654,6 +690,7 @@ const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural'
   decider:'rules',      /* rules | learned (M6 recipe predictor) */
   recipeModel:'',       /* path to a trained recipe model when decider=learned */
   consistent:true,      /* anchor exposure across the batch */
+  cull:{input:null,out:'',mode:'best',count:200,scanLimit:'',recursive:true,emitXmp:false,model:''},
   hasPairs:false};
 const real=()=>STATE.files.length>0;
 const thumbURL=(p,px=360,rev='')=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p)+(rev?'&v='+encodeURIComponent(rev):'');
@@ -907,8 +944,7 @@ $('#addConcept').onclick=()=>{const v=$('#newConcept').value.trim();if(!v)return
   chip.onclick=()=>chip.classList.toggle('on');$('#concepts').appendChild(chip);$('#newConcept').value='';};
 
 /* ---- pickers ------------------------------------------------------------ */
-async function pickFolder(){if(!STATE.served){standaloneNote();return;}
-  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+async function loadFolderPath(path){
     const groups=await(await fetch('/api/groups?dir='+encodeURIComponent(path))).json();
     if(groups.error){alert(groups.error);return;}
     if(!groups.length){alert('No supported images found in that folder.');return;}
@@ -921,6 +957,10 @@ async function pickFolder(){if(!STATE.served){standaloneNote();return;}
     $('#viewseg').style.display='';$('#maskBtn').style.display='';$('#selbar').style.display='';
     $('#preferWrap').style.display=STATE.hasPairs?'':'none';
     renderFilm();syncRun();selectPhoto(0);
+}
+async function pickFolder(){if(!STATE.served){standaloneNote();return;}
+  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+    await loadFolderPath(path);
   }catch(e){alert('Could not open folder: '+e);}}
 async function pickSingle(){if(!STATE.served){standaloneNote();return;}
   try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
@@ -939,6 +979,77 @@ $('#preferSeg').addEventListener('click',e=>{const b=e.target.closest('[data-pre
   $('#preferSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
   STATE.preferRaw=b.dataset.pref==='raw';reprefer();});
 function standaloneNote(){$('#folderName').textContent='Launch with `autoedit ui` for live photos';}
+
+/* ---- culling ------------------------------------------------------------- */
+function defaultCullOut(input){return input?input.replace(/\/+$/,'')+'/autoedit-curated':'';}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function syncCullForm(){
+  const c=STATE.cull;
+  $('#cullInput').value=c.input||'';
+  $('#cullOut').value=c.out||'';
+  $('#cullCount').value=c.count||200;
+  $('#cullScanLimit').value=c.scanLimit||'';
+  $('#cullRecursive').checked=!!c.recursive;
+  $('#cullXmp').checked=!!c.emitXmp;
+  $('#cullModel').value=c.model||'';
+  $('#cullModeSeg').querySelectorAll('[data-cmode]').forEach(b=>b.classList.toggle('on',b.dataset.cmode===c.mode));
+  $('#cullModelRow').style.display=c.mode==='aesthetic'?'':'none';
+}
+function openCull(){
+  if(STATE.dir&&!STATE.cull.input){
+    STATE.cull.input=STATE.dir;
+    STATE.cull.out=defaultCullOut(STATE.dir);
+  }
+  $('#cullStatus').textContent=STATE.cull.input?'Ready to copy selected photos.':'Choose a source folder.';
+  $('#cullResults').style.display='none';
+  syncCullForm();
+  $('#cullScrim').classList.add('open');
+}
+$('#cullBtn').onclick=openCull;
+$('#cullClose').onclick=()=>$('#cullScrim').classList.remove('open');
+$('#cullPickInput').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
+  const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+  STATE.cull.input=path;STATE.cull.out=defaultCullOut(path);syncCullForm();};
+$('#cullPickOut').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
+  const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+  STATE.cull.out=path;syncCullForm();};
+$('#cullPickModel').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
+  const {path}=await(await fetch('/api/pick?kind=json')).json();if(!path)return;
+  STATE.cull.model=path;syncCullForm();};
+$('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-cmode]');if(!b)return;
+  STATE.cull.mode=b.dataset.cmode;syncCullForm();});
+['cullOut','cullCount','cullScanLimit'].forEach(id=>$('#'+id).addEventListener('input',e=>{
+  if(id==='cullOut')STATE.cull.out=e.target.value;
+  if(id==='cullCount')STATE.cull.count=+e.target.value||200;
+  if(id==='cullScanLimit')STATE.cull.scanLimit=e.target.value;
+}));
+$('#cullRecursive').onchange=e=>STATE.cull.recursive=e.target.checked;
+$('#cullXmp').onchange=e=>STATE.cull.emitXmp=e.target.checked;
+$('#cullRun').onclick=async()=>{
+  const c=STATE.cull;
+  if(!c.input){alert('Choose a source folder first.');return;}
+  if(c.mode==='aesthetic'&&!c.model){alert('Choose an aesthetic model JSON first.');return;}
+  $('#cullRun').disabled=true;$('#cullStatus').textContent='Scanning and copying selected photos…';
+  $('#cullResults').style.display='none';
+  try{
+    const payload={input_dir:c.input,out_dir:c.out||defaultCullOut(c.input),mode:c.mode,count:c.count||200,
+      scan_limit:c.scanLimit?+c.scanLimit:null,recursive:c.recursive,emit_xmp:c.emitXmp,aesthetic_model:c.model||null};
+    const res=await(await fetch('/api/curate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+    if(res.error){$('#cullStatus').textContent=res.error;return;}
+    const m=res.manifest||{};
+    $('#cullStatus').textContent=`Copied ${m.selected||0} of ${m.total_scanned||0} scanned photos.`;
+    $('#cullResults').style.display='';
+    $('#cullResults').innerHTML=`<div class="kv"><b>Selected copies</b><span class="v">${esc(res.selected_dir)}</span></div>
+      <div class="kv"><b>Contact sheet</b><span class="v">${esc(res.contact_sheet)}</span></div>
+      <div class="kv"><b>Manifest</b><span class="v">${esc(res.candidates_json)}</span></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="minibtn" id="cullLoadSelected">Load selected</button>
+        <button class="minibtn" id="cullOpenSheet">Open contact sheet</button></div>`;
+    $('#cullLoadSelected').onclick=async()=>{await loadFolderPath(res.selected_dir);$('#cullScrim').classList.remove('open');};
+    $('#cullOpenSheet').onclick=()=>window.open('file://'+res.contact_sheet);
+  }catch(e){$('#cullStatus').textContent='Cull failed: '+e;}
+  finally{$('#cullRun').disabled=false;}
+};
 
 /* ---- batch run (real jobs) --------------------------------------------- */
 let JOB=null,pollT=null;

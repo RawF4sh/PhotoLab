@@ -75,6 +75,24 @@ def test_run_one_writes_outputs(tmp_path):
     assert res["result"]["image"] == "one.jpg"
 
 
+def test_curate_folder_writes_copy_only_outputs(tmp_path):
+    src = tmp_path / "library"
+    src.mkdir()
+    PILImage.fromarray(np.full((48, 64, 3), [30, 80, 160], np.uint8), "RGB").save(src / "one.jpg")
+    PILImage.fromarray(np.full((48, 64, 3), [220, 190, 120], np.uint8), "RGB").save(src / "two.jpg")
+
+    out = tmp_path / "curated"
+    res = service.curate_folder(str(src), str(out), {"mode": "best", "count": 1, "emit_xmp": True})
+
+    assert res["manifest"]["selected"] == 1
+    assert os.path.isdir(res["selected_dir"])
+    assert os.path.exists(res["contact_sheet"])
+    assert os.path.exists(res["selected_csv"])
+    assert len([p for p in (out / "selected").iterdir() if p.suffix.lower() != ".xmp"]) == 1
+    assert len(list((out / "selected").glob("*.xmp"))) == 1
+    assert (src / "one.jpg").exists() and (src / "two.jpg").exists()
+
+
 def test_check_image_rejects_non_image_and_missing(tmp_path):
     import pytest
 

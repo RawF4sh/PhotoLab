@@ -101,6 +101,15 @@ def create_app(configs_dir: str = "configs"):
             return service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir)
         return guard(go)
 
+    @app.post("/api/curate")
+    def curate(payload: dict = Body(...)):
+        def go():
+            input_dir = payload.get("input_dir", "")
+            out_dir = payload.get("out_dir") or os.path.join(input_dir, "autoedit-curated")
+            service.ensure_allowed(input_dir, out_dir, payload.get("aesthetic_model"))
+            return service.curate_folder(input_dir, out_dir, payload)
+        return guard(go)
+
     # ── background batch jobs (live per-photo progress) ──
     @app.post("/api/jobs")
     def start_job(payload: dict = Body(...)):
