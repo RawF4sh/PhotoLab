@@ -38,7 +38,8 @@ class RunConfig(BaseModel):
     reference_strength: float = 0.7  # 0 = off, 1 = full match
 
     # decision
-    decider: str = "rules"  # "rules" | "llm"
+    decider: str = "rules"  # "rules" | "llm" | "learned"
+    recipe_model: str | None = None  # path to a trained recipe predictor (used when decider="learned")
     allow_cloud: bool = False  # explicit consent required to use the cloud LLM (BYO-key)
     api_key: str | None = None  # Anthropic API key; falls back to ANTHROPIC_API_KEY env
     llm_mode: str = "refine"  # "refine" | "propose"

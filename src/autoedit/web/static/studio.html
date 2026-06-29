@@ -540,6 +540,13 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <div class="seg" id="consistSeg" style="width:160px"><button class="on" data-c="1">On</button>
           <button data-c="0">Off</button></div>
         <div class="tip" style="margin-top:6px">Anchors each photo's exposure toward its lighting group (±0.15 EV) so the folder doesn't drift in brightness photo-to-photo.</div></div>
+      <div class="field"><label>Edit engine <span class="muted">— how the edit is decided</span></label>
+        <div class="seg" id="engineSeg" style="width:200px"><button class="on" data-eng="rules">Rules</button>
+          <button data-eng="learned">Learned</button></div>
+        <div id="recipeRow" style="display:none;margin-top:8px">
+          <button class="minibtn" id="recipeLoad">Load recipe model…</button>
+          <span class="tip" id="recipeName" style="margin-left:8px">no model — falls back to rules</span></div>
+        <div class="tip" style="margin-top:6px">Learned predicts the global edit from a model trained on your approved pairs (build a Dataset, then <code>train-recipe</code>). Per-region edits + all safety gates stay the same; falls back to rules with no model.</div></div>
       <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
       <div class="kv"><b>RAW decode</b><span class="v">rawpy · .dng/.cr2/.nef/.arw</span></div>
       <div class="kv"><b>Cache</b><span class="v">~/Library/Caches/autoedit</span></div>
@@ -631,6 +638,8 @@ const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural'
   paletteStrength:0.8,  /* 0..1 regional split-tone grade strength */
   reference:'',         /* path to a reference photo to match region-by-region (M5) */
   referenceStrength:0.7,
+  decider:'rules',      /* rules | learned (M6 recipe predictor) */
+  recipeModel:'',       /* path to a trained recipe model when decider=learned */
   consistent:true,      /* anchor exposure across the batch */
   hasPairs:false};
 const real=()=>STATE.files.length>0;
@@ -641,6 +650,7 @@ const editOptions=()=>({
   style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
   palette:STATE.palette,palette_strength:STATE.paletteStrength,
   reference:STATE.reference,reference_strength:STATE.referenceStrength,
+  decider:STATE.decider,recipe_model:STATE.recipeModel,
   backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent
 });
 
@@ -1004,6 +1014,11 @@ $('#saveLabelsBtn').onclick=()=>{
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
 $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
+/* edit engine (M6): rules | learned recipe predictor */
+$('#engineSeg').addEventListener('click',e=>{const b=e.target.closest('[data-eng]');if(!b)return;
+  STATE.decider=b.dataset.eng;$('#recipeRow').style.display=STATE.decider==='learned'?'':'none';markPreviewStale();});
+$('#recipeLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+  STATE.recipeModel=path;$('#recipeName').textContent=path.split('/').pop();markPreviewStale();}catch(e){alert(e);}};
 
 /* ---- cull (M1): curate a folder subset for review/training --------------- */
 const CULL={dir:null,mode:'diverse',count:200,job:null,poll:null,model:null};

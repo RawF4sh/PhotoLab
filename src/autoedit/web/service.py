@@ -27,7 +27,7 @@ from ..styles import load_styles
 _ALLOWED = (
     "style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
-    "decider", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
+    "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
     "emit", "compose", "vignette", "sharpen",
 )
 

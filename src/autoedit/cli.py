@@ -76,6 +76,7 @@ def load_run_config(args) -> RunConfig:
         "reference": getattr(args, "reference", None),
         "reference_strength": getattr(args, "reference_strength", None),
         "decider": getattr(args, "decider", None),
+        "recipe_model": getattr(args, "recipe_model", None),
         "allow_cloud": getattr(args, "allow_cloud", None),
         "api_key": getattr(args, "api_key", None),
         "llm_mode": getattr(args, "llm_mode", None),
@@ -113,7 +114,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--reference-strength", dest="reference_strength", type=float,
                    help="reference-match strength 0..1 (default 0.7)")
     p.add_argument("--intensity", type=float)
-    p.add_argument("--decider", choices=["rules", "llm"])
+    p.add_argument("--decider", choices=["rules", "llm", "learned"])
+    p.add_argument("--recipe-model", dest="recipe_model",
+                   help="trained recipe predictor JSON (used with --decider learned)")
     p.add_argument("--allow-cloud", dest="allow_cloud", action="store_true", default=None,
                    help="consent to the BYO-key cloud LLM (sends a thumbnail to your AI provider)")
     p.add_argument("--api-key", dest="api_key", help="Anthropic API key (else ANTHROPIC_API_KEY env)")
@@ -145,6 +148,22 @@ def _cmd_run(args) -> int:
         print(f"input_dir not found: {args.input_dir}", file=sys.stderr)
         return 2
     batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume)
+    return 0
+
+
+def _cmd_train_recipe(args) -> int:
+    from . import recipe
+
+    if not os.path.isdir(args.dataset):
+        print(f"dataset not found: {args.dataset}", file=sys.stderr)
+        return 2
+    try:
+        info = recipe.train_from_dataset(args.dataset, args.out_model, ridge=args.ridge)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(f"Trained recipe predictor on {info['samples']} pairs (skipped {info['skipped']}).")
+    print(f"Model: {info['model_path']}  —  run with: --decider learned --recipe-model {info['model_path']}")
     return 0
 
 
@@ -398,6 +417,12 @@ def main(argv: list[str] | None = None) -> int:
     dsv.add_argument("originals"); dsv.add_argument("targets")
     dsv.add_argument("--recursive", action="store_true")
     dsv.set_defaults(func=_cmd_dataset_validate)
+
+    rec_p = sub.add_parser("train-recipe", help="train the learned recipe predictor from an M3 dataset")
+    rec_p.add_argument("dataset", help="dataset workspace with originals/ + targets/ (from `dataset build`)")
+    rec_p.add_argument("out_model")
+    rec_p.add_argument("--ridge", type=float, default=1.0)
+    rec_p.set_defaults(func=_cmd_train_recipe)
 
     aes_p = sub.add_parser("train-aesthetic", help="train a lightweight aesthetic scorer from labels CSV")
     aes_p.add_argument("labels_csv")

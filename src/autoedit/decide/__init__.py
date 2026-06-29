@@ -35,8 +35,27 @@ def _api_key(cfg) -> str | None:
 
 
 def make_decider(cfg) -> Decider:
-    """Build a decider from a RunConfig. `llm` falls back to rules (with a disclosure) unless
-    consent + an API key are both present."""
+    """Build a decider from a RunConfig. `learned` predicts the global recipe from a trained model
+    (falls back to rules if the model is missing/unloadable). `llm` falls back to rules (with a
+    disclosure) unless consent + an API key are both present."""
+    if cfg.decider == "learned":
+        from .learned_decider import LearnedDecider
+
+        model = None
+        path = getattr(cfg, "recipe_model", None)
+        if path:
+            try:
+                from .. import recipe
+
+                model = recipe.load_model(path)
+            except Exception as e:
+                print(f"[learned] could not load recipe model ({e}) -> falling back to rules.",
+                      file=sys.stderr)
+        else:
+            print("[learned] no recipe model given -> using rules until one is trained.",
+                  file=sys.stderr)
+        return LearnedDecider(model, RulesDecider())
+
     if cfg.decider != "llm":
         return RulesDecider()
 
