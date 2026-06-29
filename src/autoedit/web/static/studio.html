@@ -460,6 +460,17 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <input type="range" class="range" id="palStrength" min="0" max="100" value="80"/>
           <div class="tip">Regional split-tone in OKLab — shadows/mids/highlights tinted, whites &amp; skin/snow held neutral. "Auto" follows the intent text.</div>
         </div></div>
+      <div class="dsec collap closed"><div class="dsec-h" data-collap><h4>Reference</h4>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="dsec-b">
+          <div style="display:flex;gap:7px">
+            <button class="minibtn" id="refLoad" style="flex:1">Load reference photo…</button>
+            <button class="minibtn" id="refClear" title="Clear">✕</button></div>
+          <div class="tip" id="refName" style="margin-top:6px">none — match a hero edit's look region-by-region</div>
+          <div class="adj" style="margin-top:9px"><span class="k">Match strength</span><span class="v" id="refStrengthVal">70</span></div>
+          <input type="range" class="range" id="refStrength" min="0" max="100" value="70"/>
+          <div class="tip">Pushes each region (sky, water, mountain, foliage…) toward the same region's look in the reference. Non-generative — no content is copied.</div>
+        </div></div>
       <div class="dsec collap"><div class="dsec-h" data-collap><h4>Concepts</h4>
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
         <div class="dsec-b"><div id="concepts"><div class="tip">Open a photo to detect regions.</div></div>
@@ -618,6 +629,8 @@ const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural'
   prompt:'',            /* free-text look intent ("warm sunset, moody") */
   palette:'',           /* '' = auto (infer from intent); else a palettes.toml name */
   paletteStrength:0.8,  /* 0..1 regional split-tone grade strength */
+  reference:'',         /* path to a reference photo to match region-by-region (M5) */
+  referenceStrength:0.7,
   consistent:true,      /* anchor exposure across the batch */
   hasPairs:false};
 const real=()=>STATE.files.length>0;
@@ -627,6 +640,7 @@ const extOf=n=>{const i=n.lastIndexOf('.');return i<0?'':n.slice(i+1).toUpperCas
 const editOptions=()=>({
   style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
   palette:STATE.palette,palette_strength:STATE.paletteStrength,
+  reference:STATE.reference,reference_strength:STATE.referenceStrength,
   backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent
 });
 
@@ -693,6 +707,14 @@ function renderPalettes(){const c=$('#palChips');if(!c)return;c.innerHTML='';
 $('#palStrength').addEventListener('input',e=>{STATE.paletteStrength=(+e.target.value)/100;
   $('#palStrengthVal').textContent=e.target.value;markPreviewStale();});
 $('#palStrength').addEventListener('change',()=>markPreviewStale());
+
+/* ---- reference matching (M5) ------------------------------------------- */
+$('#refLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+  STATE.reference=path;$('#refName').textContent=path.split('/').pop();markPreviewStale();}catch(e){alert(e);}};
+$('#refClear').onclick=()=>{STATE.reference='';$('#refName').textContent='none — match a hero edit’s look region-by-region';markPreviewStale();};
+$('#refStrength').addEventListener('input',e=>{STATE.referenceStrength=(+e.target.value)/100;
+  $('#refStrengthVal').textContent=e.target.value;markPreviewStale();});
+$('#refStrength').addEventListener('change',()=>markPreviewStale());
 
 /* ---- filmstrip ---------------------------------------------------------- */
 function renderFilm(){const f=$('#film');f.innerHTML='';

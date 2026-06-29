@@ -532,6 +532,82 @@ def mountain_highlight_to_reference(source_rgb01: np.ndarray, reference_rgb01: n
     }
 
 
+def extract_concept_features(rgb01: np.ndarray, masks: dict[str, np.ndarray]) -> dict[str, dict]:
+    """Per-concept look features for a reference image (M5). Returns {concept: reference_features}.
+
+    Unlike the spatial-band tuners, this is **dimension-independent**: the reference is segmented
+    into named regions and we measure each region's look, so an arbitrary alpine reference (sunset,
+    foggy, stormy, green valley, blue-sky) can match the source's *same concepts* — sky→sky,
+    water→water — regardless of crop or size."""
+    out: dict[str, dict] = {}
+    for name, m in masks.items():
+        if m is None:
+            continue
+        mask = m.astype(bool) if m.dtype != bool else m
+        if not mask.any():
+            continue
+        out[name] = reference_features(rgb01, mask)
+    return out
+
+
+# How much each region op may move per concept-match pass (bounded; non-generative).
+_REGION_MATCH_BOUNDS = {
+    "exposure": (-0.25, 0.25), "shadows": (-9.0, 9.0), "highlights": (-10.0, 10.0),
+    "contrast": (-8.0, 8.0), "curve": (-6.0, 6.0), "temp": (-7.0, 7.0), "tint": (-5.0, 5.0),
+    "vibrance": (-7.0, 7.0), "saturation": (-5.0, 5.0),
+    "hsl_green_sat": (-7.0, 7.0), "hsl_green_lum": (-5.0, 5.0), "hsl_blue_sat": (-5.0, 5.0),
+    "clarity": (-5.0, 5.0), "dehaze": (-4.0, 4.0),
+}
+
+
+def region_settings_from_features(region_settings: dict[str, dict[str, float]],
+                                  src_feats: dict[str, dict], ref_feats: dict[str, dict],
+                                  strength: float = 0.7) -> tuple[dict[str, dict[str, float]], list[dict]]:
+    """Nudge each region's settings toward the reference *concept's* look (dimension-independent).
+
+    For every concept present in both the source and the reference, push tone/colour/detail toward
+    the reference's measured look, bounded per op. Returns (tuned_region_settings, reports)."""
+    strength = float(np.clip(strength, 0.0, 1.0))
+    tuned = {n: dict(s) for n, s in region_settings.items()}
+    reports: list[dict] = []
+    if strength <= 0.0:
+        return tuned, reports
+
+    def add(st, key, raw, lo, hi):
+        d = float(np.clip(raw, lo, hi)) * strength
+        b = _REGION_MATCH_BOUNDS[key]
+        if abs(d) >= 1e-3:
+            st[key] = float(np.clip(st.get(key, 0.0) + d, b[0], b[1]))
+
+    for name, ref in ref_feats.items():
+        src = src_feats.get(name)
+        if src is None:
+            continue
+        st = dict(tuned.get(name, {}))
+        before = dict(st)
+        add(st, "exposure", (ref["p50"] - src["p50"]) * 0.95, -0.25, 0.25)
+        add(st, "shadows", (ref["p10"] - src["p10"]) * 60.0, -9.0, 9.0)
+        add(st, "highlights", (ref["p90"] - src["p90"]) * 70.0, -10.0, 10.0)
+        add(st, "contrast", (ref["lstd"] - src["lstd"]) * 85.0, -8.0, 8.0)
+        add(st, "curve", (ref["lstd"] - src["lstd"]) * 55.0, -6.0, 6.0)
+        add(st, "temp", (ref["warmth"] - src["warmth"]) * 130.0, -7.0, 7.0)
+        add(st, "tint", (ref["tint"] - src["tint"]) * 90.0, -5.0, 5.0)
+        cd = 0.6 * (ref["sat"] - src["sat"]) + 0.4 * (ref["chroma"] - src["chroma"])
+        add(st, "vibrance", cd * 70.0, -7.0, 7.0)
+        add(st, "saturation", cd * 40.0, -5.0, 5.0)
+        add(st, "hsl_green_sat", (ref["green_sat"] - src["green_sat"]) * 55.0, -7.0, 7.0)
+        add(st, "hsl_green_lum", (ref["green_lum"] - src["green_lum"]) * 35.0, -5.0, 5.0)
+        add(st, "hsl_blue_sat", (ref["blue_sat"] - src["blue_sat"]) * 45.0, -5.0, 5.0)
+        detail_delta = ref["detail"] - src["detail"]
+        add(st, "clarity", detail_delta * 130.0, -5.0, 5.0)
+        add(st, "dehaze", detail_delta * 90.0, -4.0, 4.0)
+        moves = _format_moves(before, st)
+        if moves:
+            tuned[name] = st
+            reports.append({"name": name, "moves": moves})
+    return tuned, reports
+
+
 def color_transfer(target_rgb01: np.ndarray, reference_rgb01: np.ndarray,
                    strength: float = 0.7, ratio_clamp: tuple[float, float] = (0.4, 2.5)) -> np.ndarray:
     """Grade `target` toward the look of `reference` (Reinhard LAB mean/std match).

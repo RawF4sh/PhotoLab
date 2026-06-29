@@ -19,7 +19,7 @@ from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
-from .edit import apply_image, banding, build_alpha, gates, linear_alpha
+from .edit import apply_image, banding, build_alpha, gates, reference as ref_match, linear_alpha
 from .imageio import Image, downscale_long_edge, load_image, luma
 from .notes import build_notes
 from .segment import make_segmenter, resolve
@@ -63,6 +63,7 @@ class Pipeline:
     intents: dict
     palettes: dict
     banding: dict
+    ref_feats: dict | None = None    # cached per-concept reference look (M5); computed once per run
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
@@ -192,6 +193,20 @@ class Pipeline:
         else:
             palette_note = (f"palette: {pal_name} ({cfg.palette_strength:.0%})"
                             if palette_obj is not None else None)
+
+        # Region-aware reference matching (M5): push each source region toward the SAME concept's
+        # look in the reference (sky→sky, water→water, mountain→mountain), dimension-independent so
+        # an arbitrary alpine reference works. Bounded; merged into region_settings BEFORE policies
+        # clamp them. The global color_transfer below still finishes the overall palette.
+        region_ref_note = None
+        if cfg.reference:
+            ref_feats = self._reference_concept_features(concepts)
+            if ref_feats:
+                src_feats = ref_match.extract_concept_features(proxy.rgb, resolved.union)
+                region_settings, rep = ref_match.region_settings_from_features(
+                    region_settings, src_feats, ref_feats, cfg.reference_strength)
+                if rep:
+                    region_ref_note = "reference match (region): " + ", ".join(r["name"] for r in rep)
 
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
@@ -471,6 +486,8 @@ class Pipeline:
         notes = build_notes(gstats, region_stats, resolved.detected)
         if intent_note:
             notes.append(intent_note)
+        if region_ref_note:
+            notes.append(region_ref_note)
         if palette_note:
             notes.append(palette_note)
         if guard_note:
@@ -510,6 +527,23 @@ class Pipeline:
             timing_ms=(time.perf_counter() - t0) * 1000.0,
         )
         return out_rgb, result
+
+    def _reference_concept_features(self, concepts: list[str]) -> dict:
+        """Per-concept look of the reference image (M5), segmented + measured ONCE per run and
+        cached. Empty dict when no reference / segmentation fails (degrades to global transfer)."""
+        if self.ref_feats is not None:
+            return self.ref_feats
+        self.ref_feats = {}
+        if not self.cfg.reference:
+            return self.ref_feats
+        try:
+            ref = downscale_long_edge(load_image(self.cfg.reference), self.cfg.analysis_long_edge)
+            raw = self.segmenter.segment(ref, concepts)
+            rr = resolve(raw, concepts, self.meta, ref.rgb.shape[:2])
+            self.ref_feats = ref_match.extract_concept_features(ref.rgb, rr.union)
+        except Exception:
+            self.ref_feats = {}
+        return self.ref_feats
 
     def _build_guard(self, union: dict, full_hw: tuple[int, int], global_settings: dict,
                      guide: np.ndarray | None = None):
