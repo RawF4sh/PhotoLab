@@ -560,6 +560,15 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
             <label class="ck-row"><input type="checkbox" id="cullRecursive" checked/> Scan subfolders</label>
             <label class="ck-row"><input type="checkbox" id="cullXmp"/> Write .xmp sidecars</label></div></div>
       </div>
+      <div id="cullAes" style="display:none;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin-top:4px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span class="cap">Aesthetic critic</span>
+          <button class="minibtn" id="aesLoad">Load model…</button>
+          <span class="tip" id="aesModel" style="flex:1;min-width:120px">no model — uses heuristic until you load/train one</span>
+          <button class="minibtn" id="aesScore">Score only</button>
+          <button class="minibtn" id="aesTrain">Train…</button></div>
+        <div class="tip" id="aesStatus" style="margin-top:6px"></div>
+      </div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
         <button class="tbtn primary" id="cullRun" disabled><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull folder</button>
         <span class="tip" id="cullStatus"></span></div>
@@ -975,10 +984,43 @@ $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
 $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
 
 /* ---- cull (M1): curate a folder subset for review/training --------------- */
-const CULL={dir:null,mode:'diverse',count:200,job:null,poll:null};
+const CULL={dir:null,mode:'diverse',count:200,job:null,poll:null,model:null};
 $('#cullBtn').onclick=()=>{if(!STATE.served){standaloneNote();return;}$('#cullScrim').classList.add('open');};
 $('#cullClose').onclick=()=>{clearInterval(CULL.poll);$('#cullScrim').classList.remove('open');};
-$('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(b)CULL.mode=b.dataset.m;});
+$('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(!b)return;CULL.mode=b.dataset.m;
+  $('#cullAes').style.display=CULL.mode==='aesthetic'?'':'none';});
+/* aesthetic critic (M4): load a model, score-only, or train one */
+$('#aesLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+  CULL.model=path;$('#aesModel').textContent=path.split('/').pop();}catch(e){alert(e);}};
+$('#aesScore').onclick=()=>{if(!CULL.dir){$('#aesStatus').textContent='choose a folder first';return;}
+  if(!CULL.model){$('#aesStatus').textContent='load a model first';return;}
+  $('#aesStatus').innerHTML='<span class="spin" style="width:11px;height:11px;border-width:2px;display:inline-block;vertical-align:-2px"></span> scoring…';
+  fetch('/api/aesthetic/score',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({folder:CULL.dir,model:CULL.model,recursive:$('#cullRecursive').checked})})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#aesStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
+      $('#aesStatus').textContent=`scored ${j.count} photos (best first)`;renderScored(j.items);})
+    .catch(e=>$('#aesStatus').textContent=String(e));};
+function renderScored(items){const g=$('#cullGrid');g.innerHTML='';(items||[]).forEach(it=>{const c=el('div','rcard');
+  const pr=it.priority>0.6?`<span class="bdg b-review"><i></i>review</span>`:'';
+  c.innerHTML=`<div class="ph"><img src="${thumbURL(it.path,360)}" alt=""></div>
+    <div class="ft"><div class="nm">${(it.path||'').split('/').pop()}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+      <span class="tip">#${it.rank} · score ${it.score}</span>${pr}</div></div>`;
+  g.appendChild(c);});}
+$('#aesTrain').onclick=async()=>{if(!CULL.dir){$('#aesStatus').textContent='choose the images folder first';return;}
+  let path;try{path=(await(await fetch('/api/pick?kind=file')).json()).path;}catch(e){return;}
+  if(!path)return;
+  $('#aesStatus').innerHTML='<span class="spin" style="width:11px;height:11px;border-width:2px;display:inline-block;vertical-align:-2px"></span> training…';
+  fetch('/api/aesthetic/train',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({images_dir:CULL.dir,labels_csv:path})})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#aesStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
+      pollTrain(j.id);}).catch(e=>$('#aesStatus').textContent=String(e));};
+function pollTrain(id){const t=setInterval(()=>{fetch('/api/aesthetic/jobs/'+id).then(r=>r.json()).then(j=>{
+    if(j.status==='running')return;clearInterval(t);
+    if(j.status==='error'){$('#aesStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
+    CULL.model=j.model_path;$('#aesModel').textContent=(j.model_path||'').split('/').pop();
+    $('#aesStatus').textContent=`trained on ${j.samples} images (skipped ${j.skipped}) → model loaded`;
+  }).catch(()=>{});},600);}
 $('#cullCount').addEventListener('input',e=>{CULL.count=+e.target.value;$('#cullCountVal').textContent=e.target.value;});
 async function cullPick(){try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
     CULL.dir=path;$('#cullDir').textContent=path;$('#cullRun').disabled=false;
@@ -989,7 +1031,7 @@ $('#cullRun').onclick=()=>{if(!CULL.dir)return;
   $('#cullRun').disabled=true;$('#cullGrid').innerHTML='';
   $('#cullStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> scanning &amp; selecting…';
   const body={input_dir:CULL.dir,mode:CULL.mode,count:CULL.count,
-    recursive:$('#cullRecursive').checked,emit_xmp:$('#cullXmp').checked};
+    recursive:$('#cullRecursive').checked,emit_xmp:$('#cullXmp').checked,aesthetic_model:CULL.model};
   fetch('/api/curate/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{if(j.error){cullDone(null,j.error);return;}CULL.job=j;pollCull();})
     .catch(e=>cullDone(null,String(e)));};

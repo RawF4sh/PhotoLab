@@ -293,6 +293,27 @@ def dataset_build(originals_dir: str, targets_dir: str, out_dir: str, opts: dict
     )
 
 
+def aesthetic_train(opts: dict) -> dict:
+    """Train + save an aesthetic-critic model JSON from a labels CSV + images dir (M4)."""
+    from .. import critic
+
+    limit = opts.get("limit")
+    return critic.train_from_csv(
+        opts["labels_csv"], opts["images_dir"], opts["out_model"],
+        path_column=opts.get("path_column"), score_column=opts.get("score_column"),
+        ridge=float(opts.get("ridge", 1e-3)), limit=int(limit) if limit else None)
+
+
+def aesthetic_score(opts: dict) -> dict:
+    """Score + rank a folder of photos with a trained critic model (M4)."""
+    from .. import critic
+
+    limit = opts.get("limit")
+    return critic.score_folder(opts["folder"], opts["model"],
+                               recursive=bool(opts.get("recursive", True)),
+                               limit=int(limit) if limit else None)
+
+
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)

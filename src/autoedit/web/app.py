@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from . import curate_jobs, jobs, service
+from . import aesthetic_jobs, curate_jobs, jobs, service
 
 
 def create_app(configs_dir: str = "configs"):
@@ -171,6 +171,30 @@ def create_app(configs_dir: str = "configs"):
             out_dir = payload.get("out_dir") or os.path.join(o, "AutoEdit Dataset")
             service.ensure_allowed(o, t, out_dir)
             return service.dataset_build(o, t, out_dir, payload)
+        return guard(go)
+
+    # ── aesthetic critic (M4): train a finished-photo scorer + score/rank a folder ──
+    @app.post("/api/aesthetic/train")
+    def aesthetic_train(payload: dict = Body(...)):
+        def go():
+            out_model = payload.get("out_model") or os.path.join(payload["images_dir"], "aesthetic-model.json")
+            payload["out_model"] = out_model
+            service.ensure_allowed(payload["images_dir"], payload.get("labels_csv"), out_model)
+            return aesthetic_jobs.snapshot(aesthetic_jobs.start(payload))
+        return guard(go)
+
+    @app.get("/api/aesthetic/jobs/{job_id}")
+    def aesthetic_status(job_id: str):
+        j = aesthetic_jobs.get(job_id)
+        if j is None:
+            return JSONResponse(status_code=404, content={"error": "unknown train job"})
+        return aesthetic_jobs.snapshot(j)
+
+    @app.post("/api/aesthetic/score")
+    def aesthetic_score(payload: dict = Body(...)):
+        def go():
+            service.ensure_allowed(payload["folder"], payload["model"])
+            return service.aesthetic_score(payload)
         return guard(go)
 
     return app
