@@ -245,6 +245,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .lbtn.rej.on{background:rgba(224,106,94,.16);border-color:var(--danger);color:var(--danger)}
 .lbl-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
 .lbl-tags .chip{padding:2px 7px;font-size:10px;font-weight:500}
+.rcard.var-best{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 
 /* small input */
 .tinput{width:100%;height:30px;background:var(--elev);border:1px solid var(--line-2);color:var(--ink);border-radius:var(--r);
@@ -373,6 +374,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <button data-v="split" class="on">Split</button><button data-v="side">Side</button></div>
     <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" title="Show detected edit regions on the split preview" style="display:none">
       <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
+    <button class="tbtn" id="variantsBtn" aria-label="Generate variants" title="Render several recipes for this photo, scored + ranked; apply the best" style="display:none">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Variants</button>
     <div class="tdiv"></div>
     <div class="seg" id="runFmtSeg" title="Output format">
       <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
@@ -618,6 +621,16 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     </div>
   </div></div>
 
+  <!-- ===== variants modal (M7) ===== -->
+  <div class="scrim" id="varScrim"><div class="modal" style="width:min(1140px,96vw)">
+    <div class="modal-h"><h3 id="varTitle">Variants</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="varClose">Close</button></div></div>
+    <div class="modal-b">
+      <div class="tip" id="varStatus"></div>
+      <div class="rgrid" id="varGrid" style="margin-top:12px"></div>
+    </div>
+  </div></div>
+
 </div>
 
 <script>
@@ -763,7 +776,7 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
   const p=STATE.files[i];
   $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
-  $('#runBtn').disabled=false;
+  $('#runBtn').disabled=false;$('#variantsBtn').style.display='';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
   showSourceOnly(true);}
@@ -1010,6 +1023,38 @@ $('#saveLabelsBtn').onclick=()=>{
     body:JSON.stringify({out_dir:REVIEW.out_dir,labels:records})})
     .then(r=>r.json()).then(j=>{$('#reviewLblStatus').textContent=j.error?j.error:`saved ${j.added} → review-labels.csv (${j.total} total)`;})
     .catch(e=>$('#reviewLblStatus').textContent=String(e));};
+
+/* ---- variants (M7): render + score + rank several recipes for this photo --- */
+$('#variantsBtn').onclick=()=>{if(STATE.sel<0||!STATE.served)return;$('#varScrim').classList.add('open');runVariants();};
+$('#varClose').onclick=()=>$('#varScrim').classList.remove('open');
+function runVariants(){const p=STATE.files[STATE.sel];
+  $('#varTitle').textContent='Variants — '+p.name;
+  $('#varStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> rendering &amp; scoring recipes…';
+  $('#varGrid').innerHTML='';
+  const body=Object.assign(editOptions(),{file:p.path,decider:'rules',aesthetic_model:CULL.model||''});
+  fetch('/api/variants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#varStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}renderVariants(j);})
+    .catch(e=>$('#varStatus').textContent=String(e));}
+function renderVariants(j){
+  $('#varStatus').innerHTML=`Best: <b>${j.best}</b>`+(j.review?' &nbsp;<span class="bdg b-review"><i></i>uncertain — review</span>':' &nbsp;<span class="bdg b-done"><i></i>clear winner</span>');
+  const g=$('#varGrid');g.innerHTML='';
+  (j.variants||[]).forEach(v=>{const c=el('div','rcard'+(v.name===j.best?' var-best':''));
+    const aes=v.aesthetic!=null?` · aes ${v.aesthetic}`:'';
+    c.innerHTML=`<div class="ph"><img src="${v.after}" alt=""></div>
+      <div class="ft"><div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="nm">${v.name}</div>${v.name===j.best?'<span class="bdg b-done"><i></i>best</span>':(v.needs_review?'<span class="bdg b-review"><i></i>review</span>':'')}</div>
+      <div class="tip" style="margin-top:4px">score ${v.score} · q ${v.quality}${aes}</div>
+      <button class="minibtn" style="margin-top:8px;width:100%">Apply</button></div>`;
+    c.querySelector('button').onclick=()=>applyVariant(v.opts);
+    g.appendChild(c);});}
+function applyVariant(o){
+  o=o||{};
+  if(o.style){STATE.style=o.style;renderStyles();}
+  STATE.palette=o.palette||'';renderPalettes();
+  STATE.prompt=o.prompt||'';const ii=$('#intentInput');if(ii)ii.value=STATE.prompt;renderChips();
+  if(o.intensity!=null){STATE.intensity=o.intensity;
+    $('#intensity').querySelectorAll('button').forEach(x=>x.classList.toggle('on',+x.dataset.i===o.intensity));}
+  $('#varScrim').classList.remove('open');markPreviewStale();}
 
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');

@@ -314,6 +314,45 @@ def aesthetic_score(opts: dict) -> dict:
                                limit=int(limit) if limit else None)
 
 
+def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
+                  with_images: bool = True) -> dict:
+    """Render several recipe variants for one photo, score each (safety gate + optional aesthetic
+    critic), rank, auto-pick the best, and flag uncertain cases for review (M7). Non-generative —
+    every variant is an ordinary bounded edit."""
+    from .. import variants
+
+    check_image(image_path)
+    specs = variants.resolve_specs(opts.get("variants"))
+    model = None
+    if opts.get("aesthetic_model"):
+        from .. import aesthetic
+
+        try:
+            model = aesthetic.load_model(opts["aesthetic_model"])
+        except Exception:
+            model = None
+
+    work = downscale_long_edge(load_image(image_path), 1400)   # shared proxy → fast, seg cached
+    scored = []
+    for spec in specs:
+        o = {k: v for k, v in opts.items() if k not in ("variants", "aesthetic_model")}
+        o.update(variants.spec_opts(spec))
+        cfg = make_cfg(o, configs_dir)
+        pipe = build_pipeline(cfg)
+        with INFERENCE_LOCK:
+            out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
+        item = {"name": spec["name"], "opts": variants.spec_opts(spec), "scene": result.scene,
+                **variants.score_variant(result, out_rgb, model)}
+        if with_images:
+            item["after"] = _img_b64(out_rgb, 1100, fmt="jpeg", quality=88)
+        scored.append(item)
+
+    scored.sort(key=lambda d: d["score"], reverse=True)
+    review = variants.is_uncertain(scored)
+    return {"image": os.path.abspath(image_path), "best": scored[0]["name"] if scored else None,
+            "review": review, "variants": scored}
+
+
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)

@@ -151,6 +151,40 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_rank_variants(args) -> int:
+    import csv
+
+    from . import batch
+    from .web import service
+
+    images = batch.list_images(args.input) if os.path.isdir(args.input) else [args.input]
+    if not images:
+        print(f"no images at {args.input}", file=sys.stderr)
+        return 2
+    opts = {"aesthetic_model": args.aesthetic_model} if args.aesthetic_model else {}
+    rows = []
+    for p in images:
+        try:
+            r = service.make_variants(p, opts, with_images=False)
+        except Exception as e:
+            print(f"  {os.path.basename(p)}: {e}", file=sys.stderr)
+            continue
+        best, review = r["best"], r["review"]
+        print(f"  {os.path.basename(p)} → best: {best}{'  (needs review)' if review else ''}")
+        for v in r["variants"]:
+            rows.append({"image": os.path.basename(p), "variant": v["name"], "score": v["score"],
+                         "quality": v["quality"], "aesthetic": v["aesthetic"],
+                         "best": "yes" if v["name"] == best else "", "review": "yes" if review else ""})
+    base = args.input if os.path.isdir(args.input) else os.path.dirname(args.input)
+    out = args.out or os.path.join(base, "variant-ranking.csv")
+    with open(out, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["image", "variant", "score", "quality", "aesthetic", "best", "review"])
+        w.writeheader()
+        w.writerows(rows)
+    print(f"Wrote {out}")
+    return 0
+
+
 def _cmd_train_recipe(args) -> int:
     from . import recipe
 
@@ -417,6 +451,12 @@ def main(argv: list[str] | None = None) -> int:
     dsv.add_argument("originals"); dsv.add_argument("targets")
     dsv.add_argument("--recursive", action="store_true")
     dsv.set_defaults(func=_cmd_dataset_validate)
+
+    rv_p = sub.add_parser("rank-variants", help="render + score recipe variants per photo; write a ranking CSV")
+    rv_p.add_argument("input", help="an image or a folder of images")
+    rv_p.add_argument("--out", help="ranking CSV path (default: <input>/variant-ranking.csv)")
+    rv_p.add_argument("--aesthetic-model", dest="aesthetic_model", help="critic JSON to score variants")
+    rv_p.set_defaults(func=_cmd_rank_variants)
 
     rec_p = sub.add_parser("train-recipe", help="train the learned recipe predictor from an M3 dataset")
     rec_p.add_argument("dataset", help="dataset workspace with originals/ + targets/ (from `dataset build`)")

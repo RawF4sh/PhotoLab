@@ -197,6 +197,15 @@ def create_app(configs_dir: str = "configs"):
             return service.aesthetic_score(payload)
         return guard(go)
 
+    # ── variant engine (M7): make + score + rank several recipes for a photo ──
+    @app.post("/api/variants")
+    def variants(payload: dict = Body(...)):
+        def go():
+            file = payload.get("file") or ""
+            service.ensure_allowed(file, payload.get("aesthetic_model"))
+            return service.make_variants(file, payload, configs_dir)
+        return guard(go)
+
     return app
 
 
