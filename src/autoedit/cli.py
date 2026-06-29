@@ -148,6 +148,29 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_dataset_validate(args) -> int:
+    from . import dataset
+
+    rep = dataset.validate(args.originals, args.targets, recursive=args.recursive)
+    print(f"Pairs: {rep['pairs']}  passed: {rep['passed']}  rejected: {rep['rejected']}  "
+          f"(unmatched: {rep['unmatched_originals']} orig / {rep['unmatched_targets']} target)")
+    for r in rep["results"]:
+        flag = "OK  " if r["ok"] else "REJ "
+        reasons = "" if r["ok"] else "  — " + ", ".join(r["reasons"])
+        print(f"  {flag}{os.path.basename(r['target'])}  edge_corr={r['metrics'].get('edge_corr','?')}{reasons}")
+    return 0
+
+
+def _cmd_dataset_build(args) -> int:
+    from . import dataset
+
+    m = dataset.build_dataset(args.originals, args.targets, args.out, recursive=args.recursive,
+                              do_validate=args.validate, approve_all=args.approve_all)
+    print(f"Built dataset at {m['out_dir']}: {m['kept']} kept, {m['rejected']} rejected "
+          f"of {m['pairs']} pairs. (originals/ targets/ rejected/ labels.csv manifest.json)")
+    return 0
+
+
 def _cmd_curate(args) -> int:
     from . import curate
 
@@ -360,6 +383,21 @@ def main(argv: list[str] | None = None) -> int:
     cur_p.add_argument("--aesthetic-model", dest="aesthetic_model",
                        help="JSON model from train-aesthetic; required for --mode aesthetic")
     cur_p.set_defaults(func=_cmd_curate)
+
+    ds_p = sub.add_parser("dataset", help="build/validate a training dataset from originals + edited targets")
+    ds_sub = ds_p.add_subparsers(dest="ds_cmd", required=True)
+    dsb = ds_sub.add_parser("build", help="pair, preservation-validate, and copy into a training workspace")
+    dsb.add_argument("originals"); dsb.add_argument("targets"); dsb.add_argument("out")
+    dsb.add_argument("--recursive", action="store_true")
+    dsb.add_argument("--no-validate", dest="validate", action="store_false",
+                     help="skip preservation checks (keep every pair)")
+    dsb.add_argument("--approve-all", dest="approve_all", action="store_true",
+                     help="keep pairs even if a preservation gate fails")
+    dsb.set_defaults(func=_cmd_dataset_build)
+    dsv = ds_sub.add_parser("validate", help="report pairing + preservation verdicts, copy nothing")
+    dsv.add_argument("originals"); dsv.add_argument("targets")
+    dsv.add_argument("--recursive", action="store_true")
+    dsv.set_defaults(func=_cmd_dataset_validate)
 
     aes_p = sub.add_parser("train-aesthetic", help="train a lightweight aesthetic scorer from labels CSV")
     aes_p.add_argument("labels_csv")

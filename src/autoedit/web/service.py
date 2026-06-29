@@ -266,6 +266,33 @@ def curate_run(input_dir: str, out_dir: str, opts: dict) -> dict:
     )
 
 
+def save_review_labels(out_dir: str, records: list[dict]) -> dict:
+    """Append human review labels (M2) under out_dir as review-labels.csv/json. Annotation only —
+    no files moved/deleted."""
+    from .. import review
+
+    return review.append_labels(records, out_dir)
+
+
+def dataset_validate(originals_dir: str, targets_dir: str, recursive: bool = False) -> dict:
+    """Pair + preservation-validate originals↔targets (M3), report only — nothing copied."""
+    from .. import dataset
+
+    return dataset.validate(originals_dir, targets_dir, recursive=recursive)
+
+
+def dataset_build(originals_dir: str, targets_dir: str, out_dir: str, opts: dict) -> dict:
+    """Build a copy-only training workspace from originals↔target pairs (M3)."""
+    from .. import dataset
+
+    return dataset.build_dataset(
+        originals_dir, targets_dir, out_dir,
+        recursive=bool(opts.get("recursive", False)),
+        do_validate=bool(opts.get("validate", True)),
+        approve_all=bool(opts.get("approve_all", False)),
+    )
+
+
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)

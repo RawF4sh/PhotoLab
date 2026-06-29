@@ -144,6 +144,35 @@ def create_app(configs_dir: str = "configs"):
             return JSONResponse(status_code=404, content={"error": "unknown curate job"})
         return curate_jobs.snapshot(j)
 
+    # ── review labels (M2): persist human verdicts for training ──
+    @app.post("/api/review/labels")
+    def review_labels(payload: dict = Body(...)):
+        def go():
+            labels = payload.get("labels") or []
+            out_dir = payload.get("out_dir") or (
+                os.path.dirname(labels[0]["image"]) if labels and labels[0].get("image") else "")
+            service.ensure_allowed(out_dir)
+            return service.save_review_labels(out_dir, labels)
+        return guard(go)
+
+    # ── dataset builder (M3): pair + preservation-validate + build a training workspace ──
+    @app.post("/api/datasets/validate")
+    def datasets_validate(payload: dict = Body(...)):
+        def go():
+            o, t = payload["originals_dir"], payload["targets_dir"]
+            service.ensure_allowed(o, t)
+            return service.dataset_validate(o, t, bool(payload.get("recursive")))
+        return guard(go)
+
+    @app.post("/api/datasets/build")
+    def datasets_build(payload: dict = Body(...)):
+        def go():
+            o, t = payload["originals_dir"], payload["targets_dir"]
+            out_dir = payload.get("out_dir") or os.path.join(o, "AutoEdit Dataset")
+            service.ensure_allowed(o, t, out_dir)
+            return service.dataset_build(o, t, out_dir, payload)
+        return guard(go)
+
     return app
 
 

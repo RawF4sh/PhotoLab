@@ -238,6 +238,13 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .range::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg)}
 .ck-row{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);cursor:pointer}
 .ck-row input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+/* review labels (M2) */
+.lbl-row{display:flex;gap:6px;margin-top:8px}
+.lbtn{flex:1;height:25px;border-radius:5px;border:1px solid var(--line-2);background:var(--elev);color:var(--ink-2);font-size:11px;font-weight:650;cursor:pointer;transition:.12s}
+.lbtn.keep.on{background:rgba(92,192,138,.16);border-color:var(--ok);color:var(--ok)}
+.lbtn.rej.on{background:rgba(224,106,94,.16);border-color:var(--danger);color:var(--danger)}
+.lbl-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+.lbl-tags .chip{padding:2px 7px;font-size:10px;font-weight:500}
 
 /* small input */
 .tinput{width:100%;height:30px;background:var(--elev);border:1px solid var(--line-2);color:var(--ink);border-radius:var(--r);
@@ -371,6 +378,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
     <button class="tbtn" id="cullBtn" aria-label="Cull a folder" title="Copy a curated subset of a folder for review/training (originals untouched)">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull</button>
+    <button class="tbtn" id="datasetBtn" aria-label="Build training dataset" title="Pair originals with edited targets and validate them for training (copy-only)">
+      <svg viewBox="0 0 24 24"><path d="M4 7h7v10H4zM13 7h7v10h-7z"/></svg>Dataset</button>
     <button class="tbtn primary" id="runBtn" disabled aria-label="Run batch">
       <svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg><span class="lbl">Run batch</span></button>
     <button class="iconbtn" id="settingsBtn" aria-label="Settings">
@@ -500,7 +509,9 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
   <div class="scrim" id="reviewScrim"><div class="modal">
     <div class="modal-h"><h3 id="reviewTitle">Review &amp; export</h3>
       <div style="display:flex;gap:8px">
+        <span class="tip" id="reviewLblStatus"></span>
         <button class="minibtn" id="reviewClose">Close</button>
+        <button class="tbtn" id="saveLabelsBtn" title="Save keep/reject + tags for training (M2)"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Save labels</button>
         <button class="tbtn primary" id="exportBtn"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M5 21h14"/></svg>Export</button></div></div>
     <div class="modal-b"><div class="rgrid" id="reviewGrid"></div></div>
   </div></div>
@@ -553,6 +564,30 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <button class="tbtn primary" id="cullRun" disabled><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull folder</button>
         <span class="tip" id="cullStatus"></span></div>
       <div class="rgrid" id="cullGrid" style="margin-top:16px"></div>
+    </div>
+  </div></div>
+
+  <!-- ===== dataset modal (M3) ===== -->
+  <div class="scrim" id="dsScrim"><div class="modal" style="width:min(960px,95vw)">
+    <div class="modal-h"><h3>Build training dataset</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="dsClose">Close</button></div></div>
+    <div class="modal-b">
+      <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        Pairs your <b>originals</b> with your <b>edited targets</b> by filename, then runs preservation checks so generated / content-changed edits are rejected — only real photographic edits become training data. Copy-only.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0 6px">
+        <div><button class="tbtn" id="dsPickO" style="width:100%"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Originals folder…</button>
+          <div class="folder" id="dsOrigDir" style="margin-top:5px">Not chosen</div></div>
+        <div><button class="tbtn" id="dsPickT" style="width:100%"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Edited targets folder…</button>
+          <div class="folder" id="dsTgtDir" style="margin-top:5px">Not chosen</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;margin:4px 0 12px">
+        <label class="ck-row"><input type="checkbox" id="dsRecursive"/> Scan subfolders</label>
+        <label class="ck-row"><input type="checkbox" id="dsApprove"/> Keep all pairs (skip rejection)</label>
+        <span class="sp" style="flex:1"></span>
+        <button class="tbtn" id="dsValidate" disabled>Validate</button>
+        <button class="tbtn primary" id="dsBuild" disabled><svg viewBox="0 0 24 24"><path d="M4 7h7v10H4zM13 7h7v10h-7z"/></svg>Build dataset</button></div>
+      <div class="tip" id="dsStatus"></div>
+      <div class="rgrid" id="dsGrid" style="margin-top:14px"></div>
     </div>
   </div></div>
 
@@ -891,21 +926,49 @@ $('#cancelBtn').onclick=()=>{if(JOB)fetch('/api/jobs/'+JOB.id+'/control',{method
   $('#runDrawer').classList.remove('open');};
 
 /* ---- review modal ------------------------------------------------------- */
-function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';
+const REVIEW_TAGS=[['Too dark','too_dark'],['Too blue','too_blue'],['Too warm','too_warm'],
+  ['Fake','fake_looking'],['Content changed','changed_content'],['Halos','halos'],['Banding','banding'],
+  ['Good style','good_style'],['Good preservation','good_preservation']];
+const REVIEW={out_dir:'',labels:{}};  /* image → {decision, tags:Set} */
+function lblFor(img){return REVIEW.labels[img]||(REVIEW.labels[img]={decision:'',tags:new Set()});}
+function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';REVIEW.out_dir=j.out_dir||'';REVIEW.labels={};
+  $('#reviewLblStatus').textContent='';
   $('#reviewTitle').textContent=`Review · ${j.done} edited · ${j.review} review · ${j.failed} failed → ${j.out_dir||''}`;
   j.items.slice(0,300).forEach(it=>{const after=it.out?thumbURL(it.out,520,j.id||Date.now()):thumbURL(it.src,520);
+    const key=it.out||it.src;
     const tail=it.status==='failed'?`<span class="bdg b-fail"><i></i>${it.error?'failed':'unreadable'}</span>`
       :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`:`<span class="bdg b-done"><i></i>safe</span>`;
     const c=el('div','rcard');
     c.innerHTML=`<div class="ph"><img class="rv" src="${after}" alt="${it.name}"><button class="ba2">Before</button></div>
       <div class="ft"><div class="nm">${it.name}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:7px">
-        <span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${tail}</div></div>`;
+        <span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${tail}</div>
+      <div class="lbl-row"><button class="lbtn keep" data-d="keep">Keep</button><button class="lbtn rej" data-d="reject">Reject</button></div>
+      <div class="lbl-tags"></div></div>`;
     const img=c.querySelector('.rv'),btn=c.querySelector('.ba2');let af=true;
     btn.onclick=()=>{af=!af;img.src=af?after:thumbURL(it.src,520);btn.textContent=af?'Before':'After';};
+    // keep/reject
+    c.querySelectorAll('.lbtn').forEach(b=>b.onclick=()=>{const l=lblFor(key);
+      l.decision=(l.decision===b.dataset.d)?'':b.dataset.d;
+      c.querySelectorAll('.lbtn').forEach(x=>x.classList.toggle('on',x.dataset.d===l.decision));});
+    // tag chips
+    const tg=c.querySelector('.lbl-tags');
+    REVIEW_TAGS.forEach(([lab,id])=>{const ch=el('button','chip',lab);
+      ch.onclick=()=>{const l=lblFor(key);l.tags.has(id)?l.tags.delete(id):l.tags.add(id);ch.classList.toggle('on');};
+      tg.appendChild(ch);});
     g.appendChild(c);});}
 $('#reviewClose').onclick=()=>$('#reviewScrim').classList.remove('open');
 $('#exportBtn').onclick=()=>$('#reviewScrim').classList.remove('open'); /* outputs already written to out_dir */
+$('#saveLabelsBtn').onclick=()=>{
+  const records=Object.entries(REVIEW.labels)
+    .filter(([img,l])=>l.decision||l.tags.size)
+    .map(([img,l])=>({image:img,decision:l.decision,tags:[...l.tags],source:'edit'}));
+  if(!records.length){$('#reviewLblStatus').textContent='no labels yet';return;}
+  $('#reviewLblStatus').textContent='saving…';
+  fetch('/api/review/labels',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({out_dir:REVIEW.out_dir,labels:records})})
+    .then(r=>r.json()).then(j=>{$('#reviewLblStatus').textContent=j.error?j.error:`saved ${j.added} → review-labels.csv (${j.total} total)`;})
+    .catch(e=>$('#reviewLblStatus').textContent=String(e));};
 
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
@@ -943,6 +1006,42 @@ function cullDone(j,err){$('#cullRun').disabled=false;
     c.innerHTML=`<div class="ph"><img src="${thumbURL(it.thumb||it.source,360)}" alt=""></div>
       <div class="ft"><div class="nm">${(it.source||'').split('/').pop()}</div>
       <div class="tip" style="margin-top:4px">#${it.rank} · ${it.bucket}</div></div>`;
+    g.appendChild(c);});}
+
+/* ---- dataset builder (M3) ----------------------------------------------- */
+const DS={orig:null,tgt:null};
+$('#datasetBtn').onclick=()=>{if(!STATE.served){standaloneNote();return;}$('#dsScrim').classList.add('open');};
+$('#dsClose').onclick=()=>$('#dsScrim').classList.remove('open');
+function dsReady(){const ok=DS.orig&&DS.tgt;$('#dsValidate').disabled=!ok;$('#dsBuild').disabled=!ok;}
+async function dsPick(which){try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+    DS[which]=path;$(which==='orig'?'#dsOrigDir':'#dsTgtDir').textContent=path;dsReady();
+    $('#dsStatus').textContent='';$('#dsGrid').innerHTML='';
+  }catch(e){alert('Could not open folder: '+e);}}
+$('#dsPickO').onclick=()=>dsPick('orig');$('#dsPickT').onclick=()=>dsPick('tgt');
+function dsBody(){return {originals_dir:DS.orig,targets_dir:DS.tgt,recursive:$('#dsRecursive').checked,
+  approve_all:$('#dsApprove').checked};}
+$('#dsValidate').onclick=()=>dsCall('/api/datasets/validate',dsBody(),false);
+$('#dsBuild').onclick=()=>dsCall('/api/datasets/build',dsBody(),true);
+function dsCall(url,body,built){$('#dsStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> pairing &amp; checking…';
+  $('#dsGrid').innerHTML='';
+  fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#dsStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
+      dsResult(j,built);}).catch(e=>$('#dsStatus').textContent=String(e));}
+function dsResult(j,built){
+  const kept=built?j.kept:j.passed, rej=built?j.rejected:j.rejected, pairs=j.pairs;
+  $('#dsStatus').innerHTML=built
+    ? `Built <b>${j.out_dir}</b> — ${kept} kept, ${rej} rejected of ${pairs} pairs (originals/ targets/ rejected/ labels.csv manifest.json)`
+    : `${pairs} pairs · <b>${kept}</b> pass · ${rej} rejected · ${j.unmatched_originals||0}+${j.unmatched_targets||0} unmatched. Click Build to copy.`;
+  const items=j.items||j.results||[];const g=$('#dsGrid');g.innerHTML='';
+  items.forEach(it=>{const ok=it.status?it.status==='kept':it.ok;
+    const c=el('div','rcard');
+    const reasons=(it.reasons||[]).join(', ');
+    c.innerHTML=`<div class="ph"><img src="${thumbURL(it.target,360)}" alt=""></div>
+      <div class="ft"><div class="nm">${(it.target||'').split('/').pop()}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span class="tip">corr ${(it.metrics&&it.metrics.edge_corr)??'?'}</span>
+        <span class="bdg ${ok?'b-done':'b-fail'}"><i></i>${ok?'keep':'reject'}</span></div>
+      ${reasons?`<div class="tip" style="margin-top:4px;color:var(--danger)">${reasons}</div>`:''}</div>`;
     g.appendChild(c);});}
 document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s)s.classList.remove('open');}));
 document.querySelectorAll('.modal .seg').forEach(seg=>seg.addEventListener('click',e=>{const b=e.target.closest('button');
