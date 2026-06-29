@@ -236,6 +236,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .chip .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 .range{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;background:var(--line-2);outline:none;margin:8px 0 2px}
 .range::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg)}
+.ck-row{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);cursor:pointer}
+.ck-row input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 
 /* small input */
 .tinput{width:100%;height:30px;background:var(--elev);border:1px solid var(--line-2);color:var(--ink);border-radius:var(--r);
@@ -367,6 +369,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="tdiv"></div>
     <div class="seg" id="runFmtSeg" title="Output format">
       <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
+    <button class="tbtn" id="cullBtn" aria-label="Cull a folder" title="Copy a curated subset of a folder for review/training (originals untouched)">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull</button>
     <button class="tbtn primary" id="runBtn" disabled aria-label="Run batch">
       <svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg><span class="lbl">Run batch</span></button>
     <button class="iconbtn" id="settingsBtn" aria-label="Settings">
@@ -521,6 +525,34 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <input class="tinput" type="password" placeholder="sk-ant-… (stored locally)" style="height:34px"/></div>
       <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
         Runs fully on-device. Only a thumbnail + stats leave the machine, and only if you turn the planner on — full-resolution pixels never do.</div>
+    </div>
+  </div></div>
+
+  <!-- ===== cull modal (M1) ===== -->
+  <div class="scrim" id="cullScrim"><div class="modal" style="width:min(880px,94vw)">
+    <div class="modal-h"><h3 id="cullTitle">Cull a folder</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="cullClose">Close</button></div></div>
+    <div class="modal-b">
+      <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        Copies a curated subset into <b>&lt;folder&gt;/AutoEdit Cull/selected</b> with a contact sheet. Your originals are never moved, renamed, or deleted.</div>
+      <div style="display:flex;gap:10px;align-items:center;margin:14px 0 4px">
+        <button class="tbtn" id="cullPick"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Choose folder…</button>
+        <div class="folder" id="cullDir" style="max-width:520px">No folder chosen</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px">
+        <div class="field"><label>Mode</label>
+          <div class="seg" id="cullModeSeg" style="width:100%">
+            <button class="on" data-m="diverse">Diverse</button><button data-m="best">Best</button><button data-m="aesthetic">Aesthetic</button></div>
+          <div class="tip" style="margin-top:5px">Diverse = cover the range of looks · Best = heuristic keepers · Aesthetic = learned scorer.</div></div>
+        <div class="field"><label>How many to keep <span class="muted" id="cullCountVal">200</span></label>
+          <input type="range" class="range" id="cullCount" min="10" max="500" step="10" value="200"/>
+          <div style="display:flex;gap:16px;margin-top:8px">
+            <label class="ck-row"><input type="checkbox" id="cullRecursive" checked/> Scan subfolders</label>
+            <label class="ck-row"><input type="checkbox" id="cullXmp"/> Write .xmp sidecars</label></div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
+        <button class="tbtn primary" id="cullRun" disabled><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull folder</button>
+        <span class="tip" id="cullStatus"></span></div>
+      <div class="rgrid" id="cullGrid" style="margin-top:16px"></div>
     </div>
   </div></div>
 
@@ -878,6 +910,40 @@ $('#exportBtn').onclick=()=>$('#reviewScrim').classList.remove('open'); /* outpu
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
 $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
+
+/* ---- cull (M1): curate a folder subset for review/training --------------- */
+const CULL={dir:null,mode:'diverse',count:200,job:null,poll:null};
+$('#cullBtn').onclick=()=>{if(!STATE.served){standaloneNote();return;}$('#cullScrim').classList.add('open');};
+$('#cullClose').onclick=()=>{clearInterval(CULL.poll);$('#cullScrim').classList.remove('open');};
+$('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(b)CULL.mode=b.dataset.m;});
+$('#cullCount').addEventListener('input',e=>{CULL.count=+e.target.value;$('#cullCountVal').textContent=e.target.value;});
+async function cullPick(){try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+    CULL.dir=path;$('#cullDir').textContent=path;$('#cullRun').disabled=false;
+    $('#cullStatus').textContent='';$('#cullGrid').innerHTML='';
+  }catch(e){alert('Could not open folder: '+e);}}
+$('#cullPick').onclick=cullPick;
+$('#cullRun').onclick=()=>{if(!CULL.dir)return;
+  $('#cullRun').disabled=true;$('#cullGrid').innerHTML='';
+  $('#cullStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> scanning &amp; selecting…';
+  const body={input_dir:CULL.dir,mode:CULL.mode,count:CULL.count,
+    recursive:$('#cullRecursive').checked,emit_xmp:$('#cullXmp').checked};
+  fetch('/api/curate/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){cullDone(null,j.error);return;}CULL.job=j;pollCull();})
+    .catch(e=>cullDone(null,String(e)));};
+function pollCull(){clearInterval(CULL.poll);CULL.poll=setInterval(()=>{
+  fetch('/api/curate/jobs/'+CULL.job.id).then(r=>r.json()).then(j=>{
+    if(j.status==='running')return;clearInterval(CULL.poll);
+    if(j.status==='error')cullDone(null,j.error);else cullDone(j);
+  }).catch(()=>{});},500);}
+function cullDone(j,err){$('#cullRun').disabled=false;
+  if(err){$('#cullStatus').innerHTML=`<span style="color:var(--danger)">${err}</span>`;return;}
+  $('#cullStatus').innerHTML=`Selected <b>${j.selected}</b> of ${j.total_scanned} scanned (${j.mode}) → copied to <b>${j.out_dir}</b>`;
+  const g=$('#cullGrid');g.innerHTML='';
+  (j.items||[]).forEach(it=>{const c=el('div','rcard');
+    c.innerHTML=`<div class="ph"><img src="${thumbURL(it.thumb||it.source,360)}" alt=""></div>
+      <div class="ft"><div class="nm">${(it.source||'').split('/').pop()}</div>
+      <div class="tip" style="margin-top:4px">#${it.rank} · ${it.bucket}</div></div>`;
+    g.appendChild(c);});}
 document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s)s.classList.remove('open');}));
 document.querySelectorAll('.modal .seg').forEach(seg=>seg.addEventListener('click',e=>{const b=e.target.closest('button');
   if(!b)return;seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');}));

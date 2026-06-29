@@ -12,6 +12,7 @@ Config layering: CLI flags > --config run.toml > configs/defaults.toml.
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 import tomllib
@@ -163,6 +164,7 @@ def _cmd_curate(args) -> int:
         copy_originals=True,
         mode=args.mode,
         emit_xmp=args.emit_xmp,
+        aesthetic_model_path=args.aesthetic_model,
     )
     print(
         f"\nCopied {manifest['selected']} of {manifest['total_scanned']} scanned photos to "
@@ -170,6 +172,92 @@ def _cmd_curate(args) -> int:
     )
     print(f"Review: {os.path.abspath(os.path.join(args.out_dir, 'contact-sheet.html'))}")
     print(f"Manifest: {os.path.abspath(os.path.join(args.out_dir, 'candidates.json'))}")
+    return 0
+
+
+def _row_path(row: dict[str, str], images_dir: str, path_column: str | None) -> str | None:
+    columns = [path_column] if path_column else [
+        "path", "filepath", "file_path", "file", "filename", "image", "image_name", "image_id", "id",
+    ]
+    for col in columns:
+        if not col or col not in row or not row[col]:
+            continue
+        value = row[col].strip()
+        candidates = [value]
+        stem, ext = os.path.splitext(value)
+        if not ext:
+            candidates.extend([f"{value}.jpg", f"{value}.jpeg", f"{value}.JPG"])
+        for candidate in candidates:
+            path = candidate if os.path.isabs(candidate) else os.path.join(images_dir, candidate)
+            if os.path.exists(path):
+                return path
+    return None
+
+
+def _row_score(row: dict[str, str], score_column: str | None) -> float | None:
+    if score_column:
+        try:
+            return float(row[score_column])
+        except (KeyError, TypeError, ValueError):
+            return None
+    for col in ("score", "mean_score", "rating", "aesthetic_score", "mos"):
+        if col in row and row[col]:
+            try:
+                return float(row[col])
+            except ValueError:
+                pass
+    # AVA-style rating distribution: columns named 1..10, with vote counts.
+    if all(str(i) in row and row[str(i)] for i in range(1, 11)):
+        try:
+            counts = [float(row[str(i)]) for i in range(1, 11)]
+        except ValueError:
+            return None
+        total = sum(counts)
+        if total > 0:
+            return sum((i + 1) * counts[i] for i in range(10)) / total
+    return None
+
+
+def _cmd_train_aesthetic(args) -> int:
+    from . import aesthetic, curate
+
+    if not os.path.isdir(args.images_dir):
+        print(f"images_dir not found: {args.images_dir}", file=sys.stderr)
+        return 2
+    if not os.path.exists(args.labels_csv):
+        print(f"labels_csv not found: {args.labels_csv}", file=sys.stderr)
+        return 2
+
+    samples = []
+    skipped = 0
+    with open(args.labels_csv, newline="") as fh:
+        for i, row in enumerate(csv.DictReader(fh)):
+            if args.limit is not None and i >= args.limit:
+                break
+            path = _row_path(row, args.images_dir, args.path_column)
+            score = _row_score(row, args.score_column)
+            if not path or score is None:
+                skipped += 1
+                continue
+            try:
+                samples.append((curate.image_features(path, long_edge=args.analysis_long_edge), score))
+            except Exception:
+                skipped += 1
+
+    if not samples:
+        print("no training samples matched labels to readable images", file=sys.stderr)
+        return 2
+
+    model = aesthetic.train(samples, ridge=args.ridge)
+    aesthetic.save_model(model, args.out_model, metadata={
+        "labels_csv": os.path.abspath(args.labels_csv),
+        "images_dir": os.path.abspath(args.images_dir),
+        "samples": len(samples),
+        "skipped": skipped,
+        "analysis_long_edge": args.analysis_long_edge,
+    })
+    print(f"Trained aesthetic scorer on {len(samples)} images; skipped {skipped}.")
+    print(f"Model: {os.path.abspath(args.out_model)}")
     return 0
 
 
@@ -265,11 +353,28 @@ def main(argv: list[str] | None = None) -> int:
                        help="only analyze the first N supported files, useful for quick trials")
     cur_p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int, default=256,
                        help="proxy size used for curation features (default: 256)")
-    cur_p.add_argument("--mode", choices=["diverse", "best"], default="diverse",
-                       help="diverse = cover different looks; best = highest quality keepers")
+    cur_p.add_argument("--mode", choices=["diverse", "best", "aesthetic"], default="diverse",
+                       help="diverse = cover looks; best = heuristic keepers; aesthetic = learned scorer")
     cur_p.add_argument("--emit-xmp", dest="emit_xmp", action="store_true",
                        help="write XMP sidecars next to copied selections with rating/label metadata")
+    cur_p.add_argument("--aesthetic-model", dest="aesthetic_model",
+                       help="JSON model from train-aesthetic; required for --mode aesthetic")
     cur_p.set_defaults(func=_cmd_curate)
+
+    aes_p = sub.add_parser("train-aesthetic", help="train a lightweight aesthetic scorer from labels CSV")
+    aes_p.add_argument("labels_csv")
+    aes_p.add_argument("images_dir")
+    aes_p.add_argument("out_model")
+    aes_p.add_argument("--path-column", dest="path_column",
+                       help="CSV column containing image path/name; auto-detected when omitted")
+    aes_p.add_argument("--score-column", dest="score_column",
+                       help="CSV column containing score; auto-detected or AVA 1..10 votes when omitted")
+    aes_p.add_argument("--limit", type=int, help="only train on the first N rows")
+    aes_p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int, default=256,
+                       help="proxy size used for training features (default: 256)")
+    aes_p.add_argument("--ridge", type=float, default=1e-3,
+                       help="ridge regularization strength (default: 1e-3)")
+    aes_p.set_defaults(func=_cmd_train_aesthetic)
 
     doc_p = sub.add_parser("doctor", help="report device + backend availability")
     doc_p.add_argument("--configs-dir", dest="configs_dir")

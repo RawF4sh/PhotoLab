@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from . import jobs, service
+from . import curate_jobs, jobs, service
 
 
 def create_app(configs_dir: str = "configs"):
@@ -126,6 +126,23 @@ def create_app(configs_dir: str = "configs"):
             return JSONResponse(status_code=404, content={"error": "unknown job"})
         jobs.control(j, payload.get("action", ""))
         return jobs.snapshot(j)
+
+    # ── culling jobs (M1): copy a curated subset for review/training ──
+    @app.post("/api/curate/jobs")
+    def start_curate(payload: dict = Body(...)):
+        def go():
+            input_dir = payload.get("input_dir") or ""
+            out_dir = payload.get("out_dir") or curate_jobs.default_out_dir(input_dir)
+            service.ensure_allowed(input_dir, out_dir)
+            return curate_jobs.snapshot(curate_jobs.start(input_dir, out_dir, payload))
+        return guard(go)
+
+    @app.get("/api/curate/jobs/{job_id}")
+    def curate_status(job_id: str):
+        j = curate_jobs.get(job_id)
+        if j is None:
+            return JSONResponse(status_code=404, content={"error": "unknown curate job"})
+        return curate_jobs.snapshot(j)
 
     return app
 

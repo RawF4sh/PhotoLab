@@ -247,6 +247,25 @@ def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None 
     return batch.run(cfg, input_dir, out_dir, do_apply=True)
 
 
+def curate_run(input_dir: str, out_dir: str, opts: dict) -> dict:
+    """Cull a folder into `out_dir/selected` + thumbs + contact-sheet (M1). Copy-only — originals
+    are never moved/renamed/deleted. Modes: diverse | best | aesthetic. Returns the manifest."""
+    from .. import curate  # light deps (numpy/PIL); imported here to keep service import lean
+
+    mode = str(opts.get("mode", "diverse"))
+    scan_limit = opts.get("scan_limit")
+    return curate.curate(
+        input_dir, out_dir,
+        count=int(opts.get("count", 200)),
+        recursive=bool(opts.get("recursive", True)),
+        scan_limit=int(scan_limit) if scan_limit else None,
+        copy_originals=True,                              # roadmap: copy-only, always
+        mode=mode,
+        emit_xmp=bool(opts.get("emit_xmp", False)),
+        aesthetic_model_path=opts.get("aesthetic_model"),
+    )
+
+
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)

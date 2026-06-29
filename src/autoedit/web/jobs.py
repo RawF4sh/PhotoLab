@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from .. import emit
+from .. import consistency, emit
 from ..imageio import is_supported
 
 
@@ -90,6 +90,24 @@ def _run(job: Job, configs_dir) -> None:
         cfg = make_cfg(job.opts, configs_dir)
         os.makedirs(job.out_dir, exist_ok=True)
         pipe = build_pipeline(cfg)       # resident model, shared with the preview endpoint
+
+        # Shoot consistency (default on): pass 1 measures brightness → lighting groups + per-group
+        # target; pass 2 (the loop) nudges each photo a BOUNDED ±0.15 EV toward its group so a
+        # folder doesn't drift in brightness photo-to-photo. Mirrors the CLI batch path.
+        consistent = bool(job.opts.get("consistent", True))
+        groups: dict = {}
+        lums: dict = {}
+        if consistent and len(job.items) > 1:
+            measured = []
+            for it in job.items:
+                try:
+                    lm = consistency.quick_lum(it.src)
+                    lums[it.src] = lm
+                    measured.append((it.src, lm))
+                except Exception:
+                    continue
+            groups = consistency.plan_groups(measured)
+
         durs: list[float] = []
         for i, item in enumerate(job.items):
             if job.cancelled:
@@ -104,8 +122,12 @@ def _run(job: Job, configs_dir) -> None:
             item.status = "editing"
             t0 = time.time()
             try:
+                gid, target = groups.get(item.src, ("", None))
+                bias = (consistency.exposure_bias(lums[item.src], target)
+                        if target is not None and item.src in lums else 0.0)
                 with INFERENCE_LOCK:
-                    out_rgb, result = pipe.process_one(item.src, do_apply=True)
+                    out_rgb, result = pipe.process_one(item.src, do_apply=True,
+                                                       exposure_bias=bias, batch_group=gid)
                 image_out, sidecar = emit.output_paths(job.out_dir, item.src, cfg.out_format)
                 emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
                 emit.write_sidecar(result, sidecar)

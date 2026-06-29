@@ -61,9 +61,17 @@ autoedit run ./photos ./out --preset wedding --look natural --intensity 0.8
 autoedit run ./photos ./out --concepts "sky,skin,dress,foliage"   # arbitrary concepts
 autoedit run ./photos ./out --decider llm --allow-cloud           # BYO-key LLM (see Privacy)
 autoedit run ./photos ./out --dry-run                              # decisions + sidecars, no pixels
+autoedit curate ./photos ./curated --mode best --count 300         # copy likely keepers for review
+autoedit train-aesthetic labels.csv ./images ./aesthetic.json       # train a lightweight taste scorer
+autoedit curate ./photos ./curated --mode aesthetic --aesthetic-model ./aesthetic.json
 autoedit doctor        # check device + backend availability
 autoedit presets       # list concept presets
 ```
+
+`train-aesthetic` is for datasets like AVA/Flickr-AES that score finished photos. That scorer
+does not teach the editor how to transform an original into an edit; it acts as a critic/ranker
+for culling huge folders, filtering generated/reference edits, prioritizing human review, and
+choosing the best variants from a batch.
 
 > **Planned:** `autoedit ui` — a local web app (FastAPI + browser): drop a folder, pick a
 > style, type what you want, preview before/after, run the batch. Same backend, so the local

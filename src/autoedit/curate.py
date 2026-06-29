@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from .imageio import Image, downscale_long_edge, is_supported, load_image, luma, save_image
+from . import aesthetic
 
 
 @dataclass
@@ -198,6 +199,17 @@ def select_best(candidates: list[Candidate], count: int) -> list[Candidate]:
     return ranked[:count]
 
 
+def select_aesthetic(candidates: list[Candidate], count: int, model_path: str) -> list[Candidate]:
+    if count <= 0 or not candidates:
+        return []
+    model = aesthetic.load_model(model_path)
+    ranked = list(candidates)
+    for c in ranked:
+        c.score = aesthetic.predict(c.features, model)
+    ranked.sort(key=lambda c: (c.score, c.features.get("edge_p90", 0.0), c.features["lum_std"]), reverse=True)
+    return ranked[:count]
+
+
 def _safe_name(path: str, rank: int, bucket: str) -> str:
     p = Path(path)
     stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in p.stem)[:80]
@@ -267,7 +279,7 @@ def _write_xmp_sidecar(row: dict, copied_path: str) -> str:
 def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = True,
            proxy_long_edge: int = 256, scan_limit: int | None = None,
            copy_originals: bool = True, mode: str = "diverse",
-           emit_xmp: bool = False) -> dict:
+           emit_xmp: bool = False, aesthetic_model_path: str | None = None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     selected_dir = os.path.join(out_dir, "selected")
     thumbs_dir = os.path.join(out_dir, "thumbs")
@@ -277,6 +289,10 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
     candidates = scan(input_dir, recursive=recursive, long_edge=proxy_long_edge, scan_limit=scan_limit)
     if mode == "best":
         selected = select_best(candidates, count)
+    elif mode == "aesthetic":
+        if not aesthetic_model_path:
+            raise ValueError("mode='aesthetic' requires aesthetic_model_path")
+        selected = select_aesthetic(candidates, count, aesthetic_model_path)
     elif mode == "diverse":
         selected = select_diverse(candidates, count)
     else:
@@ -322,6 +338,7 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
         "recursive": recursive,
         "mode": mode,
         "emit_xmp": emit_xmp,
+        "aesthetic_model_path": os.path.abspath(aesthetic_model_path) if aesthetic_model_path else "",
         "items": rows,
     }
     manifest_path = os.path.join(out_dir, "candidates.json")
