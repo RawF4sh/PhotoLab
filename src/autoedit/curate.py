@@ -11,6 +11,7 @@ import html
 import json
 import os
 import shutil
+import xml.sax.saxutils
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +41,8 @@ _FEATURE_ORDER = (
     "bright_frac",
     "snow_frac",
     "aspect",
+    "edge_mean",
+    "edge_p90",
 )
 
 
@@ -64,6 +67,8 @@ def image_features(path: str, long_edge: int = 256) -> dict[str, float]:
     rb = (rgb[..., 0] + rgb[..., 2]) * 0.5
     neutral = np.max(rgb, axis=2) - np.min(rgb, axis=2)
     snow = (yy > 0.72) & (neutral < 0.16)
+    gy, gx = np.gradient(yy)
+    edge = np.sqrt(gx * gx + gy * gy)
     return {
         "lum_mean": float(np.mean(yy)),
         "lum_std": float(np.std(yy)),
@@ -77,6 +82,8 @@ def image_features(path: str, long_edge: int = 256) -> dict[str, float]:
         "bright_frac": float(np.mean(yy > 0.78)),
         "snow_frac": float(np.mean(snow)),
         "aspect": float(w / max(h, 1)),
+        "edge_mean": float(np.mean(edge)),
+        "edge_p90": float(np.percentile(edge, 90)),
     }
 
 
@@ -163,6 +170,34 @@ def select_diverse(candidates: list[Candidate], count: int) -> list[Candidate]:
     return selected
 
 
+def quality_score(features: dict[str, float]) -> float:
+    """Cheap proxy score for culling: exposure health + contrast/detail - clipping.
+
+    This is intentionally transparent, not magic. It finds likely keepers from large folders;
+    the contact sheet is still the final human review.
+    """
+    lum_mean = features["lum_mean"]
+    lum_std = features["lum_std"]
+    exposure = 1.0 - min(1.0, abs(lum_mean - 0.46) / 0.40)
+    contrast = min(1.0, max(0.0, (lum_std - 0.055) / 0.19))
+    detail = min(1.0, max(0.0, features.get("edge_p90", 0.0) / 0.18))
+    clipping = min(1.0, features["dark_frac"] * 0.9 + features["bright_frac"] * 1.2)
+    flat_penalty = max(0.0, 0.10 - lum_std) * 2.0
+    score = 0.38 * exposure + 0.26 * contrast + 0.26 * detail + 0.10 * (1.0 - clipping)
+    score -= 0.22 * clipping + flat_penalty
+    return float(max(0.0, min(1.0, score)))
+
+
+def select_best(candidates: list[Candidate], count: int) -> list[Candidate]:
+    if count <= 0 or not candidates:
+        return []
+    ranked = list(candidates)
+    for c in ranked:
+        c.score = quality_score(c.features)
+    ranked.sort(key=lambda c: (c.score, c.features.get("edge_p90", 0.0), c.features["lum_std"]), reverse=True)
+    return ranked[:count]
+
+
 def _safe_name(path: str, rank: int, bucket: str) -> str:
     p = Path(path)
     stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in p.stem)[:80]
@@ -179,9 +214,60 @@ def _write_thumb(src: str, dst: str, long_edge: int = 360) -> bool:
         return False
 
 
+def _write_selection_csv(rows: list[dict], path: str) -> None:
+    import csv
+
+    fields = ["rank", "bucket", "score", "source_path", "copied_path", "thumb_path"]
+    with open(path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in fields})
+
+
+def _xmp_rating(score: float) -> int:
+    if score >= 0.78:
+        return 5
+    if score >= 0.64:
+        return 4
+    if score >= 0.50:
+        return 3
+    return 2
+
+
+def _write_xmp_sidecar(row: dict, copied_path: str) -> str:
+    xmp_path = str(Path(copied_path).with_suffix(".xmp"))
+    rating = _xmp_rating(float(row["score"]))
+    label = "AutoEdit Pick"
+    source = xml.sax.saxutils.escape(row["source_path"])
+    bucket = xml.sax.saxutils.escape(row["bucket"])
+    doc = f"""<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+      xmlns:dc="http://purl.org/dc/elements/1.1/"
+      xmp:Rating="{rating}"
+      xmp:Label="{label}">
+      <dc:description>
+        <rdf:Alt>
+          <rdf:li xml:lang="x-default">AutoEdit curation rank {row['rank']} · {bucket} · source: {source}</rdf:li>
+        </rdf:Alt>
+      </dc:description>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>
+"""
+    with open(xmp_path, "w") as fh:
+        fh.write(doc)
+    return os.path.abspath(xmp_path)
+
+
 def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = True,
            proxy_long_edge: int = 256, scan_limit: int | None = None,
-           copy_originals: bool = True) -> dict:
+           copy_originals: bool = True, mode: str = "diverse",
+           emit_xmp: bool = False) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     selected_dir = os.path.join(out_dir, "selected")
     thumbs_dir = os.path.join(out_dir, "thumbs")
@@ -189,7 +275,12 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
     os.makedirs(thumbs_dir, exist_ok=True)
 
     candidates = scan(input_dir, recursive=recursive, long_edge=proxy_long_edge, scan_limit=scan_limit)
-    selected = select_diverse(candidates, count)
+    if mode == "best":
+        selected = select_best(candidates, count)
+    elif mode == "diverse":
+        selected = select_diverse(candidates, count)
+    else:
+        raise ValueError(f"unknown curate mode: {mode}")
     rows = []
     skipped = []
     for cand in selected:
@@ -217,6 +308,8 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
             "score": round(cand.score, 4),
             "features": {k: round(v, 4) for k, v in cand.features.items()},
         })
+        if emit_xmp and copy_originals:
+            rows[-1]["xmp_path"] = _write_xmp_sidecar(rows[-1], copied)
 
     manifest = {
         "input_dir": os.path.abspath(input_dir),
@@ -227,11 +320,14 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
         "skipped_items": skipped,
         "copy_originals": copy_originals,
         "recursive": recursive,
+        "mode": mode,
+        "emit_xmp": emit_xmp,
         "items": rows,
     }
     manifest_path = os.path.join(out_dir, "candidates.json")
     with open(manifest_path, "w") as fh:
         json.dump(manifest, fh, indent=2)
+    _write_selection_csv(rows, os.path.join(out_dir, "selected.csv"))
     _write_contact_sheet(manifest, os.path.join(out_dir, "contact-sheet.html"))
     return manifest
 
@@ -270,7 +366,7 @@ def _write_contact_sheet(manifest: dict, path: str) -> None:
 <body>
   <header>
     <h1>AutoEdit curation</h1>
-    <p>{manifest['selected']} selected from {manifest['total_scanned']} scanned. Originals were copied, not moved.</p>
+    <p>{manifest['selected']} selected from {manifest['total_scanned']} scanned. Mode: {html.escape(manifest.get('mode', 'diverse'))}. Originals were copied, not moved.</p>
   </header>
   <main class="grid">
     {body}

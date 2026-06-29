@@ -161,6 +161,8 @@ def _cmd_curate(args) -> int:
         proxy_long_edge=args.analysis_long_edge,
         scan_limit=args.scan_limit,
         copy_originals=True,
+        mode=args.mode,
+        emit_xmp=args.emit_xmp,
     )
     print(
         f"\nCopied {manifest['selected']} of {manifest['total_scanned']} scanned photos to "
@@ -252,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_run_flags(run_p)
     run_p.set_defaults(func=_cmd_run)
 
-    cur_p = sub.add_parser("curate", help="copy a diverse photo subset for style training/review")
+    cur_p = sub.add_parser("curate", help="copy a photo subset for culling, style training, or review")
     cur_p.add_argument("input_dir")
     cur_p.add_argument("out_dir")
     cur_p.add_argument("--count", type=int, default=200,
@@ -263,6 +265,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="only analyze the first N supported files, useful for quick trials")
     cur_p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int, default=256,
                        help="proxy size used for curation features (default: 256)")
+    cur_p.add_argument("--mode", choices=["diverse", "best"], default="diverse",
+                       help="diverse = cover different looks; best = highest quality keepers")
+    cur_p.add_argument("--emit-xmp", dest="emit_xmp", action="store_true",
+                       help="write XMP sidecars next to copied selections with rating/label metadata")
     cur_p.set_defaults(func=_cmd_curate)
 
     doc_p = sub.add_parser("doctor", help="report device + backend availability")

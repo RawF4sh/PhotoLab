@@ -56,6 +56,42 @@ def test_curate_non_recursive_scans_top_level_only(tmp_path):
     assert paths == [str(src / "top.jpg")]
 
 
+def test_curate_best_mode_scores_likely_keepers(tmp_path):
+    src = tmp_path / "library"
+    src.mkdir()
+    _write_rgb(src / "flat_dark.jpg", (18, 18, 18))
+
+    textured = np.zeros((48, 64, 3), dtype=np.uint8)
+    textured[:, :32] = (35, 70, 120)
+    textured[:, 32:] = (225, 210, 170)
+    Image.fromarray(textured, mode="RGB").save(src / "keeper.jpg")
+
+    out = tmp_path / "curated"
+    manifest = curate.curate(str(src), str(out), count=1, mode="best")
+
+    assert manifest["mode"] == "best"
+    assert manifest["selected"] == 1
+    assert manifest["items"][0]["source_path"].endswith("keeper.jpg")
+    assert (out / "selected.csv").exists()
+
+
+def test_curate_can_emit_xmp_sidecars_next_to_copies(tmp_path):
+    src = tmp_path / "library"
+    src.mkdir()
+    _write_rgb(src / "one.jpg", (80, 130, 190))
+
+    out = tmp_path / "curated"
+    manifest = curate.curate(str(src), str(out), count=1, mode="best", emit_xmp=True)
+
+    assert manifest["emit_xmp"] is True
+    xmp_path = manifest["items"][0]["xmp_path"]
+    assert xmp_path.endswith(".xmp")
+    assert os.path.exists(xmp_path)
+    text = open(xmp_path).read()
+    assert "AutoEdit Pick" in text
+    assert "xmp:Rating" in text
+
+
 def test_curate_skips_missing_source_during_copy(tmp_path):
     src = tmp_path / "library"
     src.mkdir()
@@ -73,6 +109,8 @@ def test_curate_skips_missing_source_during_copy(tmp_path):
         "bright_frac": 0.0,
         "snow_frac": 0.0,
         "aspect": 1.5,
+        "edge_mean": 0.0,
+        "edge_p90": 0.0,
     }
     original_scan = curate.scan
     try:
@@ -93,8 +131,9 @@ def test_cli_curate_command(tmp_path):
     _write_rgb(src / "two.jpg", (220, 180, 90))
     out = tmp_path / "curated"
 
-    rc = main(["curate", str(src), str(out), "--count", "1"])
+    rc = main(["curate", str(src), str(out), "--count", "1", "--mode", "best", "--emit-xmp"])
 
     assert rc == 0
-    assert len(list((out / "selected").iterdir())) == 1
+    assert len([p for p in (out / "selected").iterdir() if p.suffix.lower() != ".xmp"]) == 1
     assert (out / "candidates.json").exists()
+    assert len(list((out / "selected").glob("*.xmp"))) == 1
