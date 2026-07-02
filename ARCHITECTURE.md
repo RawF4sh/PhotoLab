@@ -57,17 +57,25 @@ truncate it):
 
 1. **Camera RAW** (`.dng/.cr2/.cr3/.nef/.arw/.rw2/…`) → demosaiced at 16-bit via **rawpy/libraw**,
    using camera white balance, `no_auto_bright` (feed the true exposure — AutoEdit decides
-   brightness), sRGB-ish gamma.
-2. **16-bit TIFF** via **tifffile** (preserves 48-bit RGB Pillow would truncate).
+   brightness), sRGB-ish gamma. EXIF priors are still read best-effort via Pillow.
+2. **16-bit TIFF** via **tifffile** (preserves 48-bit RGB Pillow would truncate). The EXIF
+   orientation tag is applied by hand here (`_apply_exif_orientation`) since tifffile returns raw
+   pixels — a rotated TIFF loads upright on every decode path.
 3. Pillow native 16-bit single-channel modes.
-4. **8-bit path**: embedded **ICC profile → sRGB** (AdobeRGB/Display-P3 JPEGs) via `ImageCms`,
-   honor the EXIF orientation tag, then to RGB.
+4. **8-bit path**: embedded **ICC profile → sRGB** (AdobeRGB/Display-P3 JPEGs) via `ImageCms` —
+   transforming the *original* mode, so CMYK-with-profile converts correctly — honor the EXIF
+   orientation tag, then to RGB.
 
 **EXIF priors** are read into a small normalized dict — `iso`, `exposure_ev` — and threaded through
 stats so rules can reference camera context (e.g. ease sharpening at high ISO). Missing EXIF →
 neutral defaults. `is_raw(path)` / `is_supported(path)` are the public helpers used by pairing.
 
-Output: `save_image` writes JPEG (q92, no chroma subsampling) or **16-bit TIFF** (via tifffile).
+**Proxies stay float**: `downscale_long_edge` resizes the float channels directly (never a
+uint8+dither round-trip), so 16-bit sources keep their precision in analysis proxies.
+
+Output: `save_image` writes JPEG (q95 default, no chroma subsampling — preserves the anti-banding
+dither) or **16-bit TIFF** (via tifffile). Writes are **atomic** (temp file + `os.replace`): a crash
+mid-write leaves the old file or nothing, never a truncated image a resume would mistake as done.
 
 ---
 
@@ -301,13 +309,16 @@ Three independent safety layers, all data-driven:
 
 - **Region policies** (`policies.py`) — hard rails enforced *after* the decider on whatever the
   rules/LLM proposed: drop `forbidden` ops and clamp to `max` magnitudes per concept (e.g. snow
-  can't be tinted, skin can't be over-clarified).
+  can't be tinted, skin can't be over-clarified). **Re-enforced after reference tuning** too — the
+  reference tuner mutates region settings later in the pipeline, and the rails must win over it.
 - **Skin-safe guard** (`pipeline.py::_build_guard` + `edit/apply.py`) — holds aggressive *global*
   ops off `guard_global` concepts (skin/snow). The guarded op list is `rules.toml [guard].ops`.
 - **Oversaturation gate** (`edit/gates.py::chroma_guard`) — final pass capping each pixel's chroma
-  increase vs the source (`max_chroma_increase`, default +30%); snow/skin and near-white highlights
-  held tighter. This is what keeps results true-to-life. `gates.assess` then scores the **edited**
-  output → quality score + review flag.
+  increase vs the source (`rules.toml [guard].max_chroma_increase`, default +30%); snow/skin and
+  near-white highlights held tighter, with the feathered guard mask tightening the ceiling
+  *gradually* at region edges. This is what keeps results true-to-life. `gates.assess` then scores
+  the **edited** output → quality score + review flag; its thresholds are data too
+  (`rules.toml [quality_gate]`, defaults in `gates.GATE_DEFAULTS`).
 
 ---
 
@@ -333,8 +344,15 @@ writes JPEG or 16-bit TIFF) plus a **sidecar JSON** (`Result.model_dump`). The s
 first-class — scene + confidence, detected concepts (present + score + coverage), global + per-region
 settings, compositional moves, post-edit stats, quality score / needs-review / reasons, batch group,
 decider/model, timing, and the **`notes` "why" list** (human-readable rationale: which rules fired,
-guard/gate actions, intent terms, batch normalization). The batch also writes a `run.json` manifest
-(scene mix, concept hits, failures, duration).
+guard/gate actions, intent terms, batch normalization). The reported settings are the ones that
+**actually rendered the pixels** — when the banding gate damps and re-applies, the damped values are
+what the sidecar shows. The batch also writes a `run.json` manifest (scene mix, concept hits,
+failures, duration).
+
+Same-stem sources (a camera's `IMG_001.dng` + `IMG_001.jpg`, or same-named files across folders)
+**never overwrite each other**: `output_paths` takes a per-batch `taken` set and disambiguates with
+a `-2`/`-3` suffix, sidecar included. Both image and sidecar writes are atomic (`os.replace`), so
+`--resume` (which keys on sidecar existence) can't mistake a partial file for a finished one.
 
 ---
 
@@ -342,7 +360,8 @@ guard/gate actions, intent terms, batch normalization). The batch also writes a 
 
 Enumerate the folder → build the pipeline once → process with **per-image error isolation** (one bad
 photo never aborts the run) → optional `resume` (skip photos whose sidecar exists) → write manifest.
-Pass 1 of consistency runs here before the loop.
+Pass 1 of consistency runs here before the loop; `--no-consistent` skips it (each photo judged in
+isolation), mirroring the UI's Settings toggle.
 
 ---
 
@@ -360,24 +379,28 @@ run drawer · review/settings modals.
 | `GET /api/styles`, `/api/presets` | List styles / concept presets. |
 | `GET /api/list?dir=` | Flat supported-image list (classic UI). |
 | `GET /api/groups?dir=` | **RAW+JPEG pairs collapsed** into one logical photo (Studio UI). |
-| `GET /api/thumb?path=&px=` | Fast JPEG thumbnail (decode + downscale, no pipeline). |
-| `GET /api/pick?kind=` | Native folder/file picker. |
-| `POST /api/preview` | Single-image before/after (JPEG data-URLs) + decision sidecar. |
+| `GET /api/thumb?path=&px=` | Fast JPEG thumbnail (decode + downscale, no pipeline; `px` clamped ≤2048). |
+| `POST /api/pick?kind=` | Native folder/file picker (POST — it registers a trust-boundary root). |
+| `POST /api/preview` | Single-image before/after (lossless WebP data-URLs) + decision sidecar. |
 | `POST /api/jobs`, `GET /api/jobs/{id}`, `POST .../control` | Background batch with live progress. |
 
 ### Trust boundary & safety
 
 The API takes paths from HTTP requests, so every request path must descend from a folder the user
-chose via the **native picker** this session (`ensure_allowed`; `AUTOEDIT_ALLOW_ANY_PATH=1` opts
-out). Mutating requests are origin-checked to localhost; `serve` refuses non-loopback hosts without
-`--unsafe-network`. A **resident segmenter** per `(backend, device)` (cached + the per-concept cache)
-means one model load per process; an `INFERENCE_LOCK` serializes GPU inference.
+chose via the **native picker** this session (`ensure_allowed` — empty paths rejected, symlinks and
+`..` resolved via realpath; `AUTOEDIT_ALLOW_ANY_PATH=1` opts out). Two request guards: a
+**Host-header check** on every method rejects non-loopback hosts (DNS-rebinding defense — a hostile
+page whose domain re-resolves to 127.0.0.1 would otherwise read responses), and mutating requests
+are additionally **Origin-checked** to localhost. `serve` refuses non-loopback binds without
+`--unsafe-network`. A **resident segmenter** per `(backend, device)` (cached + the per-concept
+cache) means one model load per process; an `INFERENCE_LOCK` serializes GPU inference.
 
 ### Preview resolution
 
-`preview()` applies on a **2048px** proxy and ships before/after as **1600px JPEG q90** (Lanczos) —
-sharp but small (~200–500 KB). Segmentation stays at analysis size and is cached, so the larger
-apply doesn't re-pay SAM cost on a re-preview.
+`preview()` applies at **full resolution** (bounded to a 4096px long edge for monster files) and
+ships before/after capped at 2560px as **lossless WebP** — pixel-exact like PNG (JPEG's DCT would
+quantize away the anti-banding dither and re-contour skies) but a much smaller payload.
+Segmentation stays at analysis size and is cached, so a re-preview doesn't re-pay SAM cost.
 
 ### RAW+JPEG pairing (UI)
 

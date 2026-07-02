@@ -61,6 +61,10 @@ def apply_image(
 
     if global_settings:
         if guard_mask is not None and guard_ops:
+            # Two full-frame renders by design: the kept ops include spatial ones (dehaze
+            # airlight, clarity/sharpen blur radii scale with image size), so rendering the
+            # guarded pass on a mask bounding-box crop would change their results. Correctness
+            # over the ~2x cost; the kept==∅ case already skips the second render.
             full = ops.apply_ops(out, global_settings)
             kept = {k: v for k, v in global_settings.items() if k not in guard_ops}
             guarded = ops.apply_ops(out, kept) if kept else out

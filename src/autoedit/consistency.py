@@ -18,7 +18,9 @@ from .imageio import downscale_long_edge, load_image, luma
 
 # A pixel-brightness gap wider than this starts a new lighting group (0..1 luma).
 _GROUP_GAP = 0.08
-# Max brightness nudge applied to pull an image toward its group (EV), so we never override the look.
+# Max brightness nudge toward the group. UNITS: this is a display-referred luma delta (0..1)
+# fed to the exposure op as if it were EV — not true photometric stops. At this magnitude the
+# approximation is fine (it only removes drift), but don't read the value as camera EV.
 _MAX_BIAS_EV = 0.15
 
 
@@ -55,5 +57,6 @@ def plan_groups(lums: list[tuple[str, float]], gap: float = _GROUP_GAP) -> dict[
 
 
 def exposure_bias(image_lum: float, target_lum: float) -> float:
-    """Bounded EV nudge to pull an image's brightness toward its group target."""
+    """Bounded exposure nudge toward the group target — a luma delta used as an EV
+    approximation (see _MAX_BIAS_EV note on units)."""
     return float(np.clip(target_lum - image_lum, -_MAX_BIAS_EV, _MAX_BIAS_EV))

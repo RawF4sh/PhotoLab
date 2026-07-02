@@ -11,6 +11,7 @@ An empty/all-zero settings dict is a strict no-op (the identity test depends on 
 from __future__ import annotations
 
 import numpy as np
+from PIL import Image as PILImage
 
 from ..imageio import linear_to_srgb, luma, srgb_to_linear
 from .filters import box_min, gaussian_blur, guided_filter
@@ -55,6 +56,7 @@ OP_BOUNDS = {
 
 _GRADE_KEYS = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
 _HSL_KEYS = ("hsl_skin_sat", "hsl_green_sat", "hsl_green_lum", "hsl_blue_sat")
+_DEHAZE_PROXY_EDGE = 1400
 
 
 def _pixsat(rgb: np.ndarray) -> np.ndarray:
@@ -64,6 +66,24 @@ def _pixsat(rgb: np.ndarray) -> np.ndarray:
     nz = mx > _EPS
     out[nz] = (mx[nz] - mn[nz]) / mx[nz]
     return out
+
+
+def _resize_rgb(rgb: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    # float per-channel resize (no uint8 round-trip) — the dehaze proxy feeds airlight /
+    # transmission estimation, where 8-bit quantization would coarsen the haze model
+    chans = [
+        np.asarray(
+            PILImage.fromarray(np.ascontiguousarray(rgb[..., c]).astype(np.float32), mode="F")
+            .resize(size, PILImage.BILINEAR),
+            dtype=np.float32)
+        for c in range(3)
+    ]
+    return np.stack(chans, axis=-1)
+
+
+def _resize_float(a: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    pil = PILImage.fromarray(a.astype(np.float32), mode="F")
+    return np.asarray(pil.resize(size, PILImage.BILINEAR)).astype(np.float32)
 
 
 def exposure(rgb: np.ndarray, ev: float) -> np.ndarray:
@@ -150,37 +170,52 @@ def dehaze(rgb: np.ndarray, amt: float) -> np.ndarray:
         return rgb * (1.0 + a * 0.5) + (-a * 0.5) * 0.85
 
     h, w = rgb.shape[0], rgb.shape[1]
-    patch = max(1, int(round(0.006 * max(h, w))))  # ~dark-channel patch radius
+    long_edge = max(h, w)
+    if long_edge > _DEHAZE_PROXY_EDGE:
+        scale = _DEHAZE_PROXY_EDGE / long_edge
+        work_w = max(1, round(w * scale))
+        work_h = max(1, round(h * scale))
+        work = _resize_rgb(rgb, (work_w, work_h))
+    else:
+        work = rgb
+        work_h, work_w = h, w
+
+    patch = max(1, int(round(0.006 * max(work_h, work_w))))  # ~dark-channel patch radius
     omega = 0.92                                    # how much haze the *model* removes (fixed); amt blends
     t0 = 0.12                                       # transmission floor — guards the divide in dense haze
 
-    dark = box_min(rgb.min(axis=2), patch)          # dark channel of the input
+    dark = box_min(work.min(axis=2), patch)         # dark channel of the input
     # atmospheric light A: mean colour of the brightest ~0.1% of dark-channel pixels (≥50 px)
     flat = dark.reshape(-1)
     k = max(50, int(flat.size * 0.001))
     idx = np.argpartition(flat, -k)[-k:]
-    pix = rgb.reshape(-1, 3)[idx]
+    pix = work.reshape(-1, 3)[idx]
     A = np.clip(pix.mean(axis=0), 0.5, 1.0).astype(np.float32)  # bounded so dark scenes don't blow up
 
     # transmission from the normalised dark channel, refined edge-aware against luma
-    t = 1.0 - omega * box_min((rgb / A).min(axis=2), patch)
-    t = guided_filter(luma(rgb), t.astype(np.float32), max(patch * 4, 8), eps=1e-3)
-    t = np.clip(t, t0, 1.0)[..., None]
-
-    recovered = (rgb - A) / t + A                   # invert the scattering model
+    t = 1.0 - omega * box_min((work / A).min(axis=2), patch)
+    t = guided_filter(luma(work), t.astype(np.float32), max(patch * 4, 8), eps=1e-3)
+    t = np.clip(t, t0, 1.0)
 
     # Smooth, bright, low-saturation areas (foggy skies, mist, glassy water highlights) often
     # have very few real source levels. A full dark-channel dehaze stretches those levels into
     # visible contour lines, so taper the blend only in those fragile regions while leaving
     # textured mountains/trees and darker water at full strength.
-    lum = luma(rgb)
-    sigma = 0.006 * max(h, w) + 1.0
+    lum = luma(work)
+    sigma = 0.006 * max(work_h, work_w) + 1.0
     detail = np.abs(lum - gaussian_blur(lum, sigma))
     smooth = np.clip((0.018 - detail) / 0.018, 0.0, 1.0)
     bright = np.clip((lum - 0.50) / 0.30, 0.0, 1.0)
-    neutral = np.clip((0.22 - _pixsat(rgb)) / 0.22, 0.0, 1.0)
+    neutral = np.clip((0.22 - _pixsat(work)) / 0.22, 0.0, 1.0)
     fragile = smooth * bright * neutral
     blend = a * (1.0 - 0.94 * fragile)
+
+    if work is not rgb:
+        t = _resize_float(t, (w, h))
+        blend = _resize_float(blend, (w, h))
+    t = np.clip(t, t0, 1.0)[..., None]
+
+    recovered = (rgb - A) / t + A                   # invert the scattering model
 
     out = rgb + blend[..., None] * (np.clip(recovered, 0.0, 1.0) - rgb)
     return out.astype(np.float32)

@@ -236,6 +236,16 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .chip .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 .range{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;background:var(--line-2);outline:none;margin:8px 0 2px}
 .range::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg)}
+.ck-row{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);cursor:pointer}
+.ck-row input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+/* review labels (M2) */
+.lbl-row{display:flex;gap:6px;margin-top:8px}
+.lbtn{flex:1;height:25px;border-radius:5px;border:1px solid var(--line-2);background:var(--elev);color:var(--ink-2);font-size:11px;font-weight:650;cursor:pointer;transition:.12s}
+.lbtn.keep.on{background:rgba(92,192,138,.16);border-color:var(--ok);color:var(--ok)}
+.lbtn.rej.on{background:rgba(224,106,94,.16);border-color:var(--danger);color:var(--danger)}
+.lbl-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+.lbl-tags .chip{padding:2px 7px;font-size:10px;font-weight:500}
+.rcard.var-best{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 
 /* small input */
 .tinput{width:100%;height:30px;background:var(--elev);border:1px solid var(--line-2);color:var(--ink);border-radius:var(--r);
@@ -364,9 +374,17 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <button data-v="split" class="on">Split</button><button data-v="side">Side</button></div>
     <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" title="Show detected edit regions on the split preview" style="display:none">
       <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
+    <button class="tbtn" id="variantsBtn" aria-label="Generate variants" title="Render several recipes for this photo, scored + ranked; apply the best" style="display:none">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Variants</button>
     <div class="tdiv"></div>
     <div class="seg" id="runFmtSeg" title="Output format">
       <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
+    <button class="tbtn" id="cullBtn" aria-label="Cull a folder" title="Copy a curated subset of a folder for review/training (originals untouched)">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull</button>
+    <button class="tbtn" id="reviewBtn" aria-label="Review labels" title="Review the current folder and save keep/reject labels for training">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Review</button>
+    <button class="tbtn" id="datasetBtn" aria-label="Build training dataset" title="Pair originals with edited targets and validate them for training (copy-only)">
+      <svg viewBox="0 0 24 24"><path d="M4 7h7v10H4zM13 7h7v10h-7z"/></svg>Dataset</button>
     <button class="tbtn primary" id="runBtn" disabled aria-label="Run batch">
       <svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg><span class="lbl">Run batch</span></button>
     <button class="iconbtn" id="settingsBtn" aria-label="Settings">
@@ -447,6 +465,17 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <input type="range" class="range" id="palStrength" min="0" max="100" value="80"/>
           <div class="tip">Regional split-tone in OKLab — shadows/mids/highlights tinted, whites &amp; skin/snow held neutral. "Auto" follows the intent text.</div>
         </div></div>
+      <div class="dsec collap closed"><div class="dsec-h" data-collap><h4>Reference</h4>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="dsec-b">
+          <div style="display:flex;gap:7px">
+            <button class="minibtn" id="refLoad" style="flex:1">Load reference photo…</button>
+            <button class="minibtn" id="refClear" title="Clear">✕</button></div>
+          <div class="tip" id="refName" style="margin-top:6px">none — match a hero edit's look region-by-region</div>
+          <div class="adj" style="margin-top:9px"><span class="k">Match strength</span><span class="v" id="refStrengthVal">70</span></div>
+          <input type="range" class="range" id="refStrength" min="0" max="100" value="70"/>
+          <div class="tip">Pushes each region (sky, water, mountain, foliage…) toward the same region's look in the reference. Non-generative — no content is copied.</div>
+        </div></div>
       <div class="dsec collap"><div class="dsec-h" data-collap><h4>Concepts</h4>
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
         <div class="dsec-b"><div id="concepts"><div class="tip">Open a photo to detect regions.</div></div>
@@ -496,9 +525,59 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
   <div class="scrim" id="reviewScrim"><div class="modal">
     <div class="modal-h"><h3 id="reviewTitle">Review &amp; export</h3>
       <div style="display:flex;gap:8px">
+        <span class="tip" id="reviewLblStatus"></span>
+        <button class="minibtn" id="reviewPick">Folder…</button>
         <button class="minibtn" id="reviewClose">Close</button>
+        <button class="tbtn" id="saveLabelsBtn" title="Save keep/reject + tags for training (M2)"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Save labels</button>
         <button class="tbtn primary" id="exportBtn"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M5 21h14"/></svg>Export</button></div></div>
-    <div class="modal-b"><div class="rgrid" id="reviewGrid"></div></div>
+    <div class="modal-b">
+      <div class="note" style="margin-bottom:12px"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+        Labels are append-only training notes. They do not move, rename, or delete photos.</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <span class="folder" id="reviewDir" style="max-width:520px">No review folder loaded</span>
+        <span class="sp" style="flex:1"></span>
+        <span class="bdg b-done"><i></i><span id="reviewKeep">0</span> keep</span>
+        <span class="bdg b-fail"><i></i><span id="reviewReject">0</span> reject</span>
+        <span class="bdg b-review"><i></i><span id="reviewTodo">0</span> unlabeled</span>
+      </div>
+      <div class="rgrid" id="reviewGrid"></div>
+    </div>
+  </div></div>
+
+  <!-- ===== culling modal ===== -->
+  <div class="scrim" id="cullScrim"><div class="modal" style="width:min(760px,92vw)">
+    <div class="modal-h"><h3>Cull photos</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="cullClose">Close</button>
+        <button class="tbtn primary" id="cullRun"><svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg>Run cull</button></div></div>
+    <div class="modal-b">
+      <div class="field"><label>Source folder</label>
+        <div style="display:flex;gap:7px"><input class="tinput" id="cullInput" placeholder="choose a folder" readonly>
+          <button class="minibtn" id="cullPickInput">Choose…</button></div></div>
+      <div class="field"><label>Output folder <span class="muted">— copies selected photos here</span></label>
+        <div style="display:flex;gap:7px"><input class="tinput" id="cullOut" placeholder="defaults inside source folder">
+          <button class="minibtn" id="cullPickOut">Choose…</button></div></div>
+      <div class="field"><label>Selection mode</label>
+        <div class="seg" id="cullModeSeg" style="width:300px">
+          <button class="on" data-cmode="best">Best</button>
+          <button data-cmode="diverse">Diverse</button>
+          <button data-cmode="aesthetic">Aesthetic</button></div>
+        <div class="tip" style="margin-top:6px">Best uses exposure/detail heuristics. Diverse covers different looks. Aesthetic uses a trained JSON scorer.</div></div>
+      <div class="field" id="cullModelRow" style="display:none"><label>Aesthetic model JSON</label>
+        <div style="display:flex;gap:7px"><input class="tinput" id="cullModel" placeholder="train-aesthetic output" readonly>
+          <button class="minibtn" id="cullPickModel">Choose…</button></div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label>Count</label><input class="tinput" id="cullCount" type="number" min="1" value="200"></div>
+        <div class="field"><label>Scan limit <span class="muted">optional</span></label><input class="tinput" id="cullScanLimit" type="number" min="0" placeholder="all"></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-bottom:14px">
+        <label class="ck-row"><input type="checkbox" id="cullRecursive" checked>Recursive scan</label>
+        <label class="ck-row"><input type="checkbox" id="cullXmp">Write XMP ratings</label>
+      </div>
+      <div class="note"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+        Originals are never moved or renamed. AutoEdit writes copies, thumbnails, a contact sheet, selected.csv, and candidates.json.</div>
+      <div id="cullStatus" class="tip" style="margin-top:12px"></div>
+      <div id="cullResults" style="display:none;margin-top:12px"></div>
+    </div>
   </div></div>
 
   <!-- ===== settings modal ===== -->
@@ -514,6 +593,13 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <div class="seg" id="consistSeg" style="width:160px"><button class="on" data-c="1">On</button>
           <button data-c="0">Off</button></div>
         <div class="tip" style="margin-top:6px">Anchors each photo's exposure toward its lighting group (±0.15 EV) so the folder doesn't drift in brightness photo-to-photo.</div></div>
+      <div class="field"><label>Edit engine <span class="muted">— how the edit is decided</span></label>
+        <div class="seg" id="engineSeg" style="width:200px"><button class="on" data-eng="rules">Rules</button>
+          <button data-eng="learned">Learned</button></div>
+        <div id="recipeRow" style="display:none;margin-top:8px">
+          <button class="minibtn" id="recipeLoad">Load recipe model…</button>
+          <span class="tip" id="recipeName" style="margin-left:8px">no model — falls back to rules</span></div>
+        <div class="tip" style="margin-top:6px">Learned predicts the global edit from a model trained on your approved pairs (build a Dataset, then <code>train-recipe</code>). Per-region edits + all safety gates stay the same; falls back to rules with no model.</div></div>
       <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
       <div class="kv"><b>RAW decode</b><span class="v">rawpy · .dng/.cr2/.nef/.arw</span></div>
       <div class="kv"><b>Cache</b><span class="v">~/Library/Caches/autoedit</span></div>
@@ -521,6 +607,40 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <input class="tinput" type="password" placeholder="sk-ant-… (stored locally)" style="height:34px"/></div>
       <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
         Runs fully on-device. Only a thumbnail + stats leave the machine, and only if you turn the planner on — full-resolution pixels never do.</div>
+    </div>
+  </div></div>
+
+  <!-- ===== dataset modal (M3) ===== -->
+  <div class="scrim" id="dsScrim"><div class="modal" style="width:min(960px,95vw)">
+    <div class="modal-h"><h3>Build training dataset</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="dsClose">Close</button></div></div>
+    <div class="modal-b">
+      <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        Pairs your <b>originals</b> with your <b>edited targets</b> by filename, then runs preservation checks so generated / content-changed edits are rejected — only real photographic edits become training data. Copy-only.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0 6px">
+        <div><button class="tbtn" id="dsPickO" style="width:100%"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Originals folder…</button>
+          <div class="folder" id="dsOrigDir" style="margin-top:5px">Not chosen</div></div>
+        <div><button class="tbtn" id="dsPickT" style="width:100%"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Edited targets folder…</button>
+          <div class="folder" id="dsTgtDir" style="margin-top:5px">Not chosen</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;margin:4px 0 12px">
+        <label class="ck-row"><input type="checkbox" id="dsRecursive"/> Scan subfolders</label>
+        <label class="ck-row"><input type="checkbox" id="dsApprove"/> Keep all pairs (skip rejection)</label>
+        <span class="sp" style="flex:1"></span>
+        <button class="tbtn" id="dsValidate" disabled>Validate</button>
+        <button class="tbtn primary" id="dsBuild" disabled><svg viewBox="0 0 24 24"><path d="M4 7h7v10H4zM13 7h7v10h-7z"/></svg>Build dataset</button></div>
+      <div class="tip" id="dsStatus"></div>
+      <div class="rgrid" id="dsGrid" style="margin-top:14px"></div>
+    </div>
+  </div></div>
+
+  <!-- ===== variants modal (M7) ===== -->
+  <div class="scrim" id="varScrim"><div class="modal" style="width:min(1140px,96vw)">
+    <div class="modal-h"><h3 id="varTitle">Variants</h3>
+      <div style="display:flex;gap:8px"><button class="minibtn" id="varClose">Close</button></div></div>
+    <div class="modal-b">
+      <div class="tip" id="varStatus"></div>
+      <div class="rgrid" id="varGrid" style="margin-top:12px"></div>
     </div>
   </div></div>
 
@@ -542,7 +662,12 @@ const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural'
   prompt:'',            /* free-text look intent ("warm sunset, moody") */
   palette:'',           /* '' = auto (infer from intent); else a palettes.toml name */
   paletteStrength:0.8,  /* 0..1 regional split-tone grade strength */
+  reference:'',         /* path to a reference photo to match region-by-region (M5) */
+  referenceStrength:0.7,
+  decider:'rules',      /* rules | learned (M6 recipe predictor) */
+  recipeModel:'',       /* path to a trained recipe model when decider=learned */
   consistent:true,      /* anchor exposure across the batch */
+  cull:{input:null,out:'',mode:'best',count:200,scanLimit:'',recursive:true,emitXmp:false,model:''},
   hasPairs:false};
 const real=()=>STATE.files.length>0;
 const thumbURL=(p,px=360,rev='')=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p)+(rev?'&v='+encodeURIComponent(rev):'');
@@ -551,6 +676,8 @@ const extOf=n=>{const i=n.lastIndexOf('.');return i<0?'':n.slice(i+1).toUpperCas
 const editOptions=()=>({
   style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
   palette:STATE.palette,palette_strength:STATE.paletteStrength,
+  reference:STATE.reference,reference_strength:STATE.referenceStrength,
+  decider:STATE.decider,recipe_model:STATE.recipeModel,
   backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent
 });
 
@@ -618,6 +745,14 @@ $('#palStrength').addEventListener('input',e=>{STATE.paletteStrength=(+e.target.
   $('#palStrengthVal').textContent=e.target.value;markPreviewStale();});
 $('#palStrength').addEventListener('change',()=>markPreviewStale());
 
+/* ---- reference matching (M5) ------------------------------------------- */
+$('#refLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file',{method:'POST'})).json();if(!path)return;
+  STATE.reference=path;$('#refName').textContent=path.split('/').pop();markPreviewStale();}catch(e){alert(e);}};
+$('#refClear').onclick=()=>{STATE.reference='';$('#refName').textContent='none — match a hero edit’s look region-by-region';markPreviewStale();};
+$('#refStrength').addEventListener('input',e=>{STATE.referenceStrength=(+e.target.value)/100;
+  $('#refStrengthVal').textContent=e.target.value;markPreviewStale();});
+$('#refStrength').addEventListener('change',()=>markPreviewStale());
+
 /* ---- filmstrip ---------------------------------------------------------- */
 function renderFilm(){const f=$('#film');f.innerHTML='';
   if(!real()){f.appendChild(el('div','empty',
@@ -655,7 +790,7 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
   const p=STATE.files[i];
   $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
-  $('#runBtn').disabled=false;
+  $('#runBtn').disabled=false;$('#variantsBtn').style.display='';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
   showSourceOnly(true);}
@@ -786,8 +921,7 @@ $('#addConcept').onclick=()=>{const v=$('#newConcept').value.trim();if(!v)return
   chip.onclick=()=>chip.classList.toggle('on');$('#concepts').appendChild(chip);$('#newConcept').value='';};
 
 /* ---- pickers ------------------------------------------------------------ */
-async function pickFolder(){if(!STATE.served){standaloneNote();return;}
-  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+async function loadFolderPath(path){
     const groups=await(await fetch('/api/groups?dir='+encodeURIComponent(path))).json();
     if(groups.error){alert(groups.error);return;}
     if(!groups.length){alert('No supported images found in that folder.');return;}
@@ -800,9 +934,13 @@ async function pickFolder(){if(!STATE.served){standaloneNote();return;}
     $('#viewseg').style.display='';$('#maskBtn').style.display='';$('#selbar').style.display='';
     $('#preferWrap').style.display=STATE.hasPairs?'':'none';
     renderFilm();syncRun();selectPhoto(0);
+}
+async function pickFolder(){if(!STATE.served){standaloneNote();return;}
+  try{const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
+    await loadFolderPath(path);
   }catch(e){alert('Could not open folder: '+e);}}
 async function pickSingle(){if(!STATE.served){standaloneNote();return;}
-  try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+  try{const {path}=await(await fetch('/api/pick?kind=file',{method:'POST'})).json();if(!path)return;
     const name=path.split('/').pop(),raw=/\.(dng|cr2|cr3|nef|nrw|arw|sr2|srf|raf|orf|rw2|pef|srw|raw|3fr|mrw|dcr|kdc)$/i.test(name);
     STATE.dir=null;STATE.mode='single';STATE.run.clear();STATE.hasPairs=false;
     STATE.files=[mkItem({stem:name.replace(/\.[^.]+$/,''),raw:raw?name:null,pixel:raw?null:name,members:[{name,kind:raw?'raw':'pixel'}]},'')];
@@ -818,6 +956,79 @@ $('#preferSeg').addEventListener('click',e=>{const b=e.target.closest('[data-pre
   $('#preferSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
   STATE.preferRaw=b.dataset.pref==='raw';reprefer();});
 function standaloneNote(){$('#folderName').textContent='Launch with `autoedit ui` for live photos';}
+
+/* ---- culling ------------------------------------------------------------- */
+function defaultCullOut(input){return input?input.replace(/\/+$/,'')+'/autoedit-curated':'';}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function syncCullForm(){
+  const c=STATE.cull;
+  $('#cullInput').value=c.input||'';
+  $('#cullOut').value=c.out||'';
+  $('#cullCount').value=c.count||200;
+  $('#cullScanLimit').value=c.scanLimit||'';
+  $('#cullRecursive').checked=!!c.recursive;
+  $('#cullXmp').checked=!!c.emitXmp;
+  $('#cullModel').value=c.model||'';
+  $('#cullModeSeg').querySelectorAll('[data-cmode]').forEach(b=>b.classList.toggle('on',b.dataset.cmode===c.mode));
+  $('#cullModelRow').style.display=c.mode==='aesthetic'?'':'none';
+}
+function openCull(){
+  if(STATE.dir&&!STATE.cull.input){
+    STATE.cull.input=STATE.dir;
+    STATE.cull.out=defaultCullOut(STATE.dir);
+  }
+  $('#cullStatus').textContent=STATE.cull.input?'Ready to copy selected photos.':'Choose a source folder.';
+  $('#cullResults').style.display='none';
+  syncCullForm();
+  $('#cullScrim').classList.add('open');
+}
+$('#cullBtn').onclick=openCull;
+$('#cullClose').onclick=()=>$('#cullScrim').classList.remove('open');
+$('#cullPickInput').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
+  const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
+  STATE.cull.input=path;STATE.cull.out=defaultCullOut(path);syncCullForm();};
+$('#cullPickOut').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
+  const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
+  STATE.cull.out=path;syncCullForm();};
+$('#cullPickModel').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
+  const {path}=await(await fetch('/api/pick?kind=json',{method:'POST'})).json();if(!path)return;
+  STATE.cull.model=path;syncCullForm();};
+$('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-cmode]');if(!b)return;
+  STATE.cull.mode=b.dataset.cmode;syncCullForm();});
+['cullOut','cullCount','cullScanLimit'].forEach(id=>$('#'+id).addEventListener('input',e=>{
+  if(id==='cullOut')STATE.cull.out=e.target.value;
+  if(id==='cullCount')STATE.cull.count=+e.target.value||200;
+  if(id==='cullScanLimit')STATE.cull.scanLimit=e.target.value;
+}));
+$('#cullRecursive').onchange=e=>STATE.cull.recursive=e.target.checked;
+$('#cullXmp').onchange=e=>STATE.cull.emitXmp=e.target.checked;
+$('#cullRun').onclick=async()=>{
+  const c=STATE.cull;
+  if(!c.input){alert('Choose a source folder first.');return;}
+  if(c.mode==='aesthetic'&&!c.model){alert('Choose an aesthetic model JSON first.');return;}
+  $('#cullRun').disabled=true;$('#cullStatus').textContent='Scanning and copying selected photos…';
+  $('#cullResults').style.display='none';
+  try{
+    const payload={input_dir:c.input,out_dir:c.out||defaultCullOut(c.input),mode:c.mode,count:c.count||200,
+      scan_limit:c.scanLimit?+c.scanLimit:null,recursive:c.recursive,emit_xmp:c.emitXmp,aesthetic_model:c.model||null};
+    const res=await(await fetch('/api/curate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})).json();
+    if(res.error){$('#cullStatus').textContent=res.error;return;}
+    const m=res.manifest||{};
+    $('#cullStatus').textContent=`Copied ${m.selected||0} of ${m.total_scanned||0} scanned photos.`;
+    $('#cullResults').style.display='';
+    $('#cullResults').innerHTML=`<div class="kv"><b>Selected copies</b><span class="v">${esc(res.selected_dir)}</span></div>
+      <div class="kv"><b>Contact sheet</b><span class="v">${esc(res.contact_sheet)}</span></div>
+      <div class="kv"><b>Manifest</b><span class="v">${esc(res.candidates_json)}</span></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="minibtn" id="cullLoadSelected">Load selected</button>
+        <button class="minibtn" id="cullReviewSelected">Review selected</button>
+        <button class="minibtn" id="cullOpenSheet">Open contact sheet</button></div>`;
+    $('#cullLoadSelected').onclick=async()=>{await loadFolderPath(res.selected_dir);$('#cullScrim').classList.remove('open');};
+    $('#cullReviewSelected').onclick=async()=>{await openReviewFolder(res.selected_dir,'cull');$('#cullScrim').classList.remove('open');};
+    $('#cullOpenSheet').onclick=()=>window.open('file://'+res.contact_sheet);
+  }catch(e){$('#cullStatus').textContent='Cull failed: '+e;}
+  finally{$('#cullRun').disabled=false;}
+};
 
 /* ---- batch run (real jobs) --------------------------------------------- */
 let JOB=null,pollT=null;
@@ -859,25 +1070,177 @@ $('#cancelBtn').onclick=()=>{if(JOB)fetch('/api/jobs/'+JOB.id+'/control',{method
   $('#runDrawer').classList.remove('open');};
 
 /* ---- review modal ------------------------------------------------------- */
-function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';
-  $('#reviewTitle').textContent=`Review · ${j.done} edited · ${j.review} review · ${j.failed} failed → ${j.out_dir||''}`;
-  j.items.slice(0,300).forEach(it=>{const after=it.out?thumbURL(it.out,520,j.id||Date.now()):thumbURL(it.src,520);
+const REVIEW_TAGS=[['Too dark','too_dark'],['Too blue','too_blue'],['Too warm','too_warm'],
+  ['Fake','fake_looking'],['Content changed','changed_content'],['Halos','halos'],['Banding','banding'],
+  ['Good style','good_style'],['Good preservation','good_preservation']];
+const REVIEW={out_dir:'',labels:{},items:[],source:'edit'};  /* image → {decision, tags:Set, note} */
+const basename=p=>String(p||'').split('/').pop();
+const dirname=p=>String(p||'').replace(/\/[^/]*$/,'');
+function lblFor(img){return REVIEW.labels[img]||(REVIEW.labels[img]={decision:'',tags:new Set(),note:''});}
+function setLbl(img,rec){REVIEW.labels[img]={decision:rec.decision||'',tags:new Set(rec.tags||[]),note:rec.note||''};}
+function reviewItemsFromCurrent(){
+  if(!real())return null;
+  const items=STATE.files.map(f=>({name:f.name,src:f.path,status:'waiting'}));
+  return {out_dir:STATE.dir||dirname(STATE.files[0].path),items,total:items.length,source:'cull',title:'Review current folder'};
+}
+async function openReviewFolder(dir,source='cull'){
+  const groups=await(await fetch('/api/groups?dir='+encodeURIComponent(dir))).json();
+  if(groups.error){alert(groups.error);return;}
+  const items=groups.map(g=>{const it=mkItem(g,dir);return {name:it.name,src:it.path,status:'waiting'};});
+  renderReview({out_dir:dir,items,total:items.length,source,title:'Review folder'});
+  $('#reviewScrim').classList.add('open');
+}
+async function pickReviewFolder(){if(!STATE.served){standaloneNote();return;}
+  try{const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(path)await openReviewFolder(path,'cull');}
+  catch(e){alert('Could not open review folder: '+e);}}
+$('#reviewBtn').onclick=()=>{const cur=reviewItemsFromCurrent();if(cur){renderReview(cur);$('#reviewScrim').classList.add('open');}else pickReviewFolder();};
+$('#reviewPick').onclick=pickReviewFolder;
+function updateReviewStats(){
+  let keep=0,reject=0,labeled=0;
+  REVIEW.items.forEach(it=>{const l=REVIEW.labels[it.key];if(l&&(l.decision||l.tags.size||l.note)){labeled++;
+    if(l.decision==='keep')keep++; if(l.decision==='reject')reject++;}});
+  $('#reviewKeep').textContent=keep;$('#reviewReject').textContent=reject;
+  $('#reviewTodo').textContent=Math.max(0,REVIEW.items.length-labeled);
+}
+function syncReviewCard(c,key){
+  const l=lblFor(key);
+  c.querySelectorAll('.lbtn').forEach(x=>x.classList.toggle('on',x.dataset.d===l.decision));
+  c.querySelectorAll('.lbl-tags .chip').forEach(x=>x.classList.toggle('on',l.tags.has(x.dataset.tag)));
+  const note=c.querySelector('[data-note]'); if(note)note.value=l.note||'';
+}
+function hydrateReview(outDir){
+  if(!outDir)return;
+  fetch('/api/review/labels?out_dir='+encodeURIComponent(outDir)).then(r=>r.json()).then(j=>{
+    if(j.error)return;
+    Object.entries(j.latest||{}).forEach(([img,rec])=>setLbl(img,rec));
+    document.querySelectorAll('#reviewGrid .rcard').forEach(c=>syncReviewCard(c,c.dataset.key));
+    $('#reviewLblStatus').textContent=j.total_records?`loaded ${j.total_records} saved labels`:'';
+    updateReviewStats();
+  }).catch(()=>{});
+}
+function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';REVIEW.out_dir=j.out_dir||'';REVIEW.labels={};REVIEW.source=j.source||'edit';
+  $('#reviewLblStatus').textContent='';$('#reviewDir').textContent=REVIEW.out_dir||'No review folder loaded';
+  $('#reviewTitle').textContent=j.title||`Review · ${j.done||0} edited · ${j.review||0} review · ${j.failed||0} failed`;
+  REVIEW.items=(j.items||[]).slice(0,300).map(it=>({...it,key:it.out||it.src}));
+  REVIEW.items.forEach(it=>{const after=it.out?thumbURL(it.out,520,j.id||Date.now()):thumbURL(it.src,520);
+    const key=it.out||it.src;
     const tail=it.status==='failed'?`<span class="bdg b-fail"><i></i>${it.error?'failed':'unreadable'}</span>`
-      :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`:`<span class="bdg b-done"><i></i>safe</span>`;
+      :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`
+      :it.out?`<span class="bdg b-done"><i></i>safe</span>`:`<span class="bdg b-wait"><i></i>candidate</span>`;
     const c=el('div','rcard');
+    c.dataset.key=key;
     c.innerHTML=`<div class="ph"><img class="rv" src="${after}" alt="${it.name}"><button class="ba2">Before</button></div>
       <div class="ft"><div class="nm">${it.name}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:7px">
-        <span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${tail}</div></div>`;
+        <span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${tail}</div>
+      <div class="lbl-row"><button class="lbtn keep" data-d="keep">Keep</button><button class="lbtn rej" data-d="reject">Reject</button></div>
+      <div class="lbl-tags"></div>
+      <input class="tinput" data-note placeholder="note" style="height:28px;margin-top:7px"></div>`;
     const img=c.querySelector('.rv'),btn=c.querySelector('.ba2');let af=true;
+    if(!it.out)btn.style.display='none';
     btn.onclick=()=>{af=!af;img.src=af?after:thumbURL(it.src,520);btn.textContent=af?'Before':'After';};
-    g.appendChild(c);});}
+    // keep/reject
+    c.querySelectorAll('.lbtn').forEach(b=>b.onclick=()=>{const l=lblFor(key);
+      l.decision=(l.decision===b.dataset.d)?'':b.dataset.d;
+      c.querySelectorAll('.lbtn').forEach(x=>x.classList.toggle('on',x.dataset.d===l.decision));updateReviewStats();});
+    // tag chips
+    const tg=c.querySelector('.lbl-tags');
+    REVIEW_TAGS.forEach(([lab,id])=>{const ch=el('button','chip',lab);
+      ch.dataset.tag=id;
+      ch.onclick=()=>{const l=lblFor(key);l.tags.has(id)?l.tags.delete(id):l.tags.add(id);ch.classList.toggle('on');updateReviewStats();};
+      tg.appendChild(ch);});
+    c.querySelector('[data-note]').oninput=e=>{lblFor(key).note=e.target.value;updateReviewStats();};
+    g.appendChild(c);});
+  hydrateReview(REVIEW.out_dir);updateReviewStats();}
 $('#reviewClose').onclick=()=>$('#reviewScrim').classList.remove('open');
-$('#exportBtn').onclick=()=>$('#reviewScrim').classList.remove('open'); /* outputs already written to out_dir */
+$('#exportBtn').onclick=()=>{$('#reviewLblStatus').textContent=REVIEW.out_dir?`CSV/JSON export lives in ${REVIEW.out_dir}`:'Save labels first.';};
+$('#saveLabelsBtn').onclick=()=>{
+  const records=Object.entries(REVIEW.labels)
+    .filter(([img,l])=>l.decision||l.tags.size||l.note)
+    .map(([img,l])=>({image:img,decision:l.decision,tags:[...l.tags],note:l.note||'',source:REVIEW.source}));
+  if(!records.length){$('#reviewLblStatus').textContent='no labels yet';return;}
+  $('#reviewLblStatus').textContent='saving…';
+  fetch('/api/review/labels',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({out_dir:REVIEW.out_dir,labels:records})})
+    .then(r=>r.json()).then(j=>{$('#reviewLblStatus').textContent=j.error?j.error:`saved ${j.added} → ${j.csv} (${j.total} total)`;})
+    .catch(e=>$('#reviewLblStatus').textContent=String(e));};
+
+/* ---- variants (M7): render + score + rank several recipes for this photo --- */
+$('#variantsBtn').onclick=()=>{if(STATE.sel<0||!STATE.served)return;$('#varScrim').classList.add('open');runVariants();};
+$('#varClose').onclick=()=>$('#varScrim').classList.remove('open');
+function runVariants(){const p=STATE.files[STATE.sel];
+  $('#varTitle').textContent='Variants — '+p.name;
+  $('#varStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> rendering &amp; scoring recipes…';
+  $('#varGrid').innerHTML='';
+  const body=Object.assign(editOptions(),{file:p.path,decider:'rules',aesthetic_model:STATE.cull.model||''});
+  fetch('/api/variants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#varStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}renderVariants(j);})
+    .catch(e=>$('#varStatus').textContent=String(e));}
+function renderVariants(j){
+  $('#varStatus').innerHTML=`Best: <b>${j.best}</b>`+(j.review?' &nbsp;<span class="bdg b-review"><i></i>uncertain — review</span>':' &nbsp;<span class="bdg b-done"><i></i>clear winner</span>');
+  const g=$('#varGrid');g.innerHTML='';
+  (j.variants||[]).forEach(v=>{const c=el('div','rcard'+(v.name===j.best?' var-best':''));
+    const aes=v.aesthetic!=null?` · aes ${v.aesthetic}`:'';
+    c.innerHTML=`<div class="ph"><img src="${v.after}" alt=""></div>
+      <div class="ft"><div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="nm">${v.name}</div>${v.name===j.best?'<span class="bdg b-done"><i></i>best</span>':(v.needs_review?'<span class="bdg b-review"><i></i>review</span>':'')}</div>
+      <div class="tip" style="margin-top:4px">score ${v.score} · q ${v.quality}${aes}</div>
+      <button class="minibtn" style="margin-top:8px;width:100%">Apply</button></div>`;
+    c.querySelector('button').onclick=()=>applyVariant(v.opts);
+    g.appendChild(c);});}
+function applyVariant(o){
+  o=o||{};
+  if(o.style){STATE.style=o.style;renderStyles();}
+  STATE.palette=o.palette||'';renderPalettes();
+  STATE.prompt=o.prompt||'';const ii=$('#intentInput');if(ii)ii.value=STATE.prompt;renderChips();
+  if(o.intensity!=null){STATE.intensity=o.intensity;
+    $('#intensity').querySelectorAll('button').forEach(x=>x.classList.toggle('on',+x.dataset.i===o.intensity));}
+  $('#varScrim').classList.remove('open');markPreviewStale();}
 
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
 $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
+/* edit engine (M6): rules | learned recipe predictor */
+$('#engineSeg').addEventListener('click',e=>{const b=e.target.closest('[data-eng]');if(!b)return;
+  STATE.decider=b.dataset.eng;$('#recipeRow').style.display=STATE.decider==='learned'?'':'none';markPreviewStale();});
+$('#recipeLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file',{method:'POST'})).json();if(!path)return;
+  STATE.recipeModel=path;$('#recipeName').textContent=path.split('/').pop();markPreviewStale();}catch(e){alert(e);}};
+
+/* ---- dataset builder (M3) ----------------------------------------------- */
+const DS={orig:null,tgt:null};
+$('#datasetBtn').onclick=()=>{if(!STATE.served){standaloneNote();return;}$('#dsScrim').classList.add('open');};
+$('#dsClose').onclick=()=>$('#dsScrim').classList.remove('open');
+function dsReady(){const ok=DS.orig&&DS.tgt;$('#dsValidate').disabled=!ok;$('#dsBuild').disabled=!ok;}
+async function dsPick(which){try{const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
+    DS[which]=path;$(which==='orig'?'#dsOrigDir':'#dsTgtDir').textContent=path;dsReady();
+    $('#dsStatus').textContent='';$('#dsGrid').innerHTML='';
+  }catch(e){alert('Could not open folder: '+e);}}
+$('#dsPickO').onclick=()=>dsPick('orig');$('#dsPickT').onclick=()=>dsPick('tgt');
+function dsBody(){return {originals_dir:DS.orig,targets_dir:DS.tgt,recursive:$('#dsRecursive').checked,
+  approve_all:$('#dsApprove').checked};}
+$('#dsValidate').onclick=()=>dsCall('/api/datasets/validate',dsBody(),false);
+$('#dsBuild').onclick=()=>dsCall('/api/datasets/build',dsBody(),true);
+function dsCall(url,body,built){$('#dsStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> pairing &amp; checking…';
+  $('#dsGrid').innerHTML='';
+  fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#dsStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
+      dsResult(j,built);}).catch(e=>$('#dsStatus').textContent=String(e));}
+function dsResult(j,built){
+  const kept=built?j.kept:j.passed, rej=built?j.rejected:j.rejected, pairs=j.pairs;
+  $('#dsStatus').innerHTML=built
+    ? `Built <b>${j.out_dir}</b> — ${kept} kept, ${rej} rejected of ${pairs} pairs (originals/ targets/ rejected/ labels.csv manifest.json)`
+    : `${pairs} pairs · <b>${kept}</b> pass · ${rej} rejected · ${j.unmatched_originals||0}+${j.unmatched_targets||0} unmatched. Click Build to copy.`;
+  const items=j.items||j.results||[];const g=$('#dsGrid');g.innerHTML='';
+  items.forEach(it=>{const ok=it.status?it.status==='kept':it.ok;
+    const c=el('div','rcard');
+    const reasons=(it.reasons||[]).join(', ');
+    c.innerHTML=`<div class="ph"><img src="${thumbURL(it.target,360)}" alt=""></div>
+      <div class="ft"><div class="nm">${(it.target||'').split('/').pop()}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span class="tip">corr ${(it.metrics&&it.metrics.edge_corr)??'?'}</span>
+        <span class="bdg ${ok?'b-done':'b-fail'}"><i></i>${ok?'keep':'reject'}</span></div>
+      ${reasons?`<div class="tip" style="margin-top:4px;color:var(--danger)">${reasons}</div>`:''}</div>`;
+    g.appendChild(c);});}
 document.querySelectorAll('.scrim').forEach(s=>s.addEventListener('click',e=>{if(e.target===s)s.classList.remove('open');}));
 document.querySelectorAll('.modal .seg').forEach(seg=>seg.addEventListener('click',e=>{const b=e.target.closest('button');
   if(!b)return;seg.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');}));

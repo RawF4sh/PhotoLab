@@ -132,7 +132,7 @@ async function browse(target) {
   const kind = target === 'file' ? 'file' : 'folder';
   $('status').textContent = 'Opening picker…';
   try {
-    const { path } = await (await fetch('/api/pick?kind=' + kind)).json();
+    const { path } = await (await fetch('/api/pick?kind=' + kind, { method: 'POST' })).json();
     if (!path) { $('status').textContent = 'Cancelled.'; return; }
     if (target === 'folder') { $('dir').value = path; await listImages(); }
     else if (target === 'file') { $('single').value = path; $('status').textContent = path; }

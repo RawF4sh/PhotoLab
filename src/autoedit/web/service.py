@@ -16,7 +16,7 @@ import threading
 import numpy as np
 from PIL import Image as PILImage
 
-from .. import batch, emit, paths
+from .. import batch, curate, emit, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
 from ..imageio import downscale_long_edge, is_raw, is_supported, load_image
@@ -27,7 +27,7 @@ from ..styles import load_styles
 _ALLOWED = (
     "style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
-    "decider", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
+    "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
     "emit", "compose", "vignette", "sharpen",
 )
 
@@ -96,12 +96,19 @@ def path_allowed(path: str) -> bool:
 
 
 def ensure_allowed(*candidate_paths: str | None) -> None:
-    """Raise PermissionError if any given path is outside every approved workspace root."""
+    """Raise PermissionError if any given path is outside every approved workspace root.
+
+    `None` means "optional / unset, resolved & checked elsewhere" and is skipped. An empty
+    string is NOT skipped — it's a concrete path that resolves to the server's CWD, so treating
+    it as "unset" is the fail-open bug that let default outputs escape the boundary. Callers that
+    legitimately have no path (a benign empty listing) must short-circuit before calling this."""
     for p in candidate_paths:
-        if p and not path_allowed(p):
+        if p is None:
+            continue
+        if not p or not path_allowed(p):
             raise PermissionError(
                 "path is outside an approved folder — choose it with the folder/file picker "
-                f"first (or set AUTOEDIT_ALLOW_ANY_PATH=1 to disable this check): {p}")
+                f"first (or set AUTOEDIT_ALLOW_ANY_PATH=1 to disable this check): {p!r}")
 
 
 def shared_segmenter(cfg: RunConfig):
@@ -150,23 +157,33 @@ def group_images(folder: str) -> list[dict]:
         {stem, members:[{name, kind}], raw, pixel}
     where `raw`/`pixel` name the preferred file of each kind (None if absent). The UI shows one
     row per group and edits a single chosen source — RAW preferred for latitude — so a paired
-    shoot isn't processed twice."""
-    groups: dict[str, dict] = {}
+    shoot isn't processed twice.
+
+    Only a genuine RAW+pixel set collapses. Same-stem files that are all pixel formats
+    (e.g. photo.jpg + photo.png) are DISTINCT exports, not a camera pair — collapsing them would
+    silently drop one from editing — so they're listed separately."""
+    by_stem: dict[str, list[dict]] = {}
     order: list[str] = []
     for f in list_images(folder):
-        stem = os.path.splitext(f)[0]
-        key = stem.lower()
-        g = groups.get(key)
-        if g is None:
-            g = groups[key] = {"stem": stem, "members": []}
+        key = os.path.splitext(f)[0].lower()
+        if key not in by_stem:
+            by_stem[key] = []
             order.append(key)
-        g["members"].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
+        by_stem[key].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
+
+    def _entry(members: list[dict]) -> dict:
+        raw = next((m["name"] for m in members if m["kind"] == "raw"), None)
+        pixel = next((m["name"] for m in members if m["kind"] == "pixel"), None)
+        return {"stem": os.path.splitext(members[0]["name"])[0], "members": members,
+                "raw": raw, "pixel": pixel}
+
     out: list[dict] = []
     for key in order:
-        g = groups[key]
-        raw = next((m["name"] for m in g["members"] if m["kind"] == "raw"), None)
-        pixel = next((m["name"] for m in g["members"] if m["kind"] == "pixel"), None)
-        out.append({"stem": g["stem"], "members": g["members"], "raw": raw, "pixel": pixel})
+        members = by_stem[key]
+        if len(members) == 1 or any(m["kind"] == "raw" for m in members):
+            out.append(_entry(members))          # single file, or a real RAW(+pixel) pair
+        else:
+            out.extend(_entry([m]) for m in members)   # multiple pixels, no RAW → keep separate
     return out
 
 
@@ -192,14 +209,21 @@ def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: 
     if fmt in ("jpg", "jpeg"):
         pil.save(buf, format="JPEG", quality=quality, subsampling=0)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    if fmt == "webp":
+        # Lossless WebP: pixel-exact like PNG (so the anti-banding dither survives) but typically
+        # 30–45% smaller — the before/after preview ships two of these per keystroke.
+        pil.save(buf, format="WEBP", lossless=True, quality=100, method=4)
+        return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
     pil.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def thumb_bytes(path: str, px: int = 360, quality: int = 82) -> bytes:
     """A small JPEG of any image on disk (by path) — for the UI's real thumbnails/previews.
-    Cheap: decode + downscale, no pipeline/segmentation."""
+    Cheap: decode + downscale, no pipeline/segmentation. `px` is clamped so a hostile/errant
+    caller can't turn this into a full-resolution image server (px=100000 would skip downscale)."""
     check_image(path)
+    px = max(32, min(int(px), 2048))
     proxy = downscale_long_edge(load_image(path), px)
     pil = PILImage.fromarray((np.clip(proxy.rgb, 0.0, 1.0) * 255 + 0.5).astype(np.uint8), "RGB")
     buf = io.BytesIO()
@@ -224,9 +248,10 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
 
     The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
     preview shows the real result — no proxy-scaling softness. The before/after ship as **lossless
-    PNG** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
-    re-introduces contour banding, so a quality-critical preview must stay lossless. Capped at
-    max_px (retina-sharp at the on-screen stage). Segmentation is cached, so re-previews are fast."""
+    WebP** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
+    re-introduces contour banding, so a quality-critical preview must stay lossless — WebP is
+    pixel-exact like PNG but a much smaller payload. Capped at max_px (retina-sharp at the on-screen
+    stage). Segmentation is cached, so re-previews are fast."""
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = build_pipeline(cfg)
@@ -236,8 +261,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
     return {
-        "before": _img_b64(work.rgb, max_px, fmt="png"),
-        "after": _img_b64(out_rgb, max_px, fmt="png"),
+        "before": _img_b64(work.rgb, max_px, fmt="webp"),
+        "after": _img_b64(out_rgb, max_px, fmt="webp"),
         "result": result.model_dump(),
     }
 
@@ -245,6 +270,139 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
 def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
     cfg = make_cfg(opts, configs_dir)
     return batch.run(cfg, input_dir, out_dir, do_apply=True)
+
+
+def _curate_kwargs(input_dir: str, opts: dict) -> dict:
+    """Validate + normalize cull options once, so the sync (`curate_folder`) and background
+    (`curate_run`) entry points can't drift in defaults or validation. Copy-only is hard-wired."""
+    if not input_dir or not os.path.isdir(input_dir):
+        raise ValueError(f"input_dir not found: {input_dir}")
+    count = int(opts["count"]) if opts.get("count") not in (None, "") else 200
+    if count < 1:
+        raise ValueError(f"count must be >= 1: {count}")
+    raw_limit = str(opts.get("scan_limit") or "").strip()
+    scan_limit = int(raw_limit) if raw_limit and raw_limit not in ("0", "None") else None
+    mode = opts.get("mode") or "best"
+    if mode not in ("best", "diverse", "aesthetic"):
+        raise ValueError(f"unknown curation mode: {mode}")
+    aesthetic_model = opts.get("aesthetic_model") or None
+    if mode == "aesthetic" and not aesthetic_model:
+        raise ValueError("aesthetic mode requires an aesthetic model")
+    if aesthetic_model:
+        check_file_exists(aesthetic_model, ".json", "aesthetic model")
+    return dict(
+        count=count,
+        recursive=bool(opts.get("recursive", True)),
+        proxy_long_edge=int(opts.get("analysis_long_edge") or 256),
+        scan_limit=scan_limit,
+        copy_originals=True,                              # roadmap: copy-only, always
+        mode=mode,
+        emit_xmp=bool(opts.get("emit_xmp", False)),
+        aesthetic_model_path=aesthetic_model,
+    )
+
+
+def curate_run(input_dir: str, out_dir: str, opts: dict) -> dict:
+    """Cull a folder into `out_dir/selected` + thumbs + contact-sheet (M1). Copy-only — originals
+    are never moved/renamed/deleted. Modes: best | diverse | aesthetic. Returns the manifest.
+
+    Background (curate_jobs) entry point; shares validation/defaults with `curate_folder`."""
+    out_dir = out_dir or os.path.join(input_dir, "autoedit-curated")
+    return curate.curate(input_dir, out_dir, **_curate_kwargs(input_dir, opts))
+
+
+def save_review_labels(out_dir: str, records: list[dict]) -> dict:
+    """Append human review labels (M2) under out_dir as review-labels.csv/json. Annotation only —
+    no files moved/deleted."""
+    from .. import review
+
+    return review.append_labels(records, out_dir)
+
+
+def load_review_labels(out_dir: str) -> dict:
+    """Load persisted review-label state for a review folder."""
+    from .. import review
+
+    return review.summary(out_dir)
+
+
+def dataset_validate(originals_dir: str, targets_dir: str, recursive: bool = False) -> dict:
+    """Pair + preservation-validate originals↔targets (M3), report only — nothing copied."""
+    from .. import dataset
+
+    return dataset.validate(originals_dir, targets_dir, recursive=recursive)
+
+
+def dataset_build(originals_dir: str, targets_dir: str, out_dir: str, opts: dict) -> dict:
+    """Build a copy-only training workspace from originals↔target pairs (M3)."""
+    from .. import dataset
+
+    return dataset.build_dataset(
+        originals_dir, targets_dir, out_dir,
+        recursive=bool(opts.get("recursive", False)),
+        do_validate=bool(opts.get("validate", True)),
+        approve_all=bool(opts.get("approve_all", False)),
+    )
+
+
+def aesthetic_train(opts: dict) -> dict:
+    """Train + save an aesthetic-critic model JSON from a labels CSV + images dir (M4)."""
+    from .. import critic
+
+    limit = opts.get("limit")
+    return critic.train_from_csv(
+        opts["labels_csv"], opts["images_dir"], opts["out_model"],
+        path_column=opts.get("path_column"), score_column=opts.get("score_column"),
+        ridge=float(opts.get("ridge", 1e-3)), limit=int(limit) if limit else None)
+
+
+def aesthetic_score(opts: dict) -> dict:
+    """Score + rank a folder of photos with a trained critic model (M4)."""
+    from .. import critic
+
+    limit = opts.get("limit")
+    return critic.score_folder(opts["folder"], opts["model"],
+                               recursive=bool(opts.get("recursive", True)),
+                               limit=int(limit) if limit else None)
+
+
+def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
+                  with_images: bool = True) -> dict:
+    """Render several recipe variants for one photo, score each (safety gate + optional aesthetic
+    critic), rank, auto-pick the best, and flag uncertain cases for review (M7). Non-generative —
+    every variant is an ordinary bounded edit."""
+    from .. import variants
+
+    check_image(image_path)
+    specs = variants.resolve_specs(opts.get("variants"))
+    model = None
+    if opts.get("aesthetic_model"):
+        from .. import aesthetic
+
+        try:
+            model = aesthetic.load_model(opts["aesthetic_model"])
+        except Exception:
+            model = None
+
+    work = downscale_long_edge(load_image(image_path), 1400)   # shared proxy → fast, seg cached
+    scored = []
+    for spec in specs:
+        o = {k: v for k, v in opts.items() if k not in ("variants", "aesthetic_model")}
+        o.update(variants.spec_opts(spec))
+        cfg = make_cfg(o, configs_dir)
+        pipe = build_pipeline(cfg)
+        with INFERENCE_LOCK:
+            out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
+        item = {"name": spec["name"], "opts": variants.spec_opts(spec), "scene": result.scene,
+                **variants.score_variant(result, out_rgb, model)}
+        if with_images:
+            item["after"] = _img_b64(out_rgb, 1100, fmt="jpeg", quality=88)
+        scored.append(item)
+
+    scored.sort(key=lambda d: d["score"], reverse=True)
+    review = variants.is_uncertain(scored)
+    return {"image": os.path.abspath(image_path), "best": scored[0]["name"] if scored else None,
+            "review": review, "variants": scored}
 
 
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
@@ -261,6 +419,31 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
     return {"image_out": image_out, "sidecar": sidecar, "result": result.model_dump()}
 
 
+def curate_folder(input_dir: str, out_dir: str, opts: dict) -> dict:
+    """Copy a curated subset of a folder for review/training, returning UI-friendly output paths.
+
+    Deliberately copy-only; sources are never moved or renamed. Sync entry point; shares
+    validation/defaults with `curate_run` via `_curate_kwargs`.
+    """
+    out_dir = out_dir or os.path.join(input_dir, "autoedit-curated")
+    manifest = curate.curate(input_dir, out_dir, **_curate_kwargs(input_dir, opts))
+    return {
+        "manifest": manifest,
+        "out_dir": os.path.abspath(out_dir),
+        "selected_dir": os.path.abspath(os.path.join(out_dir, "selected")),
+        "contact_sheet": os.path.abspath(os.path.join(out_dir, "contact-sheet.html")),
+        "selected_csv": os.path.abspath(os.path.join(out_dir, "selected.csv")),
+        "candidates_json": os.path.abspath(os.path.join(out_dir, "candidates.json")),
+    }
+
+
+def check_file_exists(path: str, suffix: str, label: str) -> None:
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"{label} not found: {path}")
+    if suffix and not path.lower().endswith(suffix.lower()):
+        raise ValueError(f"{label} must be a {suffix} file: {path}")
+
+
 def pick_path(kind: str = "folder") -> str | None:
     """Open a native picker and return the chosen path, registering it as an approved workspace
     root (so subsequent API calls for paths under it pass the filesystem trust boundary)."""
@@ -272,7 +455,7 @@ def pick_path(kind: str = "folder") -> str | None:
 
 def _pick_native(kind: str = "folder") -> str | None:
     """Open a NATIVE picker on the machine running the server (the user's own Mac/PC) and
-    return the chosen absolute path. kind: 'folder' | 'file'. Returns None on cancel.
+    return the chosen absolute path. kind: 'folder' | 'file' | 'json'. Returns None on cancel.
 
     macOS uses Finder via osascript; other platforms fall back to a tkinter dialog. This is
     why AutoEdit's UI is a *local* app — the server can read local paths and pop a real dialog,
@@ -280,6 +463,8 @@ def _pick_native(kind: str = "folder") -> str | None:
     if sys.platform == "darwin":
         if kind == "folder":
             verb = 'choose folder with prompt "Select a folder for AutoEdit"'
+        elif kind == "json":
+            verb = 'choose file with prompt "Select an AutoEdit aesthetic model JSON"'
         else:  # restrict to images so users can't pick sidecars (.xmp) etc.
             verb = 'choose file of type {"public.image"} with prompt "Select a photo for AutoEdit"'
         try:
@@ -297,6 +482,8 @@ def _pick_native(kind: str = "folder") -> str | None:
         root.attributes("-topmost", True)
         if kind == "folder":
             path = filedialog.askdirectory()
+        elif kind == "json":
+            path = filedialog.askopenfilename(filetypes=[("JSON", "*.json"), ("All", "*.*")])
         else:
             path = filedialog.askopenfilename(
                 filetypes=[("Images", "*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp"), ("All", "*.*")])

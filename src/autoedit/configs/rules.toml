@@ -40,6 +40,11 @@
 [guard]
 ops = ["clarity", "saturation", "vibrance", "hsl_skin_sat",
        "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint"]
+# Oversaturation gate (final safety pass): a pixel's colour may be at most this fraction more
+# saturated than the source (0.30 = +30%). Snow/skin (guard_global) and near-white highlights
+# are held far tighter. Set to "off" to disable. This is what keeps the result true-to-life.
+# (Must live in THIS block — the engine reads guard.max_chroma_increase.)
+max_chroma_increase = 0.30
 # Banding gate: detect posterization/contour lines in smooth regions (sky/mist/water) of the
 # EDITED output, source-relative. Above `reduce_ops` the pipeline reduces the stretch ops
 # (dehaze/contrast/curve/clarity) and re-applies once; `warning` just notes it. Remove this whole
@@ -50,10 +55,15 @@ reduce_ops = 0.22
 hard_fail = 0.35
 min_coverage = 0.03
 
-# Oversaturation gate (final safety pass): a pixel's colour may be at most this fraction more
-# saturated than the source (0.30 = +30%). Snow/skin (guard_global) and near-white highlights
-# are held far tighter. Set to "off" to disable. This is what keeps the result true-to-life.
-max_chroma_increase = 0.30
+# Post-edit quality gate (review queue): thresholds the safety assessment reads. Optional —
+# these are the built-in defaults; uncomment the block to tune when a photo gets flagged.
+# [quality_gate]
+# highlight_clip = 0.02   # post-edit highlight clipping above this → warn + score penalty
+# shadow_clip = 0.06      # post-edit shadow clipping above this → warn + score penalty
+# sat_delta = 0.10        # mean saturation rise vs source above this → warn + score penalty
+# review_score = 0.85     # quality score below this → needs review
+# review_highlight = 0.05 # hard review triggers regardless of score
+# review_shadow = 0.12
 
 # ─────────────────────────── people ───────────────────────────
 [people.global]

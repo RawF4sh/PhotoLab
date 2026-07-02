@@ -19,7 +19,7 @@ from .concepts import load_concepts, meta_for
 from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
-from .edit import apply_image, banding, build_alpha, gates, linear_alpha
+from .edit import apply_image, banding, build_alpha, gates, reference as ref_match, linear_alpha
 from .imageio import Image, downscale_long_edge, load_image, luma
 from .notes import build_notes
 from .segment import make_segmenter, resolve
@@ -63,6 +63,9 @@ class Pipeline:
     intents: dict
     palettes: dict
     banding: dict
+    quality_gate: dict | None = None  # post-edit gate thresholds from rules.toml (None → defaults)
+    ref_feats: dict | None = None    # cached per-concept reference look (M5); computed once per run
+    ref_proxy: Image | None = None   # cached decoded reference proxy — one decode per run, not per photo
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
@@ -93,6 +96,8 @@ class Pipeline:
             palettes=palette_mod.load_palettes(cfg.palettes_path),
             banding={k: float(v) for k, v in (rules.get("banding", {}) or {}).items()
                      if isinstance(v, (int, float))},
+            quality_gate={k: float(v) for k, v in (rules.get("quality_gate", {}) or {}).items()
+                          if isinstance(v, (int, float))} or None,
         )
 
     def concepts_for(self, style: Style) -> list[str]:
@@ -193,6 +198,20 @@ class Pipeline:
             palette_note = (f"palette: {pal_name} ({cfg.palette_strength:.0%})"
                             if palette_obj is not None else None)
 
+        # Region-aware reference matching (M5): push each source region toward the SAME concept's
+        # look in the reference (sky→sky, water→water, mountain→mountain), dimension-independent so
+        # an arbitrary alpine reference works. Bounded; merged into region_settings BEFORE policies
+        # clamp them. The global color_transfer below still finishes the overall palette.
+        region_ref_note = None
+        if cfg.reference:
+            ref_feats = self._reference_concept_features(concepts)
+            if ref_feats:
+                src_feats = ref_match.extract_concept_features(proxy.rgb, resolved.union)
+                region_settings, rep = ref_match.region_settings_from_features(
+                    region_settings, src_feats, ref_feats, cfg.reference_strength)
+                if rep:
+                    region_ref_note = "reference match (region): " + ", ".join(r["name"] for r in rep)
+
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
         policy_notes = policies.enforce(region_settings, self.meta)
@@ -225,7 +244,7 @@ class Pipeline:
                     tune_settings_to_reference,
                 )
 
-                ref_proxy = downscale_long_edge(load_image(cfg.reference), cfg.analysis_long_edge)
+                ref_proxy = self._get_ref_proxy()
                 globally_rendered = apply_ops(proxy.rgb, global_settings)
                 tuned, feedback = tune_settings_to_reference(
                     proxy.rgb, ref_proxy.rgb, global_settings,
@@ -251,6 +270,9 @@ class Pipeline:
                     globally_rendered, ref_proxy.rgb, region_settings, resolved.union,
                     strength=cfg.reference_strength, passes=3,
                 )
+                # Re-enforce region policies: the tuner can re-introduce ops the rails already
+                # dropped (e.g. temp on snow). Hard rails must win over reference matching.
+                notes_extra.extend(policies.enforce(region_settings, self.meta))
                 if region_feedback:
                     parts = []
                     for item in region_feedback[:3]:
@@ -375,8 +397,7 @@ class Pipeline:
                                 out[k] *= red
                         return out
 
-                    gs2 = dict(global_settings)
-                    gs2 = damp(gs2)
+                    gs2 = damp(global_settings)
                     regions2 = [(a, damp(s)) for a, s in regions_apply]
                     out_rgb = apply_image(
                         img.rgb, regions2, gs2,
@@ -387,6 +408,10 @@ class Pipeline:
                         protect_chroma=guard_mask,
                         palette=palette_arg, report={},
                     )
+                    # The sidecar must report the settings that actually rendered the pixels —
+                    # swap in the damped values so the JSON matches the output, not the plan.
+                    global_settings = gs2
+                    region_settings = {k: damp(s) for k, s in region_settings.items()}
                     notes_extra.append(
                         f"banding gate: smooth-region banding {bscore:.2f} → reduced "
                         f"dehaze/contrast/curve/clarity/sharpen {int((1 - red) * 100)}% and re-applied")
@@ -406,7 +431,7 @@ class Pipeline:
                 )
 
                 if ref_proxy is None:
-                    ref_proxy = downscale_long_edge(load_image(cfg.reference), 512)
+                    ref_proxy = self._get_ref_proxy()
                 finish_strength = min(float(cfg.reference_strength), 0.72)
                 out_rgb = color_transfer(out_rgb, ref_proxy.rgb, finish_strength)
                 ref_note = (f"reference match → {os.path.basename(cfg.reference)} "
@@ -466,11 +491,13 @@ class Pipeline:
             post_proxy = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
             post_stats, _ = stats_mod.compute(post_proxy, {})
             quality_score, needs_review, review_reason, warnings = gates.assess(
-                gstats, post_stats, gate_report.get("chroma_limited", 0.0) if do_apply else 0.0)
+                gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate)
 
         notes = build_notes(gstats, region_stats, resolved.detected)
         if intent_note:
             notes.append(intent_note)
+        if region_ref_note:
+            notes.append(region_ref_note)
         if palette_note:
             notes.append(palette_note)
         if guard_note:
@@ -510,6 +537,33 @@ class Pipeline:
             timing_ms=(time.perf_counter() - t0) * 1000.0,
         )
         return out_rgb, result
+
+    def _get_ref_proxy(self) -> Image | None:
+        """Decode the reference image ONCE per run (downscaled to analysis size) and cache it.
+        Reference-matched batches previously reloaded the same file 2-3x per photo."""
+        if not self.cfg.reference:
+            return None
+        if self.ref_proxy is None:
+            self.ref_proxy = downscale_long_edge(
+                load_image(self.cfg.reference), self.cfg.analysis_long_edge)
+        return self.ref_proxy
+
+    def _reference_concept_features(self, concepts: list[str]) -> dict:
+        """Per-concept look of the reference image (M5), segmented + measured ONCE per run and
+        cached. Empty dict when no reference / segmentation fails (degrades to global transfer)."""
+        if self.ref_feats is not None:
+            return self.ref_feats
+        self.ref_feats = {}
+        if not self.cfg.reference:
+            return self.ref_feats
+        try:
+            ref = self._get_ref_proxy()
+            raw = self.segmenter.segment(ref, concepts)
+            rr = resolve(raw, concepts, self.meta, ref.rgb.shape[:2])
+            self.ref_feats = ref_match.extract_concept_features(ref.rgb, rr.union)
+        except Exception:
+            self.ref_feats = {}
+        return self.ref_feats
 
     def _build_guard(self, union: dict, full_hw: tuple[int, int], global_settings: dict,
                      guide: np.ndarray | None = None):

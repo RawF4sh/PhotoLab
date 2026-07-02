@@ -75,6 +75,7 @@ def load_run_config(args) -> RunConfig:
         "reference": getattr(args, "reference", None),
         "reference_strength": getattr(args, "reference_strength", None),
         "decider": getattr(args, "decider", None),
+        "recipe_model": getattr(args, "recipe_model", None),
         "allow_cloud": getattr(args, "allow_cloud", None),
         "api_key": getattr(args, "api_key", None),
         "llm_mode": getattr(args, "llm_mode", None),
@@ -112,7 +113,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--reference-strength", dest="reference_strength", type=float,
                    help="reference-match strength 0..1 (default 0.7)")
     p.add_argument("--intensity", type=float)
-    p.add_argument("--decider", choices=["rules", "llm"])
+    p.add_argument("--decider", choices=["rules", "llm", "learned"])
+    p.add_argument("--recipe-model", dest="recipe_model",
+                   help="trained recipe predictor JSON (used with --decider learned)")
     p.add_argument("--allow-cloud", dest="allow_cloud", action="store_true", default=None,
                    help="consent to the BYO-key cloud LLM (sends a thumbnail to your AI provider)")
     p.add_argument("--api-key", dest="api_key", help="Anthropic API key (else ANTHROPIC_API_KEY env)")
@@ -129,6 +132,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="disable the frame/subject vignette")
     p.add_argument("--no-sharpen", dest="sharpen", action="store_false", default=None,
                    help="disable output sharpening")
+    p.add_argument("--no-consistent", dest="consistent", action="store_false", default=None,
+                   help="disable shoot-consistency (the bounded per-group brightness normalization)")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help="segment + decide + sidecar, no baked pixels")
@@ -143,7 +148,81 @@ def _cmd_run(args) -> int:
     if not os.path.isdir(args.input_dir):
         print(f"input_dir not found: {args.input_dir}", file=sys.stderr)
         return 2
-    batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume)
+    batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume,
+              consistent=args.consistent is not False)
+    return 0
+
+
+def _cmd_rank_variants(args) -> int:
+    import csv
+
+    from . import batch
+    from .web import service
+
+    images = batch.list_images(args.input) if os.path.isdir(args.input) else [args.input]
+    if not images:
+        print(f"no images at {args.input}", file=sys.stderr)
+        return 2
+    opts = {"aesthetic_model": args.aesthetic_model} if args.aesthetic_model else {}
+    rows = []
+    for p in images:
+        try:
+            r = service.make_variants(p, opts, with_images=False)
+        except Exception as e:
+            print(f"  {os.path.basename(p)}: {e}", file=sys.stderr)
+            continue
+        best, review = r["best"], r["review"]
+        print(f"  {os.path.basename(p)} → best: {best}{'  (needs review)' if review else ''}")
+        for v in r["variants"]:
+            rows.append({"image": os.path.basename(p), "variant": v["name"], "score": v["score"],
+                         "quality": v["quality"], "aesthetic": v["aesthetic"],
+                         "best": "yes" if v["name"] == best else "", "review": "yes" if review else ""})
+    base = args.input if os.path.isdir(args.input) else os.path.dirname(args.input)
+    out = args.out or os.path.join(base, "variant-ranking.csv")
+    with open(out, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["image", "variant", "score", "quality", "aesthetic", "best", "review"])
+        w.writeheader()
+        w.writerows(rows)
+    print(f"Wrote {out}")
+    return 0
+
+
+def _cmd_train_recipe(args) -> int:
+    from . import recipe
+
+    if not os.path.isdir(args.dataset):
+        print(f"dataset not found: {args.dataset}", file=sys.stderr)
+        return 2
+    try:
+        info = recipe.train_from_dataset(args.dataset, args.out_model, ridge=args.ridge)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(f"Trained recipe predictor on {info['samples']} pairs (skipped {info['skipped']}).")
+    print(f"Model: {info['model_path']}  —  run with: --decider learned --recipe-model {info['model_path']}")
+    return 0
+
+
+def _cmd_dataset_validate(args) -> int:
+    from . import dataset
+
+    rep = dataset.validate(args.originals, args.targets, recursive=args.recursive)
+    print(f"Pairs: {rep['pairs']}  passed: {rep['passed']}  rejected: {rep['rejected']}  "
+          f"(unmatched: {rep['unmatched_originals']} orig / {rep['unmatched_targets']} target)")
+    for r in rep["results"]:
+        flag = "OK  " if r["ok"] else "REJ "
+        reasons = "" if r["ok"] else "  — " + ", ".join(r["reasons"])
+        print(f"  {flag}{os.path.basename(r['target'])}  edge_corr={r['metrics'].get('edge_corr','?')}{reasons}")
+    return 0
+
+
+def _cmd_dataset_build(args) -> int:
+    from . import dataset
+
+    m = dataset.build_dataset(args.originals, args.targets, args.out, recursive=args.recursive,
+                              do_validate=args.validate, approve_all=args.approve_all)
+    print(f"Built dataset at {m['out_dir']}: {m['kept']} kept, {m['rejected']} rejected "
+          f"of {m['pairs']} pairs. (originals/ targets/ rejected/ labels.csv manifest.json)")
     return 0
 
 
@@ -163,6 +242,7 @@ def _cmd_curate(args) -> int:
         copy_originals=True,
         mode=args.mode,
         emit_xmp=args.emit_xmp,
+        aesthetic_model_path=args.aesthetic_model,
     )
     print(
         f"\nCopied {manifest['selected']} of {manifest['total_scanned']} scanned photos to "
@@ -173,10 +253,36 @@ def _cmd_curate(args) -> int:
     return 0
 
 
+def _cmd_train_aesthetic(args) -> int:
+    # Thin wrapper over critic.train_from_csv — the web API uses the same function, so the CSV
+    # column detection / AVA parsing / feature extraction can't drift between CLI and UI.
+    from . import critic
+
+    if not os.path.isdir(args.images_dir):
+        print(f"images_dir not found: {args.images_dir}", file=sys.stderr)
+        return 2
+    if not os.path.exists(args.labels_csv):
+        print(f"labels_csv not found: {args.labels_csv}", file=sys.stderr)
+        return 2
+    try:
+        info = critic.train_from_csv(
+            args.labels_csv, args.images_dir, args.out_model,
+            path_column=args.path_column, score_column=args.score_column,
+            ridge=args.ridge, long_edge=args.analysis_long_edge, limit=args.limit)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(f"Trained aesthetic scorer on {info['samples']} images; skipped {info['skipped']}.")
+    print(f"Model: {info['model_path']}")
+    return 0
+
+
 def _cmd_doctor(args) -> int:
     from .decide import DISCLOSURE
 
     print("AutoEdit doctor")
+    # a stray ./configs in the CWD silently overrides packaged tuning — always show which won
+    print(f"  configs: {os.path.abspath(args.configs_dir or paths.configs_dir())}")
     print("  segmentation:")
     try:
         import torch  # noqa: F401
@@ -265,11 +371,55 @@ def main(argv: list[str] | None = None) -> int:
                        help="only analyze the first N supported files, useful for quick trials")
     cur_p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int, default=256,
                        help="proxy size used for curation features (default: 256)")
-    cur_p.add_argument("--mode", choices=["diverse", "best"], default="diverse",
-                       help="diverse = cover different looks; best = highest quality keepers")
+    cur_p.add_argument("--mode", choices=["diverse", "best", "aesthetic"], default="diverse",
+                       help="diverse = cover looks; best = heuristic keepers; aesthetic = learned scorer")
     cur_p.add_argument("--emit-xmp", dest="emit_xmp", action="store_true",
                        help="write XMP sidecars next to copied selections with rating/label metadata")
+    cur_p.add_argument("--aesthetic-model", dest="aesthetic_model",
+                       help="JSON model from train-aesthetic; required for --mode aesthetic")
     cur_p.set_defaults(func=_cmd_curate)
+
+    ds_p = sub.add_parser("dataset", help="build/validate a training dataset from originals + edited targets")
+    ds_sub = ds_p.add_subparsers(dest="ds_cmd", required=True)
+    dsb = ds_sub.add_parser("build", help="pair, preservation-validate, and copy into a training workspace")
+    dsb.add_argument("originals"); dsb.add_argument("targets"); dsb.add_argument("out")
+    dsb.add_argument("--recursive", action="store_true")
+    dsb.add_argument("--no-validate", dest="validate", action="store_false",
+                     help="skip preservation checks (keep every pair)")
+    dsb.add_argument("--approve-all", dest="approve_all", action="store_true",
+                     help="keep pairs even if a preservation gate fails")
+    dsb.set_defaults(func=_cmd_dataset_build)
+    dsv = ds_sub.add_parser("validate", help="report pairing + preservation verdicts, copy nothing")
+    dsv.add_argument("originals"); dsv.add_argument("targets")
+    dsv.add_argument("--recursive", action="store_true")
+    dsv.set_defaults(func=_cmd_dataset_validate)
+
+    rv_p = sub.add_parser("rank-variants", help="render + score recipe variants per photo; write a ranking CSV")
+    rv_p.add_argument("input", help="an image or a folder of images")
+    rv_p.add_argument("--out", help="ranking CSV path (default: <input>/variant-ranking.csv)")
+    rv_p.add_argument("--aesthetic-model", dest="aesthetic_model", help="critic JSON to score variants")
+    rv_p.set_defaults(func=_cmd_rank_variants)
+
+    rec_p = sub.add_parser("train-recipe", help="train the learned recipe predictor from an M3 dataset")
+    rec_p.add_argument("dataset", help="dataset workspace with originals/ + targets/ (from `dataset build`)")
+    rec_p.add_argument("out_model")
+    rec_p.add_argument("--ridge", type=float, default=1.0)
+    rec_p.set_defaults(func=_cmd_train_recipe)
+
+    aes_p = sub.add_parser("train-aesthetic", help="train a lightweight aesthetic scorer from labels CSV")
+    aes_p.add_argument("labels_csv")
+    aes_p.add_argument("images_dir")
+    aes_p.add_argument("out_model")
+    aes_p.add_argument("--path-column", dest="path_column",
+                       help="CSV column containing image path/name; auto-detected when omitted")
+    aes_p.add_argument("--score-column", dest="score_column",
+                       help="CSV column containing score; auto-detected or AVA 1..10 votes when omitted")
+    aes_p.add_argument("--limit", type=int, help="only train on the first N rows")
+    aes_p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int, default=256,
+                       help="proxy size used for training features (default: 256)")
+    aes_p.add_argument("--ridge", type=float, default=1e-3,
+                       help="ridge regularization strength (default: 1e-3)")
+    aes_p.set_defaults(func=_cmd_train_aesthetic)
 
     doc_p = sub.add_parser("doctor", help="report device + backend availability")
     doc_p.add_argument("--configs-dir", dest="configs_dir")
