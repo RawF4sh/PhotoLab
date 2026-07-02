@@ -96,12 +96,19 @@ def path_allowed(path: str) -> bool:
 
 
 def ensure_allowed(*candidate_paths: str | None) -> None:
-    """Raise PermissionError if any given path is outside every approved workspace root."""
+    """Raise PermissionError if any given path is outside every approved workspace root.
+
+    `None` means "optional / unset, resolved & checked elsewhere" and is skipped. An empty
+    string is NOT skipped — it's a concrete path that resolves to the server's CWD, so treating
+    it as "unset" is the fail-open bug that let default outputs escape the boundary. Callers that
+    legitimately have no path (a benign empty listing) must short-circuit before calling this."""
     for p in candidate_paths:
-        if p and not path_allowed(p):
+        if p is None:
+            continue
+        if not p or not path_allowed(p):
             raise PermissionError(
                 "path is outside an approved folder — choose it with the folder/file picker "
-                f"first (or set AUTOEDIT_ALLOW_ANY_PATH=1 to disable this check): {p}")
+                f"first (or set AUTOEDIT_ALLOW_ANY_PATH=1 to disable this check): {p!r}")
 
 
 def shared_segmenter(cfg: RunConfig):
@@ -150,23 +157,33 @@ def group_images(folder: str) -> list[dict]:
         {stem, members:[{name, kind}], raw, pixel}
     where `raw`/`pixel` name the preferred file of each kind (None if absent). The UI shows one
     row per group and edits a single chosen source — RAW preferred for latitude — so a paired
-    shoot isn't processed twice."""
-    groups: dict[str, dict] = {}
+    shoot isn't processed twice.
+
+    Only a genuine RAW+pixel set collapses. Same-stem files that are all pixel formats
+    (e.g. photo.jpg + photo.png) are DISTINCT exports, not a camera pair — collapsing them would
+    silently drop one from editing — so they're listed separately."""
+    by_stem: dict[str, list[dict]] = {}
     order: list[str] = []
     for f in list_images(folder):
-        stem = os.path.splitext(f)[0]
-        key = stem.lower()
-        g = groups.get(key)
-        if g is None:
-            g = groups[key] = {"stem": stem, "members": []}
+        key = os.path.splitext(f)[0].lower()
+        if key not in by_stem:
+            by_stem[key] = []
             order.append(key)
-        g["members"].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
+        by_stem[key].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
+
+    def _entry(members: list[dict]) -> dict:
+        raw = next((m["name"] for m in members if m["kind"] == "raw"), None)
+        pixel = next((m["name"] for m in members if m["kind"] == "pixel"), None)
+        return {"stem": os.path.splitext(members[0]["name"])[0], "members": members,
+                "raw": raw, "pixel": pixel}
+
     out: list[dict] = []
     for key in order:
-        g = groups[key]
-        raw = next((m["name"] for m in g["members"] if m["kind"] == "raw"), None)
-        pixel = next((m["name"] for m in g["members"] if m["kind"] == "pixel"), None)
-        out.append({"stem": g["stem"], "members": g["members"], "raw": raw, "pixel": pixel})
+        members = by_stem[key]
+        if len(members) == 1 or any(m["kind"] == "raw" for m in members):
+            out.append(_entry(members))          # single file, or a real RAW(+pixel) pair
+        else:
+            out.extend(_entry([m]) for m in members)   # multiple pixels, no RAW → keep separate
     return out
 
 
@@ -192,14 +209,21 @@ def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: 
     if fmt in ("jpg", "jpeg"):
         pil.save(buf, format="JPEG", quality=quality, subsampling=0)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    if fmt == "webp":
+        # Lossless WebP: pixel-exact like PNG (so the anti-banding dither survives) but typically
+        # 30–45% smaller — the before/after preview ships two of these per keystroke.
+        pil.save(buf, format="WEBP", lossless=True, quality=100, method=4)
+        return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
     pil.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def thumb_bytes(path: str, px: int = 360, quality: int = 82) -> bytes:
     """A small JPEG of any image on disk (by path) — for the UI's real thumbnails/previews.
-    Cheap: decode + downscale, no pipeline/segmentation."""
+    Cheap: decode + downscale, no pipeline/segmentation. `px` is clamped so a hostile/errant
+    caller can't turn this into a full-resolution image server (px=100000 would skip downscale)."""
     check_image(path)
+    px = max(32, min(int(px), 2048))
     proxy = downscale_long_edge(load_image(path), px)
     pil = PILImage.fromarray((np.clip(proxy.rgb, 0.0, 1.0) * 255 + 0.5).astype(np.uint8), "RGB")
     buf = io.BytesIO()
@@ -224,9 +248,10 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
 
     The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
     preview shows the real result — no proxy-scaling softness. The before/after ship as **lossless
-    PNG** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
-    re-introduces contour banding, so a quality-critical preview must stay lossless. Capped at
-    max_px (retina-sharp at the on-screen stage). Segmentation is cached, so re-previews are fast."""
+    WebP** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
+    re-introduces contour banding, so a quality-critical preview must stay lossless — WebP is
+    pixel-exact like PNG but a much smaller payload. Capped at max_px (retina-sharp at the on-screen
+    stage). Segmentation is cached, so re-previews are fast."""
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = build_pipeline(cfg)
@@ -236,8 +261,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
     return {
-        "before": _img_b64(work.rgb, max_px, fmt="png"),
-        "after": _img_b64(out_rgb, max_px, fmt="png"),
+        "before": _img_b64(work.rgb, max_px, fmt="webp"),
+        "after": _img_b64(out_rgb, max_px, fmt="webp"),
         "result": result.model_dump(),
     }
 
@@ -247,23 +272,43 @@ def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None 
     return batch.run(cfg, input_dir, out_dir, do_apply=True)
 
 
-def curate_run(input_dir: str, out_dir: str, opts: dict) -> dict:
-    """Cull a folder into `out_dir/selected` + thumbs + contact-sheet (M1). Copy-only — originals
-    are never moved/renamed/deleted. Modes: diverse | best | aesthetic. Returns the manifest."""
-    from .. import curate  # light deps (numpy/PIL); imported here to keep service import lean
-
-    mode = str(opts.get("mode", "diverse"))
-    scan_limit = opts.get("scan_limit")
-    return curate.curate(
-        input_dir, out_dir,
-        count=int(opts.get("count", 200)),
+def _curate_kwargs(input_dir: str, opts: dict) -> dict:
+    """Validate + normalize cull options once, so the sync (`curate_folder`) and background
+    (`curate_run`) entry points can't drift in defaults or validation. Copy-only is hard-wired."""
+    if not input_dir or not os.path.isdir(input_dir):
+        raise ValueError(f"input_dir not found: {input_dir}")
+    count = int(opts["count"]) if opts.get("count") not in (None, "") else 200
+    if count < 1:
+        raise ValueError(f"count must be >= 1: {count}")
+    raw_limit = str(opts.get("scan_limit") or "").strip()
+    scan_limit = int(raw_limit) if raw_limit and raw_limit not in ("0", "None") else None
+    mode = opts.get("mode") or "best"
+    if mode not in ("best", "diverse", "aesthetic"):
+        raise ValueError(f"unknown curation mode: {mode}")
+    aesthetic_model = opts.get("aesthetic_model") or None
+    if mode == "aesthetic" and not aesthetic_model:
+        raise ValueError("aesthetic mode requires an aesthetic model")
+    if aesthetic_model:
+        check_file_exists(aesthetic_model, ".json", "aesthetic model")
+    return dict(
+        count=count,
         recursive=bool(opts.get("recursive", True)),
-        scan_limit=int(scan_limit) if scan_limit else None,
+        proxy_long_edge=int(opts.get("analysis_long_edge") or 256),
+        scan_limit=scan_limit,
         copy_originals=True,                              # roadmap: copy-only, always
         mode=mode,
         emit_xmp=bool(opts.get("emit_xmp", False)),
-        aesthetic_model_path=opts.get("aesthetic_model"),
+        aesthetic_model_path=aesthetic_model,
     )
+
+
+def curate_run(input_dir: str, out_dir: str, opts: dict) -> dict:
+    """Cull a folder into `out_dir/selected` + thumbs + contact-sheet (M1). Copy-only — originals
+    are never moved/renamed/deleted. Modes: best | diverse | aesthetic. Returns the manifest.
+
+    Background (curate_jobs) entry point; shares validation/defaults with `curate_folder`."""
+    out_dir = out_dir or os.path.join(input_dir, "autoedit-curated")
+    return curate.curate(input_dir, out_dir, **_curate_kwargs(input_dir, opts))
 
 
 def save_review_labels(out_dir: str, records: list[dict]) -> dict:
@@ -272,6 +317,13 @@ def save_review_labels(out_dir: str, records: list[dict]) -> dict:
     from .. import review
 
     return review.append_labels(records, out_dir)
+
+
+def load_review_labels(out_dir: str) -> dict:
+    """Load persisted review-label state for a review folder."""
+    from .. import review
+
+    return review.summary(out_dir)
 
 
 def dataset_validate(originals_dir: str, targets_dir: str, recursive: bool = False) -> dict:
@@ -368,38 +420,13 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
 
 
 def curate_folder(input_dir: str, out_dir: str, opts: dict) -> dict:
-    """Copy a curated subset of a folder for review/training.
+    """Copy a curated subset of a folder for review/training, returning UI-friendly output paths.
 
-    This is deliberately copy-only; sources are never moved or renamed. The UI calls this for
-    M1 culling, and the CLI uses the same lower-level curator.
+    Deliberately copy-only; sources are never moved or renamed. Sync entry point; shares
+    validation/defaults with `curate_run` via `_curate_kwargs`.
     """
-    if not input_dir or not os.path.isdir(input_dir):
-        raise ValueError(f"input_dir not found: {input_dir}")
     out_dir = out_dir or os.path.join(input_dir, "autoedit-curated")
-    count = int(opts.get("count") or 200)
-    scan_limit = opts.get("scan_limit")
-    scan_limit = int(scan_limit) if scan_limit not in (None, "", 0, "0") else None
-    mode = opts.get("mode") or "best"
-    if mode not in ("best", "diverse", "aesthetic"):
-        raise ValueError(f"unknown curation mode: {mode}")
-    aesthetic_model = opts.get("aesthetic_model") or None
-    if mode == "aesthetic" and not aesthetic_model:
-        raise ValueError("aesthetic mode requires an aesthetic model")
-    if aesthetic_model:
-        check_file_exists(aesthetic_model, ".json", "aesthetic model")
-
-    manifest = curate.curate(
-        input_dir,
-        out_dir,
-        count=count,
-        recursive=bool(opts.get("recursive", True)),
-        proxy_long_edge=int(opts.get("analysis_long_edge") or 256),
-        scan_limit=scan_limit,
-        copy_originals=True,
-        mode=mode,
-        emit_xmp=bool(opts.get("emit_xmp", False)),
-        aesthetic_model_path=aesthetic_model,
-    )
+    manifest = curate.curate(input_dir, out_dir, **_curate_kwargs(input_dir, opts))
     return {
         "manifest": manifest,
         "out_dir": os.path.abspath(out_dir),

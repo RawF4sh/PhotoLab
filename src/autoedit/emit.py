@@ -65,18 +65,33 @@ def build_result(
 
 
 def write_sidecar(result: Result, path: str) -> None:
-    with open(path, "w") as fh:
+    tmp = path + ".part"                       # atomic: full JSON or nothing (never truncated)
+    with open(tmp, "w") as fh:
         fh.write(result.model_dump_json(indent=2))
+    os.replace(tmp, path)
 
 
 def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:
     save_image(rgb, path, fmt=fmt, quality=quality)
 
 
-def output_paths(out_dir: str, image_name: str, fmt: str) -> tuple[str, str]:
+def output_paths(out_dir: str, image_name: str, fmt: str,
+                 taken: set[str] | None = None) -> tuple[str, str]:
+    """Map a source path to its (image_out, sidecar) targets under out_dir.
+
+    Two sources sharing a stem (a camera's IMG_001.dng + IMG_001.jpg, or same-named files from
+    different folders) would otherwise write the SAME output and silently overwrite each other
+    (image + explanation sidecar). Pass a persistent `taken` set across a batch: on collision the
+    stem gets a -2/-3 suffix. Deterministic given a stable iteration order, so resume reproduces
+    the same assignment. `taken=None` keeps the legacy single-source behavior unchanged."""
     stem = os.path.splitext(os.path.basename(image_name))[0]
     ext = "tif" if fmt == "tiff" else "jpg"
-    return (
-        os.path.join(out_dir, f"{stem}.{ext}"),
-        os.path.join(out_dir, f"{stem}.autoedit.json"),
-    )
+    image_out = os.path.join(out_dir, f"{stem}.{ext}")
+    if taken is not None:
+        n = 2
+        while image_out in taken:
+            image_out = os.path.join(out_dir, f"{stem}-{n}.{ext}")
+            n += 1
+        taken.add(image_out)
+    out_stem = os.path.splitext(os.path.basename(image_out))[0]
+    return image_out, os.path.join(out_dir, f"{out_stem}.autoedit.json")

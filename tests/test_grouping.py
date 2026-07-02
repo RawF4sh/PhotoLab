@@ -28,6 +28,17 @@ def test_raw_jpeg_pair_groups_into_one():
         assert by_stem["img_003"]["raw"] == "IMG_003.nef" and by_stem["img_003"]["pixel"] is None
 
 
+def test_same_stem_pixels_without_raw_stay_separate():
+    # two pixel exports sharing a stem are DISTINCT photos, not a camera pair — must not collapse
+    with tempfile.TemporaryDirectory() as d:
+        for n in ("edit.jpg", "edit.png"):
+            _touch(d, n)
+        groups = group_images(d)
+        assert len(groups) == 2
+        assert {g["pixel"] for g in groups} == {"edit.jpg", "edit.png"}
+        assert all(g["raw"] is None for g in groups)
+
+
 def test_empty_or_missing_folder():
     assert group_images("") == []
     assert group_images("/no/such/dir") == []

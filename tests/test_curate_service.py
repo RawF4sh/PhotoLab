@@ -59,6 +59,19 @@ def test_curate_job_lifecycle():
     assert all("source" in it for it in snap["items"])
 
 
+def test_curate_run_validates_options_like_curate_folder():
+    import pytest
+
+    src = _corpus(3)
+    out = tempfile.mkdtemp()
+    with pytest.raises(ValueError):                 # unified validation: bad mode rejected
+        service.curate_run(src, out, {"mode": "bogus"})
+    with pytest.raises(ValueError):                 # aesthetic mode needs a model
+        service.curate_run(src, out, {"mode": "aesthetic"})
+    with pytest.raises(ValueError):                 # count must be >= 1 (no silent →200)
+        service.curate_run(src, out, {"mode": "best", "count": 0})
+
+
 def test_curate_job_reports_error_on_bad_dir():
     job = curate_jobs.start("/no/such/folder", None, {"mode": "diverse"})
     for _ in range(60):

@@ -53,6 +53,18 @@ class Job:
 
 _JOBS: dict[str, Job] = {}
 _LOCK = threading.Lock()
+_JOB_CAP = 50                        # keep the registry from growing without bound over a session
+
+
+def _prune_locked() -> None:
+    """Evict the oldest terminal jobs once the registry exceeds the cap. Running/paused jobs are
+    never dropped. Caller must hold _LOCK."""
+    if len(_JOBS) <= _JOB_CAP:
+        return
+    terminal = sorted((j for j in _JOBS.values() if j.status in ("done", "cancelled", "error")),
+                      key=lambda j: j.created)
+    for j in terminal[:len(_JOBS) - _JOB_CAP]:
+        _JOBS.pop(j.id, None)
 
 
 def _safety(result) -> tuple[str, str]:
@@ -72,13 +84,16 @@ def _safety(result) -> tuple[str, str]:
 
 def start(input_dir, files, out_dir, opts, configs_dir=None) -> Job:
     srcs = list(files) if files else _list_images(input_dir)
+    if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
+        raise ValueError("no supported images found to process")
     if not out_dir:
-        base = input_dir or (os.path.dirname(srcs[0]) if srcs else os.getcwd())
+        base = input_dir or os.path.dirname(srcs[0])
         out_dir = os.path.join(base, "AutoEdit Exports")
     job = Job(id=uuid.uuid4().hex[:12], out_dir=out_dir, opts=dict(opts),
               items=[Item(name=os.path.basename(s), src=s) for s in srcs], created=time.time())
     with _LOCK:
         _JOBS[job.id] = job
+        _prune_locked()
     threading.Thread(target=_run, args=(job, configs_dir), daemon=True).start()
     return job
 
@@ -109,6 +124,7 @@ def _run(job: Job, configs_dir) -> None:
             groups = consistency.plan_groups(measured)
 
         durs: list[float] = []
+        taken: set[str] = set()          # de-dupe same-stem outputs across the job's source list
         for i, item in enumerate(job.items):
             if job.cancelled:
                 job.status = "cancelled"
@@ -128,7 +144,7 @@ def _run(job: Job, configs_dir) -> None:
                 with INFERENCE_LOCK:
                     out_rgb, result = pipe.process_one(item.src, do_apply=True,
                                                        exposure_bias=bias, batch_group=gid)
-                image_out, sidecar = emit.output_paths(job.out_dir, item.src, cfg.out_format)
+                image_out, sidecar = emit.output_paths(job.out_dir, item.src, cfg.out_format, taken)
                 emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
                 emit.write_sidecar(result, sidecar)
                 item.out, item.scene = image_out, result.scene
@@ -152,6 +168,11 @@ def get(job_id: str) -> Job | None:
 
 
 def control(job: Job, action: str) -> None:
+    # Controls only apply to a live job. Acting on a done/cancelled/error job would flip its
+    # status back to "paused"/"running" forever (the worker has already exited and can't correct
+    # it), so the UI would poll a finished batch as eternally running.
+    if job.status not in ("running", "paused"):
+        return
     if action == "pause":
         job.paused, job.status = True, "paused"
     elif action == "resume":

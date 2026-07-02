@@ -13,7 +13,7 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -63,6 +63,7 @@ def get(job_id: str) -> CurateJob | None:
 
 def snapshot(job: CurateJob) -> dict:
     m = job.manifest or {}
+    items = m.get("items", [])
     return {
         "id": job.id,
         "status": job.status,
@@ -72,9 +73,10 @@ def snapshot(job: CurateJob) -> dict:
         "selected": m.get("selected", 0),
         "total_scanned": m.get("total_scanned", 0),
         "contact_sheet": os.path.join(job.out_dir, "contact-sheet.html") if job.status == "done" else None,
+        "items_truncated": len(items) > 400,   # so the UI can say "400 of N" not just "400"
         "items": [
             {"source": it.get("source_path"), "thumb": it.get("thumb_path"),
              "bucket": it.get("bucket", ""), "rank": it.get("rank")}
-            for it in m.get("items", [])[:400]
+            for it in items[:400]
         ],
     }

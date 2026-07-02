@@ -381,6 +381,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
     <button class="tbtn" id="cullBtn" aria-label="Cull a folder" title="Copy a curated subset of a folder for review/training (originals untouched)">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull</button>
+    <button class="tbtn" id="reviewBtn" aria-label="Review labels" title="Review the current folder and save keep/reject labels for training">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Review</button>
     <button class="tbtn" id="datasetBtn" aria-label="Build training dataset" title="Pair originals with edited targets and validate them for training (copy-only)">
       <svg viewBox="0 0 24 24"><path d="M4 7h7v10H4zM13 7h7v10h-7z"/></svg>Dataset</button>
     <button class="tbtn primary" id="runBtn" disabled aria-label="Run batch">
@@ -524,10 +526,22 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="modal-h"><h3 id="reviewTitle">Review &amp; export</h3>
       <div style="display:flex;gap:8px">
         <span class="tip" id="reviewLblStatus"></span>
+        <button class="minibtn" id="reviewPick">Folder…</button>
         <button class="minibtn" id="reviewClose">Close</button>
         <button class="tbtn" id="saveLabelsBtn" title="Save keep/reject + tags for training (M2)"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Save labels</button>
         <button class="tbtn primary" id="exportBtn"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l4-4m-4 4l-4-4M5 21h14"/></svg>Export</button></div></div>
-    <div class="modal-b"><div class="rgrid" id="reviewGrid"></div></div>
+    <div class="modal-b">
+      <div class="note" style="margin-bottom:12px"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+        Labels are append-only training notes. They do not move, rename, or delete photos.</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <span class="folder" id="reviewDir" style="max-width:520px">No review folder loaded</span>
+        <span class="sp" style="flex:1"></span>
+        <span class="bdg b-done"><i></i><span id="reviewKeep">0</span> keep</span>
+        <span class="bdg b-fail"><i></i><span id="reviewReject">0</span> reject</span>
+        <span class="bdg b-review"><i></i><span id="reviewTodo">0</span> unlabeled</span>
+      </div>
+      <div class="rgrid" id="reviewGrid"></div>
+    </div>
   </div></div>
 
   <!-- ===== culling modal ===== -->
@@ -593,43 +607,6 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <input class="tinput" type="password" placeholder="sk-ant-… (stored locally)" style="height:34px"/></div>
       <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
         Runs fully on-device. Only a thumbnail + stats leave the machine, and only if you turn the planner on — full-resolution pixels never do.</div>
-    </div>
-  </div></div>
-
-  <!-- ===== cull modal (M1) ===== -->
-  <div class="scrim" id="cullScrim"><div class="modal" style="width:min(880px,94vw)">
-    <div class="modal-h"><h3 id="cullTitle">Cull a folder</h3>
-      <div style="display:flex;gap:8px"><button class="minibtn" id="cullClose">Close</button></div></div>
-    <div class="modal-b">
-      <div class="note"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-        Copies a curated subset into <b>&lt;folder&gt;/AutoEdit Cull/selected</b> with a contact sheet. Your originals are never moved, renamed, or deleted.</div>
-      <div style="display:flex;gap:10px;align-items:center;margin:14px 0 4px">
-        <button class="tbtn" id="cullPick"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Choose folder…</button>
-        <div class="folder" id="cullDir" style="max-width:520px">No folder chosen</div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px">
-        <div class="field"><label>Mode</label>
-          <div class="seg" id="cullModeSeg" style="width:100%">
-            <button class="on" data-m="diverse">Diverse</button><button data-m="best">Best</button><button data-m="aesthetic">Aesthetic</button></div>
-          <div class="tip" style="margin-top:5px">Diverse = cover the range of looks · Best = heuristic keepers · Aesthetic = learned scorer.</div></div>
-        <div class="field"><label>How many to keep <span class="muted" id="cullCountVal">200</span></label>
-          <input type="range" class="range" id="cullCount" min="10" max="500" step="10" value="200"/>
-          <div style="display:flex;gap:16px;margin-top:8px">
-            <label class="ck-row"><input type="checkbox" id="cullRecursive" checked/> Scan subfolders</label>
-            <label class="ck-row"><input type="checkbox" id="cullXmp"/> Write .xmp sidecars</label></div></div>
-      </div>
-      <div id="cullAes" style="display:none;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin-top:4px">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span class="cap">Aesthetic critic</span>
-          <button class="minibtn" id="aesLoad">Load model…</button>
-          <span class="tip" id="aesModel" style="flex:1;min-width:120px">no model — uses heuristic until you load/train one</span>
-          <button class="minibtn" id="aesScore">Score only</button>
-          <button class="minibtn" id="aesTrain">Train…</button></div>
-        <div class="tip" id="aesStatus" style="margin-top:6px"></div>
-      </div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
-        <button class="tbtn primary" id="cullRun" disabled><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Cull folder</button>
-        <span class="tip" id="cullStatus"></span></div>
-      <div class="rgrid" id="cullGrid" style="margin-top:16px"></div>
     </div>
   </div></div>
 
@@ -769,7 +746,7 @@ $('#palStrength').addEventListener('input',e=>{STATE.paletteStrength=(+e.target.
 $('#palStrength').addEventListener('change',()=>markPreviewStale());
 
 /* ---- reference matching (M5) ------------------------------------------- */
-$('#refLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+$('#refLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file',{method:'POST'})).json();if(!path)return;
   STATE.reference=path;$('#refName').textContent=path.split('/').pop();markPreviewStale();}catch(e){alert(e);}};
 $('#refClear').onclick=()=>{STATE.reference='';$('#refName').textContent='none — match a hero edit’s look region-by-region';markPreviewStale();};
 $('#refStrength').addEventListener('input',e=>{STATE.referenceStrength=(+e.target.value)/100;
@@ -959,11 +936,11 @@ async function loadFolderPath(path){
     renderFilm();syncRun();selectPhoto(0);
 }
 async function pickFolder(){if(!STATE.served){standaloneNote();return;}
-  try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+  try{const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
     await loadFolderPath(path);
   }catch(e){alert('Could not open folder: '+e);}}
 async function pickSingle(){if(!STATE.served){standaloneNote();return;}
-  try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+  try{const {path}=await(await fetch('/api/pick?kind=file',{method:'POST'})).json();if(!path)return;
     const name=path.split('/').pop(),raw=/\.(dng|cr2|cr3|nef|nrw|arw|sr2|srf|raf|orf|rw2|pef|srw|raw|3fr|mrw|dcr|kdc)$/i.test(name);
     STATE.dir=null;STATE.mode='single';STATE.run.clear();STATE.hasPairs=false;
     STATE.files=[mkItem({stem:name.replace(/\.[^.]+$/,''),raw:raw?name:null,pixel:raw?null:name,members:[{name,kind:raw?'raw':'pixel'}]},'')];
@@ -1008,13 +985,13 @@ function openCull(){
 $('#cullBtn').onclick=openCull;
 $('#cullClose').onclick=()=>$('#cullScrim').classList.remove('open');
 $('#cullPickInput').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
-  const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+  const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
   STATE.cull.input=path;STATE.cull.out=defaultCullOut(path);syncCullForm();};
 $('#cullPickOut').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
-  const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+  const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
   STATE.cull.out=path;syncCullForm();};
 $('#cullPickModel').onclick=async()=>{if(!STATE.served){standaloneNote();return;}
-  const {path}=await(await fetch('/api/pick?kind=json')).json();if(!path)return;
+  const {path}=await(await fetch('/api/pick?kind=json',{method:'POST'})).json();if(!path)return;
   STATE.cull.model=path;syncCullForm();};
 $('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-cmode]');if(!b)return;
   STATE.cull.mode=b.dataset.cmode;syncCullForm();});
@@ -1044,8 +1021,10 @@ $('#cullRun').onclick=async()=>{
       <div class="kv"><b>Manifest</b><span class="v">${esc(res.candidates_json)}</span></div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="minibtn" id="cullLoadSelected">Load selected</button>
+        <button class="minibtn" id="cullReviewSelected">Review selected</button>
         <button class="minibtn" id="cullOpenSheet">Open contact sheet</button></div>`;
     $('#cullLoadSelected').onclick=async()=>{await loadFolderPath(res.selected_dir);$('#cullScrim').classList.remove('open');};
+    $('#cullReviewSelected').onclick=async()=>{await openReviewFolder(res.selected_dir,'cull');$('#cullScrim').classList.remove('open');};
     $('#cullOpenSheet').onclick=()=>window.open('file://'+res.contact_sheet);
   }catch(e){$('#cullStatus').textContent='Cull failed: '+e;}
   finally{$('#cullRun').disabled=false;}
@@ -1094,45 +1073,96 @@ $('#cancelBtn').onclick=()=>{if(JOB)fetch('/api/jobs/'+JOB.id+'/control',{method
 const REVIEW_TAGS=[['Too dark','too_dark'],['Too blue','too_blue'],['Too warm','too_warm'],
   ['Fake','fake_looking'],['Content changed','changed_content'],['Halos','halos'],['Banding','banding'],
   ['Good style','good_style'],['Good preservation','good_preservation']];
-const REVIEW={out_dir:'',labels:{}};  /* image → {decision, tags:Set} */
-function lblFor(img){return REVIEW.labels[img]||(REVIEW.labels[img]={decision:'',tags:new Set()});}
-function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';REVIEW.out_dir=j.out_dir||'';REVIEW.labels={};
-  $('#reviewLblStatus').textContent='';
-  $('#reviewTitle').textContent=`Review · ${j.done} edited · ${j.review} review · ${j.failed} failed → ${j.out_dir||''}`;
-  j.items.slice(0,300).forEach(it=>{const after=it.out?thumbURL(it.out,520,j.id||Date.now()):thumbURL(it.src,520);
+const REVIEW={out_dir:'',labels:{},items:[],source:'edit'};  /* image → {decision, tags:Set, note} */
+const basename=p=>String(p||'').split('/').pop();
+const dirname=p=>String(p||'').replace(/\/[^/]*$/,'');
+function lblFor(img){return REVIEW.labels[img]||(REVIEW.labels[img]={decision:'',tags:new Set(),note:''});}
+function setLbl(img,rec){REVIEW.labels[img]={decision:rec.decision||'',tags:new Set(rec.tags||[]),note:rec.note||''};}
+function reviewItemsFromCurrent(){
+  if(!real())return null;
+  const items=STATE.files.map(f=>({name:f.name,src:f.path,status:'waiting'}));
+  return {out_dir:STATE.dir||dirname(STATE.files[0].path),items,total:items.length,source:'cull',title:'Review current folder'};
+}
+async function openReviewFolder(dir,source='cull'){
+  const groups=await(await fetch('/api/groups?dir='+encodeURIComponent(dir))).json();
+  if(groups.error){alert(groups.error);return;}
+  const items=groups.map(g=>{const it=mkItem(g,dir);return {name:it.name,src:it.path,status:'waiting'};});
+  renderReview({out_dir:dir,items,total:items.length,source,title:'Review folder'});
+  $('#reviewScrim').classList.add('open');
+}
+async function pickReviewFolder(){if(!STATE.served){standaloneNote();return;}
+  try{const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(path)await openReviewFolder(path,'cull');}
+  catch(e){alert('Could not open review folder: '+e);}}
+$('#reviewBtn').onclick=()=>{const cur=reviewItemsFromCurrent();if(cur){renderReview(cur);$('#reviewScrim').classList.add('open');}else pickReviewFolder();};
+$('#reviewPick').onclick=pickReviewFolder;
+function updateReviewStats(){
+  let keep=0,reject=0,labeled=0;
+  REVIEW.items.forEach(it=>{const l=REVIEW.labels[it.key];if(l&&(l.decision||l.tags.size||l.note)){labeled++;
+    if(l.decision==='keep')keep++; if(l.decision==='reject')reject++;}});
+  $('#reviewKeep').textContent=keep;$('#reviewReject').textContent=reject;
+  $('#reviewTodo').textContent=Math.max(0,REVIEW.items.length-labeled);
+}
+function syncReviewCard(c,key){
+  const l=lblFor(key);
+  c.querySelectorAll('.lbtn').forEach(x=>x.classList.toggle('on',x.dataset.d===l.decision));
+  c.querySelectorAll('.lbl-tags .chip').forEach(x=>x.classList.toggle('on',l.tags.has(x.dataset.tag)));
+  const note=c.querySelector('[data-note]'); if(note)note.value=l.note||'';
+}
+function hydrateReview(outDir){
+  if(!outDir)return;
+  fetch('/api/review/labels?out_dir='+encodeURIComponent(outDir)).then(r=>r.json()).then(j=>{
+    if(j.error)return;
+    Object.entries(j.latest||{}).forEach(([img,rec])=>setLbl(img,rec));
+    document.querySelectorAll('#reviewGrid .rcard').forEach(c=>syncReviewCard(c,c.dataset.key));
+    $('#reviewLblStatus').textContent=j.total_records?`loaded ${j.total_records} saved labels`:'';
+    updateReviewStats();
+  }).catch(()=>{});
+}
+function renderReview(j){const g=$('#reviewGrid');g.innerHTML='';REVIEW.out_dir=j.out_dir||'';REVIEW.labels={};REVIEW.source=j.source||'edit';
+  $('#reviewLblStatus').textContent='';$('#reviewDir').textContent=REVIEW.out_dir||'No review folder loaded';
+  $('#reviewTitle').textContent=j.title||`Review · ${j.done||0} edited · ${j.review||0} review · ${j.failed||0} failed`;
+  REVIEW.items=(j.items||[]).slice(0,300).map(it=>({...it,key:it.out||it.src}));
+  REVIEW.items.forEach(it=>{const after=it.out?thumbURL(it.out,520,j.id||Date.now()):thumbURL(it.src,520);
     const key=it.out||it.src;
     const tail=it.status==='failed'?`<span class="bdg b-fail"><i></i>${it.error?'failed':'unreadable'}</span>`
-      :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`:`<span class="bdg b-done"><i></i>safe</span>`;
+      :it.warn?`<span class="bdg b-review"><i></i>${it.warn}</span>`
+      :it.out?`<span class="bdg b-done"><i></i>safe</span>`:`<span class="bdg b-wait"><i></i>candidate</span>`;
     const c=el('div','rcard');
+    c.dataset.key=key;
     c.innerHTML=`<div class="ph"><img class="rv" src="${after}" alt="${it.name}"><button class="ba2">Before</button></div>
       <div class="ft"><div class="nm">${it.name}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:7px">
         <span class="tip" style="text-transform:capitalize">${it.scene||''}</span>${tail}</div>
       <div class="lbl-row"><button class="lbtn keep" data-d="keep">Keep</button><button class="lbtn rej" data-d="reject">Reject</button></div>
-      <div class="lbl-tags"></div></div>`;
+      <div class="lbl-tags"></div>
+      <input class="tinput" data-note placeholder="note" style="height:28px;margin-top:7px"></div>`;
     const img=c.querySelector('.rv'),btn=c.querySelector('.ba2');let af=true;
+    if(!it.out)btn.style.display='none';
     btn.onclick=()=>{af=!af;img.src=af?after:thumbURL(it.src,520);btn.textContent=af?'Before':'After';};
     // keep/reject
     c.querySelectorAll('.lbtn').forEach(b=>b.onclick=()=>{const l=lblFor(key);
       l.decision=(l.decision===b.dataset.d)?'':b.dataset.d;
-      c.querySelectorAll('.lbtn').forEach(x=>x.classList.toggle('on',x.dataset.d===l.decision));});
+      c.querySelectorAll('.lbtn').forEach(x=>x.classList.toggle('on',x.dataset.d===l.decision));updateReviewStats();});
     // tag chips
     const tg=c.querySelector('.lbl-tags');
     REVIEW_TAGS.forEach(([lab,id])=>{const ch=el('button','chip',lab);
-      ch.onclick=()=>{const l=lblFor(key);l.tags.has(id)?l.tags.delete(id):l.tags.add(id);ch.classList.toggle('on');};
+      ch.dataset.tag=id;
+      ch.onclick=()=>{const l=lblFor(key);l.tags.has(id)?l.tags.delete(id):l.tags.add(id);ch.classList.toggle('on');updateReviewStats();};
       tg.appendChild(ch);});
-    g.appendChild(c);});}
+    c.querySelector('[data-note]').oninput=e=>{lblFor(key).note=e.target.value;updateReviewStats();};
+    g.appendChild(c);});
+  hydrateReview(REVIEW.out_dir);updateReviewStats();}
 $('#reviewClose').onclick=()=>$('#reviewScrim').classList.remove('open');
-$('#exportBtn').onclick=()=>$('#reviewScrim').classList.remove('open'); /* outputs already written to out_dir */
+$('#exportBtn').onclick=()=>{$('#reviewLblStatus').textContent=REVIEW.out_dir?`CSV/JSON export lives in ${REVIEW.out_dir}`:'Save labels first.';};
 $('#saveLabelsBtn').onclick=()=>{
   const records=Object.entries(REVIEW.labels)
-    .filter(([img,l])=>l.decision||l.tags.size)
-    .map(([img,l])=>({image:img,decision:l.decision,tags:[...l.tags],source:'edit'}));
+    .filter(([img,l])=>l.decision||l.tags.size||l.note)
+    .map(([img,l])=>({image:img,decision:l.decision,tags:[...l.tags],note:l.note||'',source:REVIEW.source}));
   if(!records.length){$('#reviewLblStatus').textContent='no labels yet';return;}
   $('#reviewLblStatus').textContent='saving…';
   fetch('/api/review/labels',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({out_dir:REVIEW.out_dir,labels:records})})
-    .then(r=>r.json()).then(j=>{$('#reviewLblStatus').textContent=j.error?j.error:`saved ${j.added} → review-labels.csv (${j.total} total)`;})
+    .then(r=>r.json()).then(j=>{$('#reviewLblStatus').textContent=j.error?j.error:`saved ${j.added} → ${j.csv} (${j.total} total)`;})
     .catch(e=>$('#reviewLblStatus').textContent=String(e));};
 
 /* ---- variants (M7): render + score + rank several recipes for this photo --- */
@@ -1142,7 +1172,7 @@ function runVariants(){const p=STATE.files[STATE.sel];
   $('#varTitle').textContent='Variants — '+p.name;
   $('#varStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> rendering &amp; scoring recipes…';
   $('#varGrid').innerHTML='';
-  const body=Object.assign(editOptions(),{file:p.path,decider:'rules',aesthetic_model:CULL.model||''});
+  const body=Object.assign(editOptions(),{file:p.path,decider:'rules',aesthetic_model:STATE.cull.model||''});
   fetch('/api/variants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{if(j.error){$('#varStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}renderVariants(j);})
     .catch(e=>$('#varStatus').textContent=String(e));}
@@ -1173,82 +1203,15 @@ $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
 /* edit engine (M6): rules | learned recipe predictor */
 $('#engineSeg').addEventListener('click',e=>{const b=e.target.closest('[data-eng]');if(!b)return;
   STATE.decider=b.dataset.eng;$('#recipeRow').style.display=STATE.decider==='learned'?'':'none';markPreviewStale();});
-$('#recipeLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
+$('#recipeLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file',{method:'POST'})).json();if(!path)return;
   STATE.recipeModel=path;$('#recipeName').textContent=path.split('/').pop();markPreviewStale();}catch(e){alert(e);}};
-
-/* ---- cull (M1): curate a folder subset for review/training --------------- */
-const CULL={dir:null,mode:'diverse',count:200,job:null,poll:null,model:null};
-$('#cullBtn').onclick=()=>{if(!STATE.served){standaloneNote();return;}$('#cullScrim').classList.add('open');};
-$('#cullClose').onclick=()=>{clearInterval(CULL.poll);$('#cullScrim').classList.remove('open');};
-$('#cullModeSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(!b)return;CULL.mode=b.dataset.m;
-  $('#cullAes').style.display=CULL.mode==='aesthetic'?'':'none';});
-/* aesthetic critic (M4): load a model, score-only, or train one */
-$('#aesLoad').onclick=async()=>{try{const {path}=await(await fetch('/api/pick?kind=file')).json();if(!path)return;
-  CULL.model=path;$('#aesModel').textContent=path.split('/').pop();}catch(e){alert(e);}};
-$('#aesScore').onclick=()=>{if(!CULL.dir){$('#aesStatus').textContent='choose a folder first';return;}
-  if(!CULL.model){$('#aesStatus').textContent='load a model first';return;}
-  $('#aesStatus').innerHTML='<span class="spin" style="width:11px;height:11px;border-width:2px;display:inline-block;vertical-align:-2px"></span> scoring…';
-  fetch('/api/aesthetic/score',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({folder:CULL.dir,model:CULL.model,recursive:$('#cullRecursive').checked})})
-    .then(r=>r.json()).then(j=>{if(j.error){$('#aesStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
-      $('#aesStatus').textContent=`scored ${j.count} photos (best first)`;renderScored(j.items);})
-    .catch(e=>$('#aesStatus').textContent=String(e));};
-function renderScored(items){const g=$('#cullGrid');g.innerHTML='';(items||[]).forEach(it=>{const c=el('div','rcard');
-  const pr=it.priority>0.6?`<span class="bdg b-review"><i></i>review</span>`:'';
-  c.innerHTML=`<div class="ph"><img src="${thumbURL(it.path,360)}" alt=""></div>
-    <div class="ft"><div class="nm">${(it.path||'').split('/').pop()}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-      <span class="tip">#${it.rank} · score ${it.score}</span>${pr}</div></div>`;
-  g.appendChild(c);});}
-$('#aesTrain').onclick=async()=>{if(!CULL.dir){$('#aesStatus').textContent='choose the images folder first';return;}
-  let path;try{path=(await(await fetch('/api/pick?kind=file')).json()).path;}catch(e){return;}
-  if(!path)return;
-  $('#aesStatus').innerHTML='<span class="spin" style="width:11px;height:11px;border-width:2px;display:inline-block;vertical-align:-2px"></span> training…';
-  fetch('/api/aesthetic/train',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({images_dir:CULL.dir,labels_csv:path})})
-    .then(r=>r.json()).then(j=>{if(j.error){$('#aesStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
-      pollTrain(j.id);}).catch(e=>$('#aesStatus').textContent=String(e));};
-function pollTrain(id){const t=setInterval(()=>{fetch('/api/aesthetic/jobs/'+id).then(r=>r.json()).then(j=>{
-    if(j.status==='running')return;clearInterval(t);
-    if(j.status==='error'){$('#aesStatus').innerHTML=`<span style="color:var(--danger)">${j.error}</span>`;return;}
-    CULL.model=j.model_path;$('#aesModel').textContent=(j.model_path||'').split('/').pop();
-    $('#aesStatus').textContent=`trained on ${j.samples} images (skipped ${j.skipped}) → model loaded`;
-  }).catch(()=>{});},600);}
-$('#cullCount').addEventListener('input',e=>{CULL.count=+e.target.value;$('#cullCountVal').textContent=e.target.value;});
-async function cullPick(){try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
-    CULL.dir=path;$('#cullDir').textContent=path;$('#cullRun').disabled=false;
-    $('#cullStatus').textContent='';$('#cullGrid').innerHTML='';
-  }catch(e){alert('Could not open folder: '+e);}}
-$('#cullPick').onclick=cullPick;
-$('#cullRun').onclick=()=>{if(!CULL.dir)return;
-  $('#cullRun').disabled=true;$('#cullGrid').innerHTML='';
-  $('#cullStatus').innerHTML='<span class="spin" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:-2px"></span> scanning &amp; selecting…';
-  const body={input_dir:CULL.dir,mode:CULL.mode,count:CULL.count,
-    recursive:$('#cullRecursive').checked,emit_xmp:$('#cullXmp').checked,aesthetic_model:CULL.model};
-  fetch('/api/curate/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(r=>r.json()).then(j=>{if(j.error){cullDone(null,j.error);return;}CULL.job=j;pollCull();})
-    .catch(e=>cullDone(null,String(e)));};
-function pollCull(){clearInterval(CULL.poll);CULL.poll=setInterval(()=>{
-  fetch('/api/curate/jobs/'+CULL.job.id).then(r=>r.json()).then(j=>{
-    if(j.status==='running')return;clearInterval(CULL.poll);
-    if(j.status==='error')cullDone(null,j.error);else cullDone(j);
-  }).catch(()=>{});},500);}
-function cullDone(j,err){$('#cullRun').disabled=false;
-  if(err){$('#cullStatus').innerHTML=`<span style="color:var(--danger)">${err}</span>`;return;}
-  $('#cullStatus').innerHTML=`Selected <b>${j.selected}</b> of ${j.total_scanned} scanned (${j.mode}) → copied to <b>${j.out_dir}</b>`;
-  const g=$('#cullGrid');g.innerHTML='';
-  (j.items||[]).forEach(it=>{const c=el('div','rcard');
-    c.innerHTML=`<div class="ph"><img src="${thumbURL(it.thumb||it.source,360)}" alt=""></div>
-      <div class="ft"><div class="nm">${(it.source||'').split('/').pop()}</div>
-      <div class="tip" style="margin-top:4px">#${it.rank} · ${it.bucket}</div></div>`;
-    g.appendChild(c);});}
 
 /* ---- dataset builder (M3) ----------------------------------------------- */
 const DS={orig:null,tgt:null};
 $('#datasetBtn').onclick=()=>{if(!STATE.served){standaloneNote();return;}$('#dsScrim').classList.add('open');};
 $('#dsClose').onclick=()=>$('#dsScrim').classList.remove('open');
 function dsReady(){const ok=DS.orig&&DS.tgt;$('#dsValidate').disabled=!ok;$('#dsBuild').disabled=!ok;}
-async function dsPick(which){try{const {path}=await(await fetch('/api/pick?kind=folder')).json();if(!path)return;
+async function dsPick(which){try{const {path}=await(await fetch('/api/pick?kind=folder',{method:'POST'})).json();if(!path)return;
     DS[which]=path;$(which==='orig'?'#dsOrigDir':'#dsTgtDir').textContent=path;dsReady();
     $('#dsStatus').textContent='';$('#dsGrid').innerHTML='';
   }catch(e){alert('Could not open folder: '+e);}}

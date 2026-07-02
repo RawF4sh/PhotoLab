@@ -62,3 +62,37 @@ def test_job_isolates_a_bad_image(tmp_path):
     assert snap["status"] == "done" and snap["total"] == 2
     assert snap["failed"] == 1                       # bad.jpg fails, good.jpg succeeds
     assert any(i["status"] == "failed" and i["error"] for i in snap["items"])
+
+
+def test_start_on_empty_dir_raises(tmp_path):
+    import pytest
+
+    d = tmp_path / "empty"; d.mkdir()
+    with pytest.raises(ValueError):                  # was a silent 0-item "done"
+        jobs.start(str(d), None, str(tmp_path / "o"), {"backend": "stub"})
+
+
+def test_control_is_noop_on_finished_job(tmp_path):
+    d = tmp_path / "in"; d.mkdir()
+    _img(d / "a.jpg")
+    job = jobs.start(str(d), None, str(tmp_path / "o"), {"backend": "stub"})
+    _wait(job)
+    assert job.status == "done"
+    jobs.control(job, "pause")                       # must not resurrect a finished batch
+    assert job.status == "done"
+    jobs.control(job, "resume")
+    assert job.status == "done"
+
+
+def test_registry_prunes_terminal_jobs(tmp_path):
+    d = tmp_path / "in"; d.mkdir()
+    _img(d / "a.jpg")
+    saved = dict(jobs._JOBS)
+    try:
+        jobs._JOBS.clear()
+        for _ in range(jobs._JOB_CAP + 5):
+            _wait(jobs.start(str(d), None, str(tmp_path / "o"), {"backend": "stub"}))
+        assert len(jobs._JOBS) <= jobs._JOB_CAP      # oldest terminal jobs evicted
+    finally:
+        jobs._JOBS.clear()
+        jobs._JOBS.update(saved)
