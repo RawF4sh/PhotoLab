@@ -46,10 +46,21 @@ def test_preview_returns_before_after(tmp_path):
     PILImage.fromarray(a, "RGB").save(str(p))
 
     out = service.preview(str(p), {"style": "editorial", "backend": "stub"})
-    assert out["before"].startswith("data:image/png;base64,")  # lossless PNG → no JPEG banding in skies
-    assert out["after"].startswith("data:image/png;base64,")
+    assert out["before"].startswith("data:image/webp;base64,")  # lossless WebP → no JPEG banding in skies
+    assert out["after"].startswith("data:image/webp;base64,")
     assert out["result"]["scene"] == "people"
     assert out["after"] != out["before"]  # the edit changed the pixels
+
+
+def test_preview_webp_is_lossless(tmp_path):
+    # the anti-banding dither must survive the preview encoding, so WebP must be pixel-exact (like PNG)
+    g = np.linspace(0.2, 0.85, 512)[:, None].repeat(384, 1)
+    rgb = np.repeat(g[..., None], 3, axis=2).astype(np.float32)
+    webp = base64.b64decode(service._img_b64(rgb, max_px=512, fmt="webp").split(",", 1)[1])
+    png = base64.b64decode(service._img_b64(rgb, max_px=512, fmt="png").split(",", 1)[1])
+    aw = np.asarray(PILImage.open(io.BytesIO(webp)))
+    ap = np.asarray(PILImage.open(io.BytesIO(png)))
+    assert np.array_equal(aw, ap)          # identical decoded pixels → lossless
 
 
 def test_preview_encoder_dithers_after_resize():
@@ -91,6 +102,41 @@ def test_curate_folder_writes_copy_only_outputs(tmp_path):
     assert len([p for p in (out / "selected").iterdir() if p.suffix.lower() != ".xmp"]) == 1
     assert len(list((out / "selected").glob("*.xmp"))) == 1
     assert (src / "one.jpg").exists() and (src / "two.jpg").exists()
+
+
+def test_thumb_px_is_clamped(tmp_path):
+    # a hostile/errant px must not skip the downscale and return a full-res image
+    PILImage.fromarray(np.full((1600, 2400, 3), 128, np.uint8), "RGB").save(str(tmp_path / "big.jpg"))
+    im = PILImage.open(io.BytesIO(service.thumb_bytes(str(tmp_path / "big.jpg"), px=100000)))
+    assert max(im.size) <= 2048
+
+
+def test_preview_result_carries_no_secrets(tmp_path):
+    import json
+
+    PILImage.fromarray(np.full((64, 64, 3), 120, np.uint8), "RGB").save(str(tmp_path / "p.jpg"))
+    out = service.preview(str(tmp_path / "p.jpg"),
+                          {"backend": "stub", "api_key": "sk-must-not-leak", "allow_cloud": True})
+    blob = json.dumps(out["result"])              # the sidecar payload the UI receives
+    assert "sk-must-not-leak" not in blob and "api_key" not in blob
+
+
+def test_missing_required_field_returns_named_400():
+    """A missing body field should name itself, not surface as a bare KeyError. Skipped without
+    the [ui] extra so the zero-dep runner stays green."""
+    try:
+        from fastapi.testclient import TestClient
+    except Exception:
+        return
+    from autoedit import paths
+    from autoedit.web import app as webapp
+
+    client = TestClient(webapp.create_app(paths.configs_dir(), local_only=True),
+                        base_url="http://localhost")
+    r = client.post("/api/datasets/validate", json={})
+    assert r.status_code == 400 and "originals_dir" in r.json()["error"]
+    r2 = client.post("/api/run", json={})
+    assert r2.status_code == 400 and "input_dir" in r2.json()["error"]
 
 
 def test_check_image_rejects_non_image_and_missing(tmp_path):

@@ -8,7 +8,7 @@ import os
 from . import aesthetic_jobs, curate_jobs, jobs, service
 
 
-def create_app(configs_dir: str = "configs"):
+def create_app(configs_dir: str = "configs", local_only: bool = True):
     from urllib.parse import urlparse
 
     from fastapi import Body, FastAPI, Request, Response
@@ -17,11 +17,24 @@ def create_app(configs_dir: str = "configs"):
     app = FastAPI(title="AutoEdit")
     static_dir = os.path.join(os.path.dirname(__file__), "static")
 
-    _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+    _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
     @app.middleware("http")
     async def _origin_guard(request: Request, call_next):
-        """Basic CSRF/cross-origin defense: mutating requests must come from a local origin."""
+        """Local-only guard. Two independent defenses:
+
+        1. DNS-rebinding: a hostile web page whose domain re-resolves to 127.0.0.1 would otherwise
+           be *same-origin* to the browser and could READ our responses (the user's photo folders,
+           thumbnails at any resolution). We reject any request whose Host header isn't a loopback
+           name — a rebinding request carries the attacker's Host, not localhost. Applies to every
+           method (GETs are the read vector). Disabled when the server is intentionally bound
+           off-machine (`--unsafe-network`), where the Host is a LAN name we can't predict.
+        2. CSRF: mutating requests must additionally carry a local (or absent) Origin."""
+        if local_only:
+            host = urlparse(f"//{request.headers.get('host', '')}").hostname
+            if host is not None and host not in _LOCAL_HOSTS:
+                return JSONResponse(status_code=403,
+                                    content={"error": "non-local Host header blocked (DNS-rebinding defense)"})
         if request.method in ("POST", "PUT", "DELETE", "PATCH"):
             origin = request.headers.get("origin")
             if origin and urlparse(origin).hostname not in _LOCAL_HOSTS:
@@ -36,6 +49,12 @@ def create_app(configs_dir: str = "configs"):
             return JSONResponse(status_code=403, content={"error": str(e)})
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
+
+    def _require(payload: dict, *keys: str) -> None:
+        """Fail with a field-naming 400 instead of a bare KeyError like {"error": "'input_dir'"}."""
+        missing = [k for k in keys if not payload.get(k)]
+        if missing:
+            raise ValueError("missing required field(s): " + ", ".join(missing))
 
     def _page(name: str) -> str:
         with open(os.path.join(static_dir, name), encoding="utf-8") as fh:
@@ -59,10 +78,14 @@ def create_app(configs_dir: str = "configs"):
 
     @app.get("/api/list")
     def listing(dir: str = ""):
+        if not dir:
+            return []
         return guard(lambda: (service.ensure_allowed(dir), service.list_images(dir))[1])
 
     @app.get("/api/groups")
     def groups(dir: str = ""):
+        if not dir:
+            return []
         # RAW+JPEG pairs collapsed into one logical photo (the Studio UI consumes this)
         return guard(lambda: (service.ensure_allowed(dir), service.group_images(dir))[1])
 
@@ -77,8 +100,10 @@ def create_app(configs_dir: str = "configs"):
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
 
-    @app.get("/api/pick")
+    @app.post("/api/pick")
     def pick(kind: str = "folder"):
+        # POST (not GET): picking pops a native dialog and registers a new approved workspace
+        # root — a side effect that must sit behind the mutating-method origin guard above.
         return {"path": service.pick_path(kind)}
 
     @app.post("/api/preview")
@@ -90,15 +115,25 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/run")
     def run(payload: dict = Body(...)):
         def go():
-            service.ensure_allowed(payload["input_dir"], payload.get("out_dir"))
-            return service.run_batch(payload["input_dir"], payload.get("out_dir", "out"), payload, configs_dir)
+            input_dir = payload.get("input_dir")
+            if not input_dir:
+                raise ValueError("input_dir is required")
+            # Resolve the default BEFORE the trust-boundary check so output can't land in the
+            # server's CWD (an unapproved path). Default is input-relative, matching /api/jobs.
+            out_dir = payload.get("out_dir") or os.path.join(input_dir, "AutoEdit Exports")
+            service.ensure_allowed(input_dir, out_dir)
+            return service.run_batch(input_dir, out_dir, payload, configs_dir)
         return guard(go)
 
     @app.post("/api/run-one")
     def run_one(payload: dict = Body(...)):
         def go():
-            service.ensure_allowed(payload["file"], payload.get("out_dir"))
-            return service.run_one(payload["file"], payload.get("out_dir", "out"), payload, configs_dir)
+            file = payload.get("file")
+            if not file:
+                raise ValueError("file is required")
+            out_dir = payload.get("out_dir") or os.path.join(os.path.dirname(file), "AutoEdit Exports")
+            service.ensure_allowed(file, out_dir)
+            return service.run_one(file, out_dir, payload, configs_dir)
         return guard(go)
 
     @app.post("/api/curate")
@@ -160,14 +195,23 @@ def create_app(configs_dir: str = "configs"):
             labels = payload.get("labels") or []
             out_dir = payload.get("out_dir") or (
                 os.path.dirname(labels[0]["image"]) if labels and labels[0].get("image") else "")
+            if not out_dir:
+                raise ValueError("out_dir required (labels need an absolute image path or an explicit out_dir)")
             service.ensure_allowed(out_dir)
             return service.save_review_labels(out_dir, labels)
         return guard(go)
+
+    @app.get("/api/review/labels")
+    def review_label_state(out_dir: str = ""):
+        if not out_dir:
+            return service.load_review_labels("")
+        return guard(lambda: (service.ensure_allowed(out_dir), service.load_review_labels(out_dir))[1])
 
     # ── dataset builder (M3): pair + preservation-validate + build a training workspace ──
     @app.post("/api/datasets/validate")
     def datasets_validate(payload: dict = Body(...)):
         def go():
+            _require(payload, "originals_dir", "targets_dir")
             o, t = payload["originals_dir"], payload["targets_dir"]
             service.ensure_allowed(o, t)
             return service.dataset_validate(o, t, bool(payload.get("recursive")))
@@ -176,6 +220,7 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/datasets/build")
     def datasets_build(payload: dict = Body(...)):
         def go():
+            _require(payload, "originals_dir", "targets_dir")
             o, t = payload["originals_dir"], payload["targets_dir"]
             out_dir = payload.get("out_dir") or os.path.join(o, "AutoEdit Dataset")
             service.ensure_allowed(o, t, out_dir)
@@ -186,6 +231,7 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/aesthetic/train")
     def aesthetic_train(payload: dict = Body(...)):
         def go():
+            _require(payload, "images_dir")
             out_model = payload.get("out_model") or os.path.join(payload["images_dir"], "aesthetic-model.json")
             payload["out_model"] = out_model
             service.ensure_allowed(payload["images_dir"], payload.get("labels_csv"), out_model)
@@ -202,6 +248,7 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/aesthetic/score")
     def aesthetic_score(payload: dict = Body(...)):
         def go():
+            _require(payload, "folder", "model")
             service.ensure_allowed(payload["folder"], payload["model"])
             return service.aesthetic_score(payload)
         return guard(go)
@@ -210,7 +257,8 @@ def create_app(configs_dir: str = "configs"):
     @app.post("/api/variants")
     def variants(payload: dict = Body(...)):
         def go():
-            file = payload.get("file") or ""
+            _require(payload, "file")
+            file = payload["file"]
             service.ensure_allowed(file, payload.get("aesthetic_model"))
             return service.make_variants(file, payload, configs_dir)
         return guard(go)
@@ -236,4 +284,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, configs_dir: str = "configs
         opn = host if host not in ("0.0.0.0", "::") else "127.0.0.1"
         threading.Timer(1.0, lambda: webbrowser.open(f"http://{opn}:{port}")).start()
     print(f"AutoEdit UI → http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(create_app(configs_dir), host=host, port=port)
+    print(f"    configs: {os.path.abspath(configs_dir)}")   # a stray ./configs silently overrides packaged tuning
+    # Enforce the loopback Host-header check only for local binds; an intentional off-machine
+    # bind (--unsafe-network) is reachable under a LAN name/IP we can't enumerate here.
+    uvicorn.run(create_app(configs_dir, local_only=not unsafe_network), host=host, port=port)
