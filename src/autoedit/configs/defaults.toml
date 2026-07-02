@@ -17,7 +17,7 @@ analysis_long_edge = 1536  # segmentation/stats resolution; apply is full-res
 
 [output]
 format = "jpeg"            # "jpeg" | "tiff"
-quality = 92
+quality = 95               # 95 preserves the anti-banding dither in flat skies (matches the web UI)
 
 [llm]
 mode = "refine"            # "refine" (bounded deltas) | "propose"
