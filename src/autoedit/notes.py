@@ -17,7 +17,8 @@ def build_notes(
 
     for r in region_stats.values():
         if r.name in ("skin", "subject", "person") and (g.mean_lum - r.lum) > 0.1:
-            notes.append(f"{r.name} {((g.mean_lum - r.lum) * 5):.1f} EV below frame → lifted")
+            # luma gap, not photometric EV — keep the note honest about its units
+            notes.append(f"{r.name} noticeably darker than frame (-{(g.mean_lum - r.lum):.2f} luma) → lifted")
 
     if g.blown_sky > 0.05:
         notes.append(f"{g.blown_sky * 100:.0f}% of sky blown → recovered highlights")

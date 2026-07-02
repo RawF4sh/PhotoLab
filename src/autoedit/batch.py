@@ -24,15 +24,17 @@ def list_images(input_dir: str) -> list[str]:
     return out
 
 
-def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, resume: bool = False) -> dict:
+def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, resume: bool = False,
+        consistent: bool = True) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     images = list_images(input_dir)
     pipeline = Pipeline.build(cfg)
 
     # Pass 1 (shoot consistency): cheap brightness per image → lighting groups + per-group target.
+    # `consistent=False` (--no-consistent) skips it — each photo is then judged in isolation.
     groups: dict[str, tuple[str, float]] = {}
     lums: dict[str, float] = {}
-    if len(images) > 1:
+    if consistent and len(images) > 1:
         measured = []
         for path in images:
             try:
@@ -49,10 +51,11 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
     scene_mix: Counter = Counter()
     concept_hits: Counter = Counter()
     group_mix: Counter = Counter()
+    taken: set[str] = set()          # de-dupe same-stem outputs (IMG_001.dng + IMG_001.jpg)
     t0 = time.perf_counter()
 
     for i, path in enumerate(images, start=1):
-        image_out, sidecar = emit.output_paths(out_dir, path, cfg.out_format)
+        image_out, sidecar = emit.output_paths(out_dir, path, cfg.out_format, taken)
         if resume and os.path.exists(sidecar):
             skipped += 1
             continue

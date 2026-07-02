@@ -40,6 +40,27 @@ def test_pair_by_stem():
     assert [os.path.basename(p) for p in ut] == ["IMG_3_final.jpg"]
 
 
+def test_pair_by_stem_burst_names_never_mispair():
+    """IMG_1-2.jpg is a DIFFERENT shot (camera burst / macOS duplicate), not an edit of IMG_1.
+    Its target must reach its own original; exact matches always win over suffix stripping."""
+    originals = ["/x/IMG_1.jpg", "/x/IMG_1-2.jpg"]
+    targets = ["/y/IMG_1-2_edit.jpg", "/y/IMG_1_edit.jpg"]
+    pairs, uo, ut = dataset.pair_by_stem(originals, targets)
+    by_target = {os.path.basename(t): os.path.basename(o) for o, t in pairs}
+    assert by_target == {"IMG_1-2_edit.jpg": "IMG_1-2.jpg", "IMG_1_edit.jpg": "IMG_1.jpg"}
+    assert not uo and not ut
+
+    # a target literally named IMG_1-2.jpg exact-matches the burst original, never IMG_1
+    pairs, _, _ = dataset.pair_by_stem(originals, ["/y/IMG_1-2.jpg"])
+    assert [os.path.basename(o) for o, _t in pairs] == ["IMG_1-2.jpg"]
+
+
+def test_normalize_stem_requires_separator_before_copy():
+    assert dataset.normalize_stem("hardcopy.jpg") == "hardcopy"     # real stem, not "hard"
+    assert dataset.normalize_stem("IMG_9 copy.jpg") == dataset.normalize_stem("IMG_9.jpg")
+    assert dataset.normalize_stem("IMG_9_copy.jpg") == dataset.normalize_stem("IMG_9.jpg")
+
+
 def test_real_edit_passes_preservation():
     d = tempfile.mkdtemp()
     src = _structured(1)
@@ -69,6 +90,26 @@ def test_aspect_crop_rejected():
     _save(src[:, :120], tg)                               # cropped → aspect changed
     v = dataset.validate_pair(op, tg)
     assert "aspect/crop changed" in v["reasons"]
+
+
+def test_build_dataset_disambiguates_colliding_workspace_stems():
+    """Two kept pairs whose normalized stems collide (burst: IMG_1 + IMG_1-2 both normalize to
+    img1) must land as distinct workspace files — never a silent overwrite — with originals/ and
+    targets/ stems still matching so recipe training pairs them back up."""
+    d = tempfile.mkdtemp()
+    od, td, out = (os.path.join(d, x) for x in ("orig", "tgt", "ds"))
+    os.makedirs(od); os.makedirs(td)
+    _save(_structured(1), os.path.join(od, "IMG_1.jpg"))
+    _save(_structured(2), os.path.join(od, "IMG_1-2.jpg"))
+    _save(apply_ops(_structured(1), {"exposure": -0.1}), os.path.join(td, "IMG_1_edit.jpg"))
+    _save(apply_ops(_structured(2), {"exposure": -0.1}), os.path.join(td, "IMG_1-2_edit.jpg"))
+
+    m = dataset.build_dataset(od, td, out)
+    assert m["pairs"] == 2 and m["kept"] == 2
+    o_files = sorted(os.listdir(os.path.join(out, "originals")))
+    t_files = sorted(os.listdir(os.path.join(out, "targets")))
+    assert len(o_files) == 2 and len(t_files) == 2          # no silent overwrite
+    assert [os.path.splitext(f)[0] for f in o_files] == [os.path.splitext(f)[0] for f in t_files]
 
 
 def test_build_dataset_is_copy_only_and_sorts_pairs():

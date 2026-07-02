@@ -60,6 +60,33 @@ def test_runconfig_never_serializes_api_key():
     assert "sk-secret" not in blob and "api_key" not in blob
 
 
+def test_compose_rejects_unknown_shape(tmp_path):
+    from autoedit.compose import load_compose
+
+    p = tmp_path / "compose.toml"
+    p.write_text('[vig]\nwhen = "always"\nshape = "radiaal"\n')   # typo must fail loudly,
+    with pytest.raises(ValueError):                               # not silently become linear
+        load_compose(str(p))
+    p.write_text('[grad]\nwhen = "always"\nshape = "linear"\nfrom = "diagonal"\n')
+    with pytest.raises(ValueError):
+        load_compose(str(p))
+
+
+def test_batch_no_consistent_skips_grouping(tmp_path):
+    import numpy as np
+    from PIL import Image as PILImage
+
+    from autoedit import batch
+    from autoedit.contract import RunConfig
+
+    corpus = tmp_path / "in"; corpus.mkdir()
+    for name, base in (("dark.jpg", 40), ("bright.jpg", 200)):
+        a = np.full((48, 48, 3), base, np.uint8); a[:24] = [100, 140, 200]
+        PILImage.fromarray(a, "RGB").save(str(corpus / name))
+    m = batch.run(RunConfig(backend="stub"), str(corpus), str(tmp_path / "o"), consistent=False)
+    assert m["batch_groups"] == {}                                # pass 1 skipped entirely
+
+
 def test_runconfig_rejects_invalid_enums_and_ranges():
     with pytest.raises(ValueError):
         RunConfig(decider="skynet")

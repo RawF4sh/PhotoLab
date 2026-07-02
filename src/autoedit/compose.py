@@ -36,16 +36,23 @@ def load_compose(path: str) -> list[Move]:
         data = tomllib.load(fh)
     moves: list[Move] = []
     for name, body in data.items():
+        shape = str(body.get("shape", "radial"))
+        if shape not in ("radial", "linear"):
+            # fail loudly: a typo'd shape would otherwise silently fall into the linear branch
+            raise ValueError(f"compose move {name!r}: unknown shape {shape!r} (radial | linear)")
+        frm = str(body.get("from", "top"))
+        if frm not in ("top", "bottom", "left", "right"):
+            raise ValueError(f"compose move {name!r}: unknown from {frm!r} (top|bottom|left|right)")
         moves.append(
             Move(
                 name=name,
                 when=str(body.get("when", "")),
-                shape=str(body.get("shape", "radial")),
+                shape=shape,
                 ops={k: float(v) for k, v in body.get("ops", {}).items()},
                 target=str(body.get("target", "inside")),
                 feather=float(body.get("feather", 0.18)),
                 radius_scale=float(body.get("radius_scale", 1.4)),
-                frm=str(body.get("from", "top")),
+                frm=frm,
                 coverage=float(body.get("coverage", 0.5)),
             )
         )

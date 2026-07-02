@@ -94,14 +94,17 @@ def score_folder(folder: str, model_path: str, recursive: bool = True, limit: in
     if limit:
         paths = paths[:limit]
     items = []
+    skipped = 0
     for p in paths:
         try:
             s = aesthetic.predict(curate.image_features(p), model)
         except Exception:
+            skipped += 1                     # unreadable image — counted, not silently invisible
             continue
         items.append({"path": os.path.abspath(p), "score": round(float(s), 4),
                       "priority": round(review_priority(s), 4)})
     items.sort(key=lambda d: d["score"], reverse=True)
     for i, it in enumerate(items):
         it["rank"] = i + 1
-    return {"model": os.path.abspath(model_path), "count": len(items), "items": items}
+    return {"model": os.path.abspath(model_path), "count": len(items), "skipped": skipped,
+            "items": items}

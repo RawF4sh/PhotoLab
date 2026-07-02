@@ -12,7 +12,6 @@ Config layering: CLI flags > --config run.toml > configs/defaults.toml.
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 import sys
 import tomllib
@@ -133,6 +132,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="disable the frame/subject vignette")
     p.add_argument("--no-sharpen", dest="sharpen", action="store_false", default=None,
                    help="disable output sharpening")
+    p.add_argument("--no-consistent", dest="consistent", action="store_false", default=None,
+                   help="disable shoot-consistency (the bounded per-group brightness normalization)")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help="segment + decide + sidecar, no baked pixels")
@@ -147,7 +148,8 @@ def _cmd_run(args) -> int:
     if not os.path.isdir(args.input_dir):
         print(f"input_dir not found: {args.input_dir}", file=sys.stderr)
         return 2
-    batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume)
+    batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume,
+              consistent=args.consistent is not False)
     return 0
 
 
@@ -251,51 +253,10 @@ def _cmd_curate(args) -> int:
     return 0
 
 
-def _row_path(row: dict[str, str], images_dir: str, path_column: str | None) -> str | None:
-    columns = [path_column] if path_column else [
-        "path", "filepath", "file_path", "file", "filename", "image", "image_name", "image_id", "id",
-    ]
-    for col in columns:
-        if not col or col not in row or not row[col]:
-            continue
-        value = row[col].strip()
-        candidates = [value]
-        stem, ext = os.path.splitext(value)
-        if not ext:
-            candidates.extend([f"{value}.jpg", f"{value}.jpeg", f"{value}.JPG"])
-        for candidate in candidates:
-            path = candidate if os.path.isabs(candidate) else os.path.join(images_dir, candidate)
-            if os.path.exists(path):
-                return path
-    return None
-
-
-def _row_score(row: dict[str, str], score_column: str | None) -> float | None:
-    if score_column:
-        try:
-            return float(row[score_column])
-        except (KeyError, TypeError, ValueError):
-            return None
-    for col in ("score", "mean_score", "rating", "aesthetic_score", "mos"):
-        if col in row and row[col]:
-            try:
-                return float(row[col])
-            except ValueError:
-                pass
-    # AVA-style rating distribution: columns named 1..10, with vote counts.
-    if all(str(i) in row and row[str(i)] for i in range(1, 11)):
-        try:
-            counts = [float(row[str(i)]) for i in range(1, 11)]
-        except ValueError:
-            return None
-        total = sum(counts)
-        if total > 0:
-            return sum((i + 1) * counts[i] for i in range(10)) / total
-    return None
-
-
 def _cmd_train_aesthetic(args) -> int:
-    from . import aesthetic, curate
+    # Thin wrapper over critic.train_from_csv — the web API uses the same function, so the CSV
+    # column detection / AVA parsing / feature extraction can't drift between CLI and UI.
+    from . import critic
 
     if not os.path.isdir(args.images_dir):
         print(f"images_dir not found: {args.images_dir}", file=sys.stderr)
@@ -303,37 +264,16 @@ def _cmd_train_aesthetic(args) -> int:
     if not os.path.exists(args.labels_csv):
         print(f"labels_csv not found: {args.labels_csv}", file=sys.stderr)
         return 2
-
-    samples = []
-    skipped = 0
-    with open(args.labels_csv, newline="") as fh:
-        for i, row in enumerate(csv.DictReader(fh)):
-            if args.limit is not None and i >= args.limit:
-                break
-            path = _row_path(row, args.images_dir, args.path_column)
-            score = _row_score(row, args.score_column)
-            if not path or score is None:
-                skipped += 1
-                continue
-            try:
-                samples.append((curate.image_features(path, long_edge=args.analysis_long_edge), score))
-            except Exception:
-                skipped += 1
-
-    if not samples:
-        print("no training samples matched labels to readable images", file=sys.stderr)
+    try:
+        info = critic.train_from_csv(
+            args.labels_csv, args.images_dir, args.out_model,
+            path_column=args.path_column, score_column=args.score_column,
+            ridge=args.ridge, long_edge=args.analysis_long_edge, limit=args.limit)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
         return 2
-
-    model = aesthetic.train(samples, ridge=args.ridge)
-    aesthetic.save_model(model, args.out_model, metadata={
-        "labels_csv": os.path.abspath(args.labels_csv),
-        "images_dir": os.path.abspath(args.images_dir),
-        "samples": len(samples),
-        "skipped": skipped,
-        "analysis_long_edge": args.analysis_long_edge,
-    })
-    print(f"Trained aesthetic scorer on {len(samples)} images; skipped {skipped}.")
-    print(f"Model: {os.path.abspath(args.out_model)}")
+    print(f"Trained aesthetic scorer on {info['samples']} images; skipped {info['skipped']}.")
+    print(f"Model: {info['model_path']}")
     return 0
 
 
@@ -341,6 +281,8 @@ def _cmd_doctor(args) -> int:
     from .decide import DISCLOSURE
 
     print("AutoEdit doctor")
+    # a stray ./configs in the CWD silently overrides packaged tuning — always show which won
+    print(f"  configs: {os.path.abspath(args.configs_dir or paths.configs_dir())}")
     print("  segmentation:")
     try:
         import torch  # noqa: F401

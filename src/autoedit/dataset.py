@@ -24,8 +24,11 @@ import numpy as np
 from .imageio import downscale_long_edge, is_supported, load_image, luma
 
 # Suffixes commonly appended to an edited copy — stripped so "IMG_1.jpg" pairs with "IMG_1_edit.jpg".
+# Every entry starts with a separator: a bare "copy" would mangle real stems ("hardcopy" → "hard").
+# Stripping is only ever a FALLBACK — exact stem matches win first (see pair_by_stem) — so a camera
+# burst's IMG_1-2.jpg (a different shot, not a copy) still pairs with its own target.
 _EDIT_SUFFIXES = ("_edit", "_edited", "-edit", "_after", "-after", "_final", "_retouched",
-                  "_v2", "_v3", "-2", "-3", "copy", "_copy", "_out")
+                  "_v2", "_v3", "-2", "-3", "-copy", "_copy", " copy", "_out")
 
 # Default preservation thresholds (a target failing any HARD gate is rejected for training).
 DEFAULTS = {
@@ -63,21 +66,64 @@ def _list(folder: str, recursive: bool = False) -> list[str]:
     return sorted(out)
 
 
+def _exact_key(name: str) -> str:
+    """Filename → comparable key WITHOUT edit-suffix stripping (lowercased, separators collapsed)."""
+    stem = os.path.splitext(os.path.basename(name))[0].lower()
+    return re.sub(r"[\s_\-.]+", "", stem)
+
+
+def _stripped_keys(name: str) -> list[str]:
+    """Progressively suffix-stripped keys, MOST SPECIFIC FIRST: img_1-2_edit → [img12, img1].
+    Trying them in order lets a burst target (IMG_1-2_edit) reach its own original (IMG_1-2)
+    before the fully-stripped key would mis-claim IMG_1."""
+    stem = os.path.splitext(os.path.basename(name))[0].lower()
+    keys: list[str] = []
+    changed = True
+    while changed:
+        changed = False
+        for suf in _EDIT_SUFFIXES:
+            if stem.endswith(suf) and len(stem) > len(suf):
+                stem = stem[: -len(suf)]
+                keys.append(re.sub(r"[\s_\-.]+", "", stem))
+                changed = True
+                break
+    return keys
+
+
 def pair_by_stem(originals: list[str], targets: list[str]):
-    """Return (pairs, unmatched_originals, unmatched_targets), pairing by normalized stem."""
-    tmap: dict[str, list[str]] = {}
-    for t in targets:
-        tmap.setdefault(normalize_stem(t), []).append(t)
-    pairs, unmatched_o = [], []
-    used: set[str] = set()
+    """Return (pairs, unmatched_originals, unmatched_targets).
+
+    Exact stems match first; only leftovers fall back to edit-suffix stripping, most-specific key
+    first. This keeps camera bursts safe — IMG_1-2.jpg names a DIFFERENT shot, and its target
+    (IMG_1-2_edit.jpg) pairs with it, never with IMG_1's original. Originals are matched by their
+    exact stems (an originals folder shouldn't itself contain suffixed edit copies). One pair per
+    target; a claimed original isn't paired twice."""
+    o_by_exact: dict[str, list[str]] = {}
     for o in originals:
-        k = normalize_stem(o)
-        if tmap.get(k):
-            pairs.append((o, tmap[k][0]))
-            used.add(k)
-        else:
-            unmatched_o.append(o)
-    unmatched_t = [t for t in targets if normalize_stem(t) not in used]
+        o_by_exact.setdefault(_exact_key(o), []).append(o)
+    used_o: set[str] = set()
+    used_t: set[str] = set()
+    pairs: list[tuple[str, str]] = []
+
+    def claim(key: str, t: str) -> None:
+        cands = [o for o in o_by_exact.get(key, []) if o not in used_o]
+        if cands:
+            pairs.append((cands[0], t))
+            used_o.add(cands[0])
+            used_t.add(t)
+
+    for t in targets:                        # pass 1: exact stem match
+        claim(_exact_key(t), t)
+    for t in targets:                        # pass 2: suffix-stripped keys, most specific first
+        if t in used_t:
+            continue
+        for key in _stripped_keys(t):
+            claim(key, t)
+            if t in used_t:
+                break
+
+    unmatched_o = [o for o in originals if o not in used_o]
+    unmatched_t = [t for t in targets if t not in used_t]
     return pairs, unmatched_o, unmatched_t
 
 
@@ -140,10 +186,16 @@ def validate_pair(orig_path: str, target_path: str, thr: dict | None = None) -> 
 
 
 def _resize_to(rgb: np.ndarray, shape_hw) -> np.ndarray:
+    # float per-channel resize (no uint8 round-trip) — these pixels feed the preservation
+    # metrics, where quantization noise nudges borderline pairs across thresholds
     from PIL import Image as PILImage
     h, w = shape_hw[0], shape_hw[1]
-    pil = PILImage.fromarray(np.clip(rgb * 255 + 0.5, 0, 255).astype(np.uint8), "RGB").resize((w, h), PILImage.BILINEAR)
-    return np.asarray(pil).astype(np.float32) / 255.0
+    chans = [
+        np.asarray(PILImage.fromarray(np.ascontiguousarray(rgb[..., c]).astype(np.float32), "F")
+                   .resize((w, h), PILImage.BILINEAR), dtype=np.float32)
+        for c in range(3)
+    ]
+    return np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
 
 
 def _corr(a: np.ndarray, b: np.ndarray) -> float:
@@ -204,22 +256,32 @@ def build_dataset(originals_dir: str, targets_dir: str, out_dir: str, recursive:
     verdicts = {r["target"]: r for r in (rep["results"] if rep else [])}
     rows, items = [], []
     kept = rejected = 0
+    stem_taken: set[str] = set()
     for o, tg in pairs:
         v = verdicts.get(os.path.abspath(tg), {"ok": True, "reasons": [], "metrics": {}})
         ok = bool(v["ok"]) or approve_all
-        stem = normalize_stem(o)
-        base = f"{stem}{os.path.splitext(tg)[1].lower()}"
+        # Workspace names must be unique: normalized stems can collide (recursive scans with
+        # same-named files in different folders; bursts whose -2 suffix strips away). A collision
+        # would silently overwrite a pair's files — disambiguate like emit.output_paths, keeping
+        # originals/ and targets/ stems identical so recipe training pairs them back up.
+        stem = ws_stem = normalize_stem(o)
+        n = 2
+        while ws_stem in stem_taken:
+            ws_stem = f"{stem}-{n}"
+            n += 1
+        stem_taken.add(ws_stem)
+        base = f"{ws_stem}{os.path.splitext(tg)[1].lower()}"
         if ok:
-            shutil.copy2(o, os.path.join(o_dir, f"{stem}{os.path.splitext(o)[1].lower()}"))
+            shutil.copy2(o, os.path.join(o_dir, f"{ws_stem}{os.path.splitext(o)[1].lower()}"))
             shutil.copy2(tg, os.path.join(t_dir, base))
             kept += 1
         else:
             shutil.copy2(tg, os.path.join(r_dir, base))
             rejected += 1
-        rows.append({"stem": stem, "original": os.path.abspath(o), "target": os.path.abspath(tg),
+        rows.append({"stem": ws_stem, "original": os.path.abspath(o), "target": os.path.abspath(tg),
                      "status": "kept" if ok else "rejected", "reasons": ";".join(v["reasons"]),
                      **{k: v["metrics"].get(k, "") for k in ("edge_corr", "aspect_diff", "sat_delta", "banding")}})
-        items.append({"stem": stem, "original": os.path.abspath(o), "target": os.path.abspath(tg),
+        items.append({"stem": ws_stem, "original": os.path.abspath(o), "target": os.path.abspath(tg),
                       "status": "kept" if ok else "rejected", "reasons": v["reasons"], "metrics": v["metrics"]})
 
     manifest = {"originals_dir": os.path.abspath(originals_dir),

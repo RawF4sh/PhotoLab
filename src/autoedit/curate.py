@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .imageio import Image, downscale_long_edge, is_supported, load_image, luma, save_image
+from .imageio import downscale_long_edge, is_supported, load_image, luma, save_image
 from . import aesthetic
 
 
@@ -111,7 +111,9 @@ def bucket_for(features: dict[str, float]) -> str:
 
 
 def scan(input_dir: str, recursive: bool = True, long_edge: int = 256,
-         scan_limit: int | None = None) -> list[Candidate]:
+         scan_limit: int | None = None, failures: list[str] | None = None) -> list[Candidate]:
+    """Measure features for every supported image. Undecodable files are skipped but recorded in
+    `failures` (when given) — "500 scanned" must be distinguishable from "500 of 520 readable"."""
     images = list_images(input_dir, recursive=recursive)
     if scan_limit is not None:
         images = images[:max(0, scan_limit)]
@@ -120,6 +122,8 @@ def scan(input_dir: str, recursive: bool = True, long_edge: int = 256,
         try:
             feats = image_features(path, long_edge=long_edge)
         except Exception:
+            if failures is not None:
+                failures.append(path)
             continue
         out.append(Candidate(path=path, features=feats, bucket=bucket_for(feats)))
     return out
@@ -286,7 +290,9 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
     os.makedirs(selected_dir, exist_ok=True)
     os.makedirs(thumbs_dir, exist_ok=True)
 
-    candidates = scan(input_dir, recursive=recursive, long_edge=proxy_long_edge, scan_limit=scan_limit)
+    decode_failures: list[str] = []
+    candidates = scan(input_dir, recursive=recursive, long_edge=proxy_long_edge,
+                      scan_limit=scan_limit, failures=decode_failures)
     if mode == "best":
         selected = select_best(candidates, count)
     elif mode == "aesthetic":
@@ -331,6 +337,8 @@ def curate(input_dir: str, out_dir: str, count: int = 200, recursive: bool = Tru
         "input_dir": os.path.abspath(input_dir),
         "out_dir": os.path.abspath(out_dir),
         "total_scanned": len(candidates),
+        "decode_failures": len(decode_failures),
+        "decode_failure_paths": decode_failures[:50],
         "selected": len(rows),
         "skipped": len(skipped),
         "skipped_items": skipped,

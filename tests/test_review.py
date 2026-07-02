@@ -36,3 +36,36 @@ def test_blank_image_records_skipped():
     d = tempfile.mkdtemp()
     out = review.append_labels([{"image": "", "decision": "keep"}, {"decision": "reject"}], d)
     assert out["added"] == 0
+
+
+def test_corrupt_json_recovers_from_csv():
+    """A crash-corrupted JSON must never silently restart the labeling history: the append-only
+    CSV is the recovery source, and the next append preserves the old records."""
+    d = tempfile.mkdtemp()
+    review.append_labels([{"image": "1.jpg", "decision": "keep", "tags": ["good_style"]},
+                          {"image": "2.jpg", "decision": "reject"}], d, ts=1.0)
+    json_path = os.path.join(d, "review-labels.json")
+    open(json_path, "w").write('{"truncated mid-wri')          # simulate a crash mid-write
+
+    s = review.summary(d)                                       # reads recover from the CSV
+    assert s["labeled_images"] == 2
+    assert s["latest"]["1.jpg"]["decision"] == "keep"
+    assert s["latest"]["1.jpg"]["tags"] == ["good_style"]
+
+    out = review.append_labels([{"image": "3.jpg", "decision": "keep"}], d, ts=2.0)
+    assert out["total"] == 3                                    # old labels survived the append
+    assert not os.path.exists(json_path + ".part")              # atomic write left no temp file
+
+
+def test_summary_returns_latest_label_per_image():
+    d = tempfile.mkdtemp()
+    review.append_labels([{"image": "1.jpg", "decision": "reject", "tags": ["too_dark"]}], d, ts=1.0)
+    review.append_labels([{"image": "1.jpg", "decision": "keep", "tags": ["good_style"]},
+                          {"image": "2.jpg", "decision": "reject"}], d, ts=2.0)
+
+    s = review.summary(d)
+    assert s["total_records"] == 3
+    assert s["labeled_images"] == 2
+    assert s["keep"] == 1 and s["reject"] == 1
+    assert s["latest"]["1.jpg"]["decision"] == "keep"
+    assert s["latest"]["1.jpg"]["tags"] == ["good_style"]
