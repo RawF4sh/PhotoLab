@@ -38,6 +38,46 @@ Python tool. Full rationale + design in the approved plan
   autoedit` works anywhere; PyPI release workflow; `CONTRIBUTING.md`; refreshed issue
   templates + `FUNDING.yml`. 40 tests passing.
 
+### Changed
+- Preview before/after ships as **lossless WebP** (pixel-exact like PNG — the anti-banding
+  dither survives — at a much smaller payload); previews render at full resolution (≤4096px).
+- `/api/pick` is now **POST** (it registers a trust-boundary root, so it must sit behind the
+  origin guard). Quality-gate thresholds moved to data (`rules.toml [quality_gate]`); default
+  JPEG export quality aligned at 95 everywhere (preserves the dither).
+- Analysis proxies and the dehaze working image resize in **float** (no uint8+dither
+  round-trip), so 16-bit sources keep precision through stats.
+- New `--no-consistent` flag (CLI parity with the UI's batch-consistency toggle); `doctor`
+  prints the resolved configs dir; CLI `train-aesthetic` delegates to `critic.train_from_csv`.
+
+### Fixed (full-codebase review, 2026-07)
+- **Safety ordering**: region policies (forbidden ops / caps) are re-enforced after the
+  reference tuner — a warm reference can no longer re-introduce e.g. `temp` on snow.
+- `[guard].max_chroma_increase` sat inside `[banding]`, so the documented oversaturation
+  knob was dead (defaults coincidentally matched). Moved where the engine reads it.
+- TIFFs decoded via tifffile now honor the EXIF orientation tag; RAW files carry their
+  ISO/exposure-bias EXIF priors; CMYK-with-ICC converts through the correct profile.
+- Same-stem sources (`IMG_001.dng` + `IMG_001.jpg`, cross-folder files) no longer silently
+  overwrite each other's outputs, sidecars, or dataset-workspace files; image/sidecar/label
+  writes are **atomic** (`os.replace`) so a crash never leaves truncated files `--resume` trusts.
+- Dataset pairing is **burst-safe**: exact stems match before edit-suffix stripping, so
+  `IMG_1-2.jpg` (a different shot) pairs with its own target; bare `copy` no longer mangles stems.
+- Review labels survive crashes and concurrent saves (lock + atomic JSON + recovery from the
+  append-only CSV). The sidecar reports banding-damped settings that actually rendered; the
+  reference image decodes once per run instead of 2-3× per photo.
+- Background jobs: controls are no-ops on finished jobs, empty inputs error instead of a
+  silent 0-item "done", the registry is capped; curate/critic results count decode failures.
+- Classic UI picker updated for the POST route; `compose.toml` typos in `shape`/`from` fail
+  loudly; `RunConfig` validates enums/ranges.
+
+### Security (review hardening)
+- **Host-header check on every request** (DNS-rebinding defense) alongside the existing
+  localhost Origin check on mutations; thumbnail `px` clamped so `/api/thumb` can't serve
+  full-resolution images; default output paths resolve inside approved roots *before* the
+  trust-boundary check; empty paths fail closed; `api_key` is excluded from every
+  serialization path (sidecars, manifests, `model_dump`, `repr`).
+- New attack-shaped tests: `..` traversal, symlink escape, foreign-Host/cross-origin
+  requests, secret-leak, LLM merge clamping. Suite grew 188 → 231 tests.
+
 ### Removed
 - Rust engine (`engine/`), Lua Lightroom plugin (`plugin/`), duplicated `rules/`, Rust
   scripts and release workflow — superseded by the standalone Python design.
