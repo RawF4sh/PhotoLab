@@ -357,7 +357,9 @@ def tune_regions_to_reference(source_rgb01: np.ndarray, reference_rgb01: np.ndar
                 current = trial
 
         tuned[name] = best
-        moves = _format_moves(current if best_loss > before_loss else region_settings.get(name, {}), best)
+        # best_loss can only improve on before_loss (best is updated on <=), so the diff base
+        # is always the original settings.
+        moves = _format_moves(region_settings.get(name, {}), best)
         if best_loss < before_loss and moves:
             reports.append({
                 "name": name,
@@ -620,6 +622,8 @@ def color_transfer(target_rgb01: np.ndarray, reference_rgb01: np.ndarray,
 
     t_lab = rgb_to_lab(target_rgb01)
     tm, ts = _stats(t_lab)
+    # ndim==2 means the caller passed pre-computed Nx3 LAB samples (not an image); an HxWx3
+    # RGB reference is converted here. A grayscale HxW image is NOT valid input.
     rm, rs = _stats(reference_rgb01 if reference_rgb01.ndim == 2 else rgb_to_lab(reference_rgb01))
 
     out = t_lab.copy()

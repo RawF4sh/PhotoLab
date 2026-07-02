@@ -24,35 +24,50 @@ def _chroma(rgb: np.ndarray) -> np.ndarray:
     return rgb.max(axis=-1) - rgb.min(axis=-1)
 
 
-def assess(pre, post, chroma_limited: float = 0.0) -> tuple[float, bool, str, list[str]]:
+# Default post-edit gate thresholds. Overridable via rules.toml [quality_gate] (rules-as-data;
+# the pipeline threads that block through as `thr`) — these are the fallbacks.
+GATE_DEFAULTS = {
+    "highlight_clip": 0.02,   # post-edit highlight clipping above this → warn + penalty
+    "shadow_clip": 0.06,      # post-edit shadow clipping above this → warn + penalty
+    "sat_delta": 0.10,        # mean saturation rise vs source above this → warn + penalty
+    "review_score": 0.85,     # quality score below this → needs review
+    "review_highlight": 0.05,  # hard review triggers regardless of score
+    "review_shadow": 0.12,
+}
+
+
+def assess(pre, post, chroma_limited: float = 0.0,
+           thr: dict | None = None) -> tuple[float, bool, str, list[str]]:
     """Judge the EDITED output against the source (both GlobalStatsModel). Returns
     (quality_score 0..1, needs_review, review_reason, warnings).
 
     This is the gate the review queue must read — it inspects post-edit clipping, the
     saturation delta vs source, and how hard the oversaturation gate had to work. `pre`/`post`
-    are duck-typed (anything with highlight_clip / shadow_clip / mean_sat)."""
+    are duck-typed (anything with highlight_clip / shadow_clip / mean_sat). `thr` overrides
+    GATE_DEFAULTS per key (rules.toml [quality_gate])."""
+    t = {**GATE_DEFAULTS, **(thr or {})}
     warnings: list[str] = []
     score = 1.0
 
     hi, lo = float(post.highlight_clip), float(post.shadow_clip)
-    if hi > 0.02:
+    if hi > t["highlight_clip"]:
         warnings.append(f"highlight clipping {hi * 100:.1f}%")
-        score -= min(0.35, (hi - 0.02) * 4.0)
-    if lo > 0.06:
+        score -= min(0.35, (hi - t["highlight_clip"]) * 4.0)
+    if lo > t["shadow_clip"]:
         warnings.append(f"shadow clipping {lo * 100:.1f}%")
-        score -= min(0.30, (lo - 0.06) * 3.0)
+        score -= min(0.30, (lo - t["shadow_clip"]) * 3.0)
 
     dsat = float(post.mean_sat) - float(pre.mean_sat)
-    if dsat > 0.10:
+    if dsat > t["sat_delta"]:
         warnings.append(f"saturation rose +{dsat * 100:.0f}%")
-        score -= min(0.25, (dsat - 0.10) * 2.0)
+        score -= min(0.25, (dsat - t["sat_delta"]) * 2.0)
 
     if chroma_limited > 0.25:
         warnings.append(f"oversaturation gate worked hard ({chroma_limited * 100:.0f}% of frame)")
         score -= 0.05  # the gate already corrected it; flag for a look, don't fail hard
 
     score = max(0.0, round(score, 3))
-    needs_review = score < 0.85 or hi > 0.05 or lo > 0.12
+    needs_review = score < t["review_score"] or hi > t["review_highlight"] or lo > t["review_shadow"]
     reason = "; ".join(warnings) if needs_review else ""
     return score, needs_review, reason, warnings
 
@@ -85,8 +100,11 @@ def chroma_guard(
     allowance = max(0.0, float(neutral_allowance))
     ceiling = src_c * (1.0 + max_increase) + allowance
     if protect is not None:
-        p = protect > 0.5
-        ceiling = np.where(p, src_c * (1.0 + protect_increase) + 0.008, ceiling)
+        # Feathered protection: lerp toward the tight ceiling by the mask's alpha, so soft
+        # skin/snow edges tighten gradually instead of flipping at an arbitrary 0.5 cut.
+        p = np.clip(protect.astype(np.float32), 0.0, 1.0)
+        protected = np.minimum(ceiling, src_c * (1.0 + protect_increase) + 0.008)
+        ceiling = ceiling * (1.0 - p) + protected * p
 
     hi = luma(edited) > highlight_lum
     ceiling = np.where(hi, np.minimum(ceiling, src_c * 1.02 + 0.004), ceiling)

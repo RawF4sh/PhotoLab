@@ -133,6 +133,83 @@ def test_pipeline_reference_midground_lift_records_composition(tmp_path):
     assert any("reference midground lift" in n for n in result.notes)
 
 
+def test_region_policies_survive_reference_tuning(tmp_path):
+    """The reference tuner runs AFTER the policy rails — it must not re-introduce forbidden ops
+    (e.g. temp on a region whose concept policy forbids it). Regression for the bypass bug."""
+    a = np.zeros((128, 128, 3), np.uint8)
+    a[:70] = [110, 150, 210]   # cool sky
+    a[70:] = [40, 70, 110]     # water
+    src = tmp_path / "src.jpg"
+    PILImage.fromarray(a, "RGB").save(str(src), quality=95)
+    warm = apply_ops(a.astype(np.float32) / 255.0, {"temp": 45.0, "exposure": 0.15})
+    ref = tmp_path / "ref.jpg"
+    PILImage.fromarray((np.clip(warm, 0, 1) * 255 + 0.5).astype(np.uint8), "RGB").save(
+        str(ref), quality=95)
+    ct = tmp_path / "concepts.toml"
+    ct.write_text(
+        "[concept.sky]\npriority = 80\nmin_score = 0.0\nmin_coverage = 0.0\n"
+        'forbidden = ["temp"]\n')
+
+    cfg = RunConfig(backend="stub", concepts=["sky", "water"], reference=str(ref),
+                    reference_strength=0.9, concepts_path=str(ct))
+    result = Pipeline.build(cfg).process_one(str(src), do_apply=False)[1]
+
+    sky = next((m for m in result.masks if m.target == "sky"), None)
+    assert sky is not None
+    assert not sky.ops.get("temp"), f"forbidden op leaked through reference tuning: {dict(sky.ops)}"
+
+
+def test_banding_remediation_reflected_in_sidecar(tmp_path):
+    """When the banding gate damps the stretch ops and re-applies, the sidecar must report the
+    damped values that actually rendered the pixels, not the original plan."""
+    img_path = tmp_path / "p.jpg"
+    _make(str(img_path))
+    from autoedit.edit import banding as banding_mod
+
+    cfg = RunConfig(backend="stub", style="dramatic")
+    orig_assess = banding_mod.assess
+    try:
+        # baseline with the gate forced OFF (the real gate does fire on this synthetic image,
+        # which would already damp the baseline's reported settings)
+        banding_mod.assess = lambda s, e, thr=None: (0.0, "pass", 0.5)
+        base = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+        damped_ops = [k for k in ("dehaze", "contrast", "curve", "clarity", "sharpen")
+                      if base.global_settings.get(k)]
+        assert damped_ops                                # dramatic look sets stretch ops
+
+        banding_mod.assess = lambda s, e, thr=None: (0.30, "reduce", 0.5)
+        result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+    finally:
+        banding_mod.assess = orig_assess
+
+    assert any("banding gate" in n for n in result.notes)
+    for k in damped_ops:                                 # reported settings = applied (0.55x) ones
+        assert abs(result.global_settings[k] - base.global_settings[k] * 0.55) < 1e-6
+
+
+def test_reference_is_decoded_once_per_run(tmp_path):
+    img1, img2 = tmp_path / "a.jpg", tmp_path / "b.jpg"
+    ref = tmp_path / "ref.jpg"
+    _make(str(img1)); _make(str(img2)); _make(str(ref))
+    import autoedit.pipeline as pl
+
+    calls: list[str] = []
+    orig = pl.load_image
+
+    def counting(path):
+        calls.append(str(path))
+        return orig(path)
+
+    pl.load_image = counting
+    try:
+        pipe = Pipeline.build(RunConfig(backend="stub", reference=str(ref)))
+        pipe.process_one(str(img1), do_apply=True)
+        pipe.process_one(str(img2), do_apply=True)
+    finally:
+        pl.load_image = orig
+    assert calls.count(str(ref)) == 1, f"reference decoded {calls.count(str(ref))}x for 2 photos"
+
+
 def test_pipeline_reference_mountain_highlight_records_composition(tmp_path):
     img_path = tmp_path / "source.jpg"
     ref_path = tmp_path / "reference.jpg"

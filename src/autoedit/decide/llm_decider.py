@@ -160,6 +160,8 @@ class LlmDecider:
 
     def _apply_proposal(self, base: Settings, proposed: dict) -> None:
         for op, val in proposed.items():
+            if OP_BOUNDS and op not in OP_BOUNDS:
+                continue  # hallucinated/unknown op name — keep it out of settings AND the sidecar
             try:
                 val = float(val)
             except (TypeError, ValueError):

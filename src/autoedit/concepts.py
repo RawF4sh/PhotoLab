@@ -43,7 +43,9 @@ def load_concepts(path: str) -> tuple[dict[str, list[str]], dict[str, ConceptMet
             priority=int(body.get("priority", 50)),
             min_score=float(body.get("min_score", 0.45)),
             min_coverage=float(body.get("min_coverage", 0.02)),
-            feather_px=float(body.get("feather_px", 0.004)),
+            # a FRACTION of the long edge despite the name (see ConceptMeta). Clamped: a user
+            # writing pixels here (e.g. 12) would otherwise request a frame-sized feather blur.
+            feather_px=min(max(float(body.get("feather_px", 0.004)), 0.0), 0.05),
             rule_region=str(body.get("rule_region", name)),
             guard_global=bool(body.get("guard_global", False)),
             forbidden_ops=tuple(body.get("forbidden", [])),

@@ -69,8 +69,16 @@ def _pixsat(rgb: np.ndarray) -> np.ndarray:
 
 
 def _resize_rgb(rgb: np.ndarray, size: tuple[int, int]) -> np.ndarray:
-    pil = PILImage.fromarray(np.clip(rgb * 255.0 + 0.5, 0, 255).astype(np.uint8), mode="RGB")
-    return np.asarray(pil.resize(size, PILImage.BILINEAR)).astype(np.float32) / 255.0
+    # float per-channel resize (no uint8 round-trip) — the dehaze proxy feeds airlight /
+    # transmission estimation, where 8-bit quantization would coarsen the haze model
+    chans = [
+        np.asarray(
+            PILImage.fromarray(np.ascontiguousarray(rgb[..., c]).astype(np.float32), mode="F")
+            .resize(size, PILImage.BILINEAR),
+            dtype=np.float32)
+        for c in range(3)
+    ]
+    return np.stack(chans, axis=-1)
 
 
 def _resize_float(a: np.ndarray, size: tuple[int, int]) -> np.ndarray:

@@ -13,6 +13,7 @@ conversion. Embedded ICC profiles are converted to sRGB so the working space is 
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -73,15 +74,25 @@ def load_image(path: str) -> Image:
     raw = _decode_raw(path)
     if raw is not None:
         rgb, bits = raw
-        return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif={})
+        # RAW is the preferred edit source, so EXIF priors (ISO → restrained sharpening)
+        # matter most here. Many RAWs are TIFF-containers Pillow can read metadata from;
+        # rawpy already outputs upright pixels, so only the ISO/EV tags are wanted.
+        try:
+            exif = _read_exif(PILImage.open(path))
+        except Exception:
+            exif = {}
+        return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif)
 
     pil = PILImage.open(path)
     exif = _read_exif(pil)
 
     # 1) 16-bit TIFF via tifffile (preserves 48-bit RGB that Pillow truncates to 24-bit).
+    #    tifffile returns raw pixels, so the EXIF orientation must be applied here by hand —
+    #    otherwise a rotated TIFF loads sideways only when the accel extra is installed.
     tiff = _decode_tiff16(path)
     if tiff is not None:
         rgb, bits = tiff
+        rgb = _apply_exif_orientation(rgb, _orientation_of(pil))
         return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif)
 
     pil = ImageOps.exif_transpose(pil)  # honor the orientation tag, then drop it
@@ -128,6 +139,36 @@ def _decode_raw(path: str):
     return np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0), 16
 
 
+def _orientation_of(pil: PILImage.Image) -> int:
+    """EXIF/TIFF orientation tag (274), defaulting to 1 (upright) on any failure."""
+    try:
+        return int(pil.getexif().get(0x0112, 1) or 1)
+    except Exception:
+        return 1
+
+
+def _apply_exif_orientation(arr: np.ndarray, orientation: int) -> np.ndarray:
+    """Apply an EXIF orientation (tag 274, values 1-8) to an HxW[xC] array — the numpy
+    equivalent of ImageOps.exif_transpose, for decode paths that bypass Pillow (tifffile).
+    The mapping mirrors Pillow's: 2=FLIP_LEFT_RIGHT, 3=ROTATE_180, 4=FLIP_TOP_BOTTOM,
+    5=TRANSPOSE, 6=ROTATE_270, 7=TRANSVERSE, 8=ROTATE_90."""
+    if orientation == 2:
+        return arr[:, ::-1]
+    if orientation == 3:
+        return arr[::-1, ::-1]
+    if orientation == 4:
+        return arr[::-1]
+    if orientation == 5:
+        return np.swapaxes(arr, 0, 1)
+    if orientation == 6:
+        return np.rot90(arr, k=-1)
+    if orientation == 7:
+        return np.swapaxes(arr[::-1, ::-1], 0, 1)
+    if orientation == 8:
+        return np.rot90(arr, k=1)
+    return arr
+
+
 def _decode_tiff16(path: str):
     """Decode a TIFF at full bit depth via tifffile (optional). Returns (rgb[0,1], bits) or
     None to fall back to Pillow. tifffile is the only reliable 48-bit-RGB TIFF reader here."""
@@ -169,8 +210,14 @@ def _to_srgb(pil: PILImage.Image) -> PILImage.Image:
 
         src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
         dst = ImageCms.createProfile("sRGB")
-        rgb = pil if pil.mode in ("RGB", "RGBA") else pil.convert("RGB")
-        return ImageCms.profileToProfile(rgb, src, dst, outputMode="RGB")
+        try:
+            # Transform the ORIGINAL mode. Pre-converting a CMYK JPEG to RGB first would
+            # mismatch the embedded CMYK profile's colour space and throw (then silently fall
+            # back to Pillow's naive CMYK→RGB, which is wrong for Adobe/inverted CMYK).
+            return ImageCms.profileToProfile(pil, src, dst, outputMode="RGB")
+        except Exception:
+            rgb = pil if pil.mode in ("RGB", "RGBA") else pil.convert("RGB")
+            return ImageCms.profileToProfile(rgb, src, dst, outputMode="RGB")
     except Exception:
         return pil
 
@@ -201,29 +248,47 @@ def _read_exif(pil: PILImage.Image) -> dict:
 
 
 def downscale_long_edge(img: Image, long_edge: int) -> Image:
-    """Return a proxy with the long edge clamped to `long_edge` (no upscaling)."""
+    """Return a proxy with the long edge clamped to `long_edge` (no upscaling).
+
+    Resizes the float channels directly (PIL "F" mode) — never through uint8 — so a 16-bit
+    source keeps its precision in the analysis proxy and no dither noise leaks into the stats.
+    BILINEAR is deliberate: the analysis proxy wants stable area-average behaviour, and a
+    sharper filter (LANCZOS) would ring on edges and shift every stat-derived golden test."""
     if img.long_edge <= long_edge:
         return img
     scale = long_edge / img.long_edge
     new_w = max(1, round(img.width * scale))
     new_h = max(1, round(img.height * scale))
-    pil = PILImage.fromarray(_to_u8(img.rgb), mode="RGB").resize((new_w, new_h), PILImage.BILINEAR)
-    return Image(rgb=np.asarray(pil).astype(np.float32) / 255.0, source_bits=img.source_bits,
-                 path=img.path, exif=img.exif)
+    chans = [
+        np.asarray(
+            PILImage.fromarray(np.ascontiguousarray(img.rgb[..., c]), mode="F")
+            .resize((new_w, new_h), PILImage.BILINEAR),
+            dtype=np.float32)
+        for c in range(3)
+    ]
+    rgb = np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
+    return Image(rgb=rgb, source_bits=img.source_bits, path=img.path, exif=img.exif)
 
 
 def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:
-    """Write the working RGB (float, sRGB gamma, [0,1]) to disk."""
+    """Write the working RGB (float, sRGB gamma, [0,1]) to disk.
+
+    Atomic: encode to a sibling temp file (same extension, so PIL/tifffile infer the format
+    identically to a direct write), then os.replace into place. A crash mid-write leaves the
+    old file or nothing — never a half-written image a resume would mistake for complete."""
     rgb = np.clip(rgb, 0.0, 1.0)
+    tmp = f"{path}.part{os.path.splitext(path)[1]}"      # e.g. out.jpg.part.jpg
     if fmt == "tiff":
-        if _save_tiff16(rgb, path):
+        if _save_tiff16(rgb, tmp):
+            os.replace(tmp, path)
             return
         # fall through to 8-bit if tifffile is unavailable
     pil = PILImage.fromarray(_to_u8(rgb), mode="RGB")
     if fmt in ("jpg", "jpeg"):
-        pil.save(path, quality=quality, subsampling=0)
+        pil.save(tmp, quality=quality, subsampling=0)
     else:
-        pil.save(path)
+        pil.save(tmp)
+    os.replace(tmp, path)
 
 
 # ── color helpers ───────────────────────────────────────────────────────────

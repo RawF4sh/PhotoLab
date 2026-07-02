@@ -11,6 +11,8 @@ Op names and units are defined by the apply engine (edit/ops.py), NOT Adobe CRS 
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from .paths import config_path
@@ -29,35 +31,37 @@ class RunConfig(BaseModel):
     preset: str | None = None  # concept-set override (concepts.toml); wins over the style's set
     concepts: list[str] | None = None  # explicit concept override; wins over preset
     look: str | None = None  # magnitude profile override; defaults to the style's look
-    intensity: float = 0.8
+    intensity: float = Field(default=0.8, ge=0.0, le=2.0)
     palette: str | None = None  # palettes.toml colour-grade ("cool_blue"…); None → infer from prompt / off
-    palette_strength: float = 0.8  # 0 = off, 1 = full palette grade
+    palette_strength: float = Field(default=0.8, ge=0.0, le=1.0)  # 0 = off, 1 = full palette grade
 
     # reference-style color match (optional): grade the result toward an example image's look
     reference: str | None = None  # path to a reference photo whose palette/tone to match
-    reference_strength: float = 0.7  # 0 = off, 1 = full match
+    reference_strength: float = Field(default=0.7, ge=0.0, le=1.0)  # 0 = off, 1 = full match
 
     # decision
-    decider: str = "rules"  # "rules" | "llm" | "learned"
+    decider: Literal["rules", "llm", "learned"] = "rules"
     recipe_model: str | None = None  # path to a trained recipe predictor (used when decider="learned")
     allow_cloud: bool = False  # explicit consent required to use the cloud LLM (BYO-key)
-    api_key: str | None = None  # Anthropic API key; falls back to ANTHROPIC_API_KEY env
-    llm_mode: str = "refine"  # "refine" | "propose"
+    # Anthropic API key (falls back to ANTHROPIC_API_KEY env). exclude=True/repr=False so no
+    # model_dump()/repr/log path can ever serialize the secret — read it via cfg.api_key only.
+    api_key: str | None = Field(default=None, exclude=True, repr=False)
+    llm_mode: Literal["refine", "propose"] = "refine"
     llm_model: str = "claude-haiku-4-5-20251001"
-    llm_temperature: float = 0.0
-    llm_max_calls: int = 0  # 0 = unlimited
-    llm_budget_usd: float = 0.0
-    llm_thumb_px: int = 512
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
+    llm_max_calls: int = Field(default=0, ge=0)  # 0 = unlimited
+    llm_budget_usd: float = Field(default=0.0, ge=0.0)
+    llm_thumb_px: int = Field(default=512, ge=64, le=1024)
 
     # segmentation
-    backend: str = "stub"  # "stub" | "sam3"
+    backend: Literal["stub", "sam3"] = "stub"
     device: str = "auto"
-    analysis_long_edge: int = 1536
+    analysis_long_edge: int = Field(default=1536, ge=64, le=8192)
 
     # output
-    out_format: str = "jpeg"  # "jpeg" | "tiff"
-    quality: int = 95  # higher q preserves the anti-banding dither in flat skies (TIFF stays lossless)
-    emit: str = "baked"  # "baked" | "editable" | "both"
+    out_format: Literal["jpeg", "jpg", "tiff"] = "jpeg"
+    quality: int = Field(default=95, ge=1, le=100)  # higher q preserves the anti-banding dither (TIFF stays lossless)
+    emit: Literal["baked", "editable", "both"] = "baked"
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
     vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff
     sharpen: bool = True  # output sharpening (unsharp mask); off → no sharpen ops applied

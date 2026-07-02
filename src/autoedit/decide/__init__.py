@@ -30,6 +30,17 @@ def consented(cfg) -> bool:
     return os.environ.get("AUTOEDIT_ALLOW_CLOUD", "").lower() in ("1", "true", "yes")
 
 
+_said: set[str] = set()
+
+
+def _say_once(msg: str) -> None:
+    """stderr notice printed once per process — the web UI builds a decider per preview
+    request, so per-build prints would spam the server log."""
+    if msg not in _said:
+        _said.add(msg)
+        print(msg, file=sys.stderr)
+
+
 def _api_key(cfg) -> str | None:
     return getattr(cfg, "api_key", None) or os.environ.get("ANTHROPIC_API_KEY")
 
@@ -49,26 +60,23 @@ def make_decider(cfg) -> Decider:
 
                 model = recipe.load_model(path)
             except Exception as e:
-                print(f"[learned] could not load recipe model ({e}) -> falling back to rules.",
-                      file=sys.stderr)
+                _say_once(f"[learned] could not load recipe model ({e}) -> falling back to rules.")
         else:
-            print("[learned] no recipe model given -> using rules until one is trained.",
-                  file=sys.stderr)
+            _say_once("[learned] no recipe model given -> using rules until one is trained.")
         return LearnedDecider(model, RulesDecider())
 
     if cfg.decider != "llm":
         return RulesDecider()
 
     if not consented(cfg):
-        print(f"[cloud disabled] {DISCLOSURE}\n  -> falling back to local rules.", file=sys.stderr)
+        _say_once(f"[cloud disabled] {DISCLOSURE}\n  -> falling back to local rules.")
         return RulesDecider()
     key = _api_key(cfg)
     if not key:
-        print("[cloud] no API key (--api-key or ANTHROPIC_API_KEY) -> falling back to rules.",
-              file=sys.stderr)
+        _say_once("[cloud] no API key (--api-key or ANTHROPIC_API_KEY) -> falling back to rules.")
         return RulesDecider()
 
-    print(f"[cloud ENABLED] {DISCLOSURE}", file=sys.stderr)
+    _say_once(f"[cloud ENABLED] {DISCLOSURE}")
     from .llm_decider import LlmDecider
 
     return LlmDecider(

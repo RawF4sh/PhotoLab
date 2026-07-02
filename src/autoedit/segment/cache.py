@@ -57,7 +57,9 @@ class CachingSegmenter:
             for c in missing:
                 bucket[c] = fresh.get(c)         # None when the concept found nothing
             self._touch_evict(key)
-            # reassemble in the requested order, dropping concepts that found nothing
+            # Reassemble in the requested order, dropping concepts that found nothing.
+            # NOTE: these are the CACHED RegionMask objects, returned by reference — downstream
+            # (resolve/stats/apply) treats masks as read-only; mutating one would poison the cache.
             return [bucket[c] for c in concepts if bucket.get(c) is not None]
 
     def _touch_evict(self, key) -> None:
