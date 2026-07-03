@@ -68,8 +68,10 @@ def baseline_settings(g) -> dict:
 
 
 def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
-           max_px: int = 1600, quality: int = 88) -> dict:
-    """Render all three variants per photo, shuffle slots, write JPEGs + manifest.csv + index.html.
+           max_px: int = 1600, quality: int = 88, methods: tuple[str, ...] = METHODS) -> dict:
+    """Render each photo's variants (`methods`), shuffle slots, write JPEGs + manifest.csv +
+    index.html. `methods` defaults to all three; pass ("baseline","autoedit") for a 2-way test
+    that isolates the real contest (regional vs global) without an unedited option to dilute it.
     Returns a summary dict. Quiet enough to call from a test."""
     images = batch.list_images(corpus)
     if limit:
@@ -90,21 +92,22 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
         os.makedirs(pdir, exist_ok=True)
 
         img = load_image(path)
-        work = downscale_long_edge(img, max_px)          # all three variants at one resolution
+        work = downscale_long_edge(img, max_px)          # all variants at one resolution
         g, _ = stats.compute(work, {})
 
-        variants = {
-            "unedited": work.rgb,
-            "baseline": apply_ops(work.rgb, baseline_settings(g)),
-            "autoedit": pipe.process_one(path, do_apply=True, image=work)[0],
-        }
+        def variant(method):                             # build only the methods we need
+            if method == "unedited":
+                return work.rgb
+            if method == "baseline":
+                return apply_ops(work.rgb, baseline_settings(g))
+            return pipe.process_one(path, do_apply=True, image=work)[0]
 
-        order = list(METHODS)
+        order = list(methods)
         rng.shuffle(order)                                # per-photo blind shuffle
         slots = []
         for slot, method in enumerate(order):
             fname = f"slot{slot}.jpg"
-            save_image(variants[method], os.path.join(pdir, fname), "jpeg", quality)
+            save_image(variant(method), os.path.join(pdir, fname), "jpeg", quality)
             manifest.append((pid, slot, method))
             slots.append(f"{pid}/{fname}")
         photos_json.append({"id": pid, "name": os.path.basename(path), "slots": slots})
@@ -116,7 +119,7 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
         w.writerows(manifest)
 
     _write_html(os.path.join(out, "index.html"), photos_json)
-    print(f"\nWrote {len(photos_json)} photos × 3 variants to {out}/")
+    print(f"\nWrote {len(photos_json)} photos × {len(methods)} variants ({'+'.join(methods)}) to {out}/")
     print(f"Open {os.path.join(out, 'index.html')} to rank blind, save results.csv, then:")
     print(f"  python3 scripts/blindtest.py --score {os.path.join(out, 'results.csv')}")
     return {"photos": len(photos_json), "out": out}
@@ -237,9 +240,9 @@ _HTML_TEMPLATE = r"""<!doctype html>
 </main>
 
 <footer id="foot">
-  <span>Click the strongest photo</span>
+  <span>Click the one you'd keep</span>
   <span>·</span>
-  <span>keys <span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span></span>
+  <span id="keys"></span>
   <span>·</span>
   <span><span class="kbd">←</span> back</span>
   <button class="ghost" id="back" disabled>← Back</button>
@@ -261,10 +264,13 @@ const $ = id => document.getElementById(id);
 const row = $('row'), fill = $('fill'), count = $('count'), name = $('name'), back = $('back');
 
 function render(){
-  const p = PHOTOS[i];
+  const p = PHOTOS[i], n = p.slots.length;
   count.textContent = (i + 1) + ' / ' + PHOTOS.length;
   fill.style.width = (i / PHOTOS.length * 100) + '%';
   name.textContent = p.name;
+  row.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';   // adapts to 2- or 3-way
+  $('keys').innerHTML = 'keys ' +
+    p.slots.map((_, k) => '<span class="kbd">' + (k + 1) + '</span>').join(' ');
   row.innerHTML = '';
   p.slots.forEach((src, slot) => {
     const o = document.createElement('div');
@@ -289,7 +295,8 @@ function choose(slot, el){
 }
 back.onclick = () => { if (i > 0 && !busy){ i--; render(); } };
 document.addEventListener('keydown', e => {
-  if (['1','2','3'].includes(e.key)) choose(+e.key - 1);
+  const n = PHOTOS[i].slots.length;
+  if (e.key >= '1' && e.key <= String(n)) choose(+e.key - 1);
   else if (e.key === 'ArrowLeft' || e.key === 'Backspace'){ e.preventDefault(); back.click(); }
 });
 function finish(){
@@ -322,6 +329,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--max-px", dest="max_px", type=int, default=1600)
+    ap.add_argument("--two-way", dest="two_way", action="store_true",
+                    help="AutoEdit vs baseline only (drop 'unedited') — the sharpest regional-vs-global gate")
     args = ap.parse_args()
 
     if args.score:
@@ -330,9 +339,11 @@ def main() -> int:
     if not args.corpus:
         ap.error("give a corpus folder to render, or --score results.csv")
 
+    methods = ("baseline", "autoedit") if args.two_way else METHODS
     cfg = make_config(args.configs_dir or paths.configs_dir(), backend=args.backend,
                       device=args.device, style=args.style, intensity=args.intensity)
-    render(args.corpus, args.out, cfg, seed=args.seed, limit=args.limit, max_px=args.max_px)
+    render(args.corpus, args.out, cfg, seed=args.seed, limit=args.limit, max_px=args.max_px,
+           methods=methods)
     return 0
 
 
