@@ -68,11 +68,12 @@ def baseline_settings(g) -> dict:
 
 
 def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
-           max_px: int = 1600, quality: int = 88, methods: tuple[str, ...] = METHODS) -> dict:
+           max_px: int = 1600, quality: int = 88, methods: tuple[str, ...] = METHODS,
+           pipelines: dict | None = None) -> dict:
     """Render each photo's variants (`methods`), shuffle slots, write JPEGs + manifest.csv +
     index.html. `methods` defaults to all three; pass ("baseline","autoedit") for a 2-way test
-    that isolates the real contest (regional vs global) without an unedited option to dilute it.
-    Returns a summary dict. Quiet enough to call from a test."""
+    that isolates the real contest (regional vs global), or ("rules_a","rules_b") with a
+    `pipelines` map for a config-A-vs-config-B tuning gate. Returns a summary dict."""
     images = batch.list_images(corpus)
     if limit:
         images = images[:limit]
@@ -80,7 +81,9 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
         raise SystemExit(f"no supported images in {corpus}")
 
     os.makedirs(out, exist_ok=True)
-    pipe = Pipeline.build(cfg)
+    pipes: dict = dict(pipelines or {})
+    if "autoedit" in methods and "autoedit" not in pipes:
+        pipes["autoedit"] = Pipeline.build(cfg)
     rng = random.Random(seed)
 
     manifest: list[tuple[str, int, str]] = []   # (photo_id, slot_index, method)
@@ -100,7 +103,7 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
                 return work.rgb
             if method == "baseline":
                 return apply_ops(work.rgb, baseline_settings(g))
-            return pipe.process_one(path, do_apply=True, image=work)[0]
+            return pipes[method].process_one(path, do_apply=True, image=work)[0]
 
         order = list(methods)
         rng.shuffle(order)                                # per-photo blind shuffle
@@ -125,13 +128,30 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
     return {"photos": len(photos_json), "out": out}
 
 
+def _binomial_p(wins_a: int, wins_b: int) -> float:
+    """Two-sided exact binomial p-value for an A/B head-to-head under H0 p=0.5 (stdlib only).
+    Small n is the norm here — report exact significance, not just a percentage."""
+    import math
+
+    n = wins_a + wins_b
+    if n == 0:
+        return 1.0
+    k = max(wins_a, wins_b)
+    tail = sum(math.comb(n, i) for i in range(k, n + 1)) / 2.0 ** n
+    return min(1.0, 2.0 * tail)
+
+
 def score(results_path: str, manifest_path: str | None = None) -> dict:
-    """Join blind picks against the hidden manifest and report win-rates (the gate number)."""
+    """Join blind picks against the hidden manifest and report win-rates (the gate number).
+    Method names come from the manifest, so 3-way, 2-way, and rules-A/B galleries all score."""
     manifest_path = manifest_path or os.path.join(os.path.dirname(results_path) or ".", "manifest.csv")
     slot_method: dict[tuple[str, int], str] = {}
+    methods_seen: list[str] = []
     with open(manifest_path, newline="") as fh:
         for row in csv.DictReader(fh):
             slot_method[(row["photo"], int(row["slot"]))] = row["method"]
+            if row["method"] not in methods_seen:
+                methods_seen.append(row["method"])
 
     wins: Counter = Counter()
     total = 0
@@ -143,14 +163,26 @@ def score(results_path: str, manifest_path: str | None = None) -> dict:
                 total += 1
 
     print(f"\nBlind-test results ({total} photos ranked):")
-    for m in METHODS:
+    for m in methods_seen:
         pct = 100.0 * wins[m] / total if total else 0.0
         print(f"  {m:9s} {pct:5.1f}%  ({wins[m]}/{total})")
-    ae, bl = wins["autoedit"], wins["baseline"]
-    h2h = 100.0 * ae / (ae + bl) if (ae + bl) else 0.0
-    print(f"\nGate — AutoEdit vs baseline head-to-head: {h2h:.1f}% "
-          f"({'PASS' if ae > bl else 'MISS'})")
-    return {"wins": dict(wins), "total": total, "head_to_head": h2h}
+
+    # Head-to-head pair: the classic AutoEdit-vs-baseline gate when both exist, else the gallery's
+    # two methods (rules-A/B mode), else the top two.
+    if "autoedit" in methods_seen and "baseline" in methods_seen:
+        pair = ("autoedit", "baseline")
+    elif len(methods_seen) == 2:
+        pair = (methods_seen[0], methods_seen[1])
+    else:
+        pair = tuple(m for m, _ in wins.most_common(2)) or ("", "")
+    a, b = wins[pair[0]], wins[pair[1]]
+    h2h = 100.0 * a / (a + b) if (a + b) else 0.0
+    p = _binomial_p(a, b)
+    print(f"\nGate — {pair[0]} vs {pair[1]} head-to-head: {h2h:.1f}% "
+          f"({'PASS' if a > b else 'MISS'})  |  exact binomial p = {p:.3f}"
+          f"{'  (significant)' if p < 0.05 else '  (not significant — need more photos)'}")
+    return {"wins": dict(wins), "total": total, "head_to_head": h2h, "p_value": p,
+            "pair": list(pair)}
 
 
 def _write_html(path: str, photos: list[dict]) -> None:
@@ -331,6 +363,10 @@ def main() -> int:
     ap.add_argument("--max-px", dest="max_px", type=int, default=1600)
     ap.add_argument("--two-way", dest="two_way", action="store_true",
                     help="AutoEdit vs baseline only (drop 'unedited') — the sharpest regional-vs-global gate")
+    ap.add_argument("--rules-a", dest="rules_a", help="rules.toml for config A (A/B tuning gate)")
+    ap.add_argument("--rules-b", dest="rules_b", help="rules.toml for config B")
+    ap.add_argument("--looks-a", dest="looks_a", help="optional looks.toml for config A")
+    ap.add_argument("--looks-b", dest="looks_b", help="optional looks.toml for config B")
     args = ap.parse_args()
 
     if args.score:
@@ -338,10 +374,29 @@ def main() -> int:
         return 0
     if not args.corpus:
         ap.error("give a corpus folder to render, or --score results.csv")
+    if bool(args.rules_a) != bool(args.rules_b):
+        ap.error("--rules-a and --rules-b must be given together")
 
-    methods = ("baseline", "autoedit") if args.two_way else METHODS
     cfg = make_config(args.configs_dir or paths.configs_dir(), backend=args.backend,
                       device=args.device, style=args.style, intensity=args.intensity)
+
+    if args.rules_a:
+        # Config-A-vs-config-B gate: same engine, two rules/looks files. Segmentation is
+        # identical either way, so B shares A's (cached) segmenter — one SAM pass per photo.
+        from autoedit.segment import CachingSegmenter  # noqa: E402
+
+        cfg_a = cfg.model_copy(update={"rules_path": args.rules_a,
+                                       **({"looks_path": args.looks_a} if args.looks_a else {})})
+        cfg_b = cfg.model_copy(update={"rules_path": args.rules_b,
+                                       **({"looks_path": args.looks_b} if args.looks_b else {})})
+        pipe_a, pipe_b = Pipeline.build(cfg_a), Pipeline.build(cfg_b)
+        pipe_a.segmenter = CachingSegmenter(pipe_a.segmenter)
+        pipe_b.segmenter = pipe_a.segmenter
+        render(args.corpus, args.out, cfg, seed=args.seed, limit=args.limit, max_px=args.max_px,
+               methods=("rules_a", "rules_b"), pipelines={"rules_a": pipe_a, "rules_b": pipe_b})
+        return 0
+
+    methods = ("baseline", "autoedit") if args.two_way else METHODS
     render(args.corpus, args.out, cfg, seed=args.seed, limit=args.limit, max_px=args.max_px,
            methods=methods)
     return 0

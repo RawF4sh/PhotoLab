@@ -16,7 +16,8 @@ contrast_mul = 1.0
 vibrance_add = 0.0
 clarity_mul  = 0.7          # pull clarity DOWN → kills the gritty/grainy micro-contrast
 dehaze_mul   = 0.8
-curve_add    = 2.0          # the faintest filmic contrast — keep midtones bright/open
+curve_add    = 5.0          # confident filmic contrast ("visibly finished") — curve is luma-only,
+#                             so unlike `contrast` it adds punch without a saturation side-effect
 # (no grade_* — natural does not tint shadows or highlights)
 
 [punchy]

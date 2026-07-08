@@ -130,6 +130,22 @@ class GlobalStatsModel(BaseModel):
     lum_p90: float = 0.0   # highlight brightness / wash-out
     mean_chroma: float = 0.0  # mean OKLab chroma — how colourful the frame is
     warmth: float = 0.0       # mean OKLab b axis: + = warm/yellow, − = cool/blue
+    # pro-tone signals (all 0.0-defaulted so `iff(x > 0, new, old)` rules degrade gracefully):
+    veil: float = 0.0         # TRUE atmospheric haze (bright+smooth+desat+not-white) — unlike
+    #                           `haze` (dark-channel mean), snow/high-key scenes score ~0
+    detail_rms: float = 0.0   # mean local luma detail — low = flat/soft frame
+    dark_p10: float = 0.0     # dark-channel 10th percentile — black anchor
+    fg_lum: float = 0.0       # sky-EXCLUDED mean luma (falls back to mean_lum without a sky mask)
+    fg_p50: float = 0.0       # sky-EXCLUDED median luma — the pro exposure target
+    snow_cov: float = 0.0     # region coverages for stats-conditional rules (iff(snow_cov>…))
+    sky_cov: float = 0.0
+    water_cov: float = 0.0
+    # region-aware auto-WB (gray card = SAM snow region, else bright near-neutrals). Corrections
+    # are in the white_balance op's units; rules apply a bounded partial correction scaled by
+    # confidence (0 = no trustworthy reference → identity).
+    wb_temp_correction: float = 0.0
+    wb_tint_correction: float = 0.0
+    wb_confidence: float = 0.0
     # Histogram-style per-channel exposure stats. These catch color-channel clipping that luma
     # alone can miss, e.g. a red channel pinned in clouds while the overall luminance still looks OK.
     r_shadow_clip: float = 0.0

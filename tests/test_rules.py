@@ -72,6 +72,49 @@ def test_shipped_rules_recover_channel_clipped_highlights():
     assert clipped_global["whites"] < clean_global["whites"]
 
 
+def test_shipped_pro_tone_rules_adapt_to_percentiles():
+    """The v0.4 'visibly finished' policy: flat/washed frames get decisive levels + contrast;
+    already-contrasty frames stay gentle; zero-filled percentile stats reproduce old behavior."""
+    rules = load_rules(config_path("rules.toml"))
+
+    flat = GlobalStatsModel(                              # flat overcast: narrow spread, washed
+        mean_lum=0.5, mean_sat=0.08, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
+        lum_p10=0.13, lum_p50=0.40, lum_p90=0.48, fg_p50=0.45, detail_rms=0.02,
+    )
+    gset, _ = apply(rules, "landscape", flat, {}, {}, intensity=1.0)
+    assert gset["contrast"] >= 10                         # decisive contrast on a flat frame
+    assert gset["blacks"] <= -10                          # deliberate black point
+    assert gset["whites"] > 5                             # dull highlights placed brighter
+
+    crisp = GlobalStatsModel(                             # contrasty frame: full spread, deep blacks
+        mean_lum=0.5, mean_sat=0.2, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
+        lum_p10=0.02, lum_p50=0.5, lum_p90=0.92, fg_p50=0.5, detail_rms=0.06,
+    )
+    gset, _ = apply(rules, "landscape", crisp, {}, {}, intensity=1.0)
+    assert gset["contrast"] == 3.0                        # already contrasty → gentle
+    assert gset["blacks"] == 0.0                          # blacks already deep → never crush more
+    assert gset["clarity"] == 3.0                         # already detailed → minimum clarity
+
+    legacy = GlobalStatsModel(                            # zero-filled percentiles → old behavior
+        mean_lum=0.55, mean_sat=0.08, shadow_clip=0.0, highlight_clip=0.0, haze=0.1,
+    )
+    gset, _ = apply(rules, "landscape", legacy, {}, {}, intensity=1.0)
+    assert gset["contrast"] == 5.0 and gset["blacks"] == 0.0 and gset["clarity"] == 6.0
+    assert abs(gset["exposure"] - 0.0) < 1e-9             # old mean_lum formula at 0.55 → 0
+
+
+def test_shipped_exposure_targets_foreground_not_sky():
+    """A dark foreground under a big bright sky must be lifted by fg_p50, which the sky-skewed
+    mean would have blocked."""
+    rules = load_rules(config_path("rules.toml"))
+    skyheavy = GlobalStatsModel(
+        mean_lum=0.60, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.3,
+        lum_p10=0.06, lum_p50=0.55, lum_p90=0.95, fg_p50=0.28, detail_rms=0.03,
+    )
+    gset, _ = apply(rules, "landscape", skyheavy, {}, {}, intensity=1.0)
+    assert gset["exposure"] > 0.15                        # (0.50-0.28)*0.9 ≈ +0.20 EV for the land
+
+
 def test_region_channel_clip_is_available_to_rules():
     rules = {"landscape": {
         "snow": {

@@ -100,29 +100,33 @@ def auto_palette_for_image(scene: str, gstats, present: set[str], palettes: Pale
     has_green_context = bool(present & {"grass", "foliage", "trees"})
 
     # Winter / blue-hour read: low colour, cool/neutral cast, haze or snow/sky/water context.
-    if "cool_blue" in palettes and landscape and has_cool_context:
+    # RESTRAINT (blind-test finding): an UNREQUESTED grade must whisper, and it must never fight
+    # the scene's measured warmth — both blind-test losses were warm scenes (+0.015/+0.023) that
+    # got a 72% cool grade. Hard warmth veto; real coolness required for a full score; strength
+    # capped at 0.40 (explicit user picks keep full strength — only inferred grades are capped).
+    if "cool_blue" in palettes and landscape and has_cool_context and warmth < 0.008:
         cool_score = 0.0
         cool_score += 0.30 if haze > 0.38 else 0.0
         cool_score += 0.28 if chroma < 0.035 or mean_sat < 0.12 else 0.0
-        cool_score += 0.18 if warmth < 0.012 else 0.0
+        cool_score += 0.20 if warmth < -0.006 else 0.0     # actually cool, not merely neutral
         cool_score += 0.14 if present & {"snow", "water"} else 0.0
         if cool_score >= 0.58:
-            return "cool_blue", min(0.85, cool_score), "cool low-chroma landscape"
+            return "cool_blue", min(0.40, 0.25 + (cool_score - 0.55)), "cool low-chroma landscape"
 
     # Golden-hour / warm-scene read: already-warm highlights, bright sky, not a snowy/cool scene.
     if "warm_gold" in palettes and warmth > 0.030 and mean_lum > 0.42:
-        warm_score = 0.55 + min(0.25, (warmth - 0.030) * 4.0)
+        warm_score = 0.40 + min(0.15, (warmth - 0.030) * 3.0)
         if sky_lum > 0.55:
-            warm_score += 0.10
+            warm_score += 0.05
         if "snow" not in present:
-            return "warm_gold", min(0.80, warm_score), "warm bright scene"
+            return "warm_gold", min(0.55, warm_score), "warm bright scene"
 
     # Green-heavy frames benefit from a restrained olive film palette; skip when a broad sky/water
     # context suggests the colour story should be blue instead.
     if "forest_olive" in palettes and has_green_context and not (present & {"sky", "water"}):
-        green_score = 0.50 + min(0.20, max(0.0, chroma - 0.035) * 3.0)
-        if green_score >= 0.55:
-            return "forest_olive", min(0.70, green_score), "green-dominant scene"
+        green_score = 0.45 + min(0.10, max(0.0, chroma - 0.035) * 3.0)
+        if green_score >= 0.48:
+            return "forest_olive", min(0.55, green_score), "green-dominant scene"
 
     # Low-colour non-winter frames get only a very gentle film mute.
     if "muted_film" in palettes and chroma < 0.022 and mean_sat < 0.10 and not has_cool_context:
