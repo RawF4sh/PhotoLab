@@ -49,6 +49,13 @@ def test_veil_detects_haze_but_not_bright_snow():
     assert g_snow.haze > 0.5                              # the conflation the old stat suffers
     assert g_snow.veil < 0.15                             # veil correctly says "no atmosphere"
 
+    # High-key snow/limestone is often exposed below 0.92; it must not exploit the old gate's
+    # permissive 0.80→0.92 ramp and score as maximum haze.
+    for value in (0.80, 0.85):
+        high_key = np.full((64, 64, 3), value, np.float32)
+        g_high, _ = stats.compute(Image(rgb=high_key), {})
+        assert g_high.veil < 0.15
+
 
 def test_fg_stats_exclude_the_sky():
     rgb = np.empty((64, 64, 3), np.float32)
@@ -66,6 +73,35 @@ def test_fg_stats_exclude_the_sky():
     g2, _ = stats.compute(Image(rgb=rgb), {})             # no sky mask → graceful fallback
     assert abs(g2.fg_lum - g2.mean_lum) < 1e-6
     assert abs(g2.fg_p50 - g2.lum_p50) < 1e-6
+
+    all_sky = np.ones((64, 64), bool)                     # empty foreground → same fallback
+    g3, _ = stats.compute(Image(rgb=rgb), {"sky": all_sky})
+    assert abs(g3.fg_lum - g3.mean_lum) < 1e-6
+    assert abs(g3.fg_p50 - g3.lum_p50) < 1e-6
+
+
+def test_global_coverages_can_use_arbitrated_masks():
+    rgb = np.full((10, 10, 3), 0.7, np.float32)
+    snow = np.zeros((10, 10), bool)
+    snow[:5, :5] = True                                  # 25% raw union mask
+
+    g, regions = stats.compute(Image(rgb=rgb), {"snow": snow}, {})
+
+    assert regions["snow"].coverage == 0.25              # union stats still measure the concept
+    assert g.snow_cov == 0.0                              # rule coverage follows arbitration
+
+
+def test_detail_rms_is_root_mean_square():
+    from autoedit.edit.filters import gaussian_blur
+
+    lum = np.zeros((32, 32), np.float32)
+    lum[8:24, 8:24] = 0.8
+    detail = np.abs(lum - gaussian_blur(lum, 0.01 * max(lum.shape) + 1.0))
+    _veil, measured = stats._veil_and_detail(lum, np.zeros_like(lum), np.zeros_like(lum))
+
+    expected = float(np.sqrt(np.mean(detail * detail)))
+    assert abs(measured - expected) < 1e-8
+    assert abs(measured - float(detail.mean())) > 1e-4
 
 
 def test_region_channel_stats_are_computed_inside_mask():

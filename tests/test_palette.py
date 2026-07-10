@@ -11,9 +11,11 @@ import numpy as np
 
 from autoedit.edit.oklab import linear_to_oklab, oklab_to_linear
 from autoedit.edit.palette import palette_grade
-from autoedit.imageio import linear_to_srgb, srgb_to_linear
+from autoedit.contract import RunConfig
+from autoedit.imageio import Image, linear_to_srgb, srgb_to_linear
 from autoedit.palette import auto_palette_for_image, load_palettes, palette_for_prompt
 from autoedit.paths import configs_dir
+from autoedit.pipeline import Pipeline
 import os
 
 
@@ -124,3 +126,40 @@ def test_auto_palette_passes_uncertain_scene():
     assert name is None
     assert strength == 0.0
     assert reason == ""
+
+
+def test_pipeline_caps_inferred_palette_after_intensity():
+    import autoedit.edit.apply as apply_mod
+    import autoedit.palette as palette_mod
+
+    strengths: list[float] = []
+
+    def record_grade(rgb, pal, strength, protect=None):
+        strengths.append(float(strength))
+        return rgb
+
+    original_grade = apply_mod.palette_grade
+    original_auto = palette_mod.auto_palette_for_image
+    try:
+        apply_mod.palette_grade = record_grade
+        palette_mod.auto_palette_for_image = (
+            lambda *_args, **_kwargs: ("warm_gold", 0.55, "forced auto test")
+        )
+        image = Image(rgb=np.full((64, 64, 3), 0.5, np.float32))
+
+        auto_cfg = RunConfig(
+            backend="stub", concepts=["sky"], intensity=2.0, palette_strength=1.0,
+        )
+        auto_pipe = Pipeline.build(auto_cfg)
+        auto_pipe.banding = {}
+        auto_pipe.process_one("synthetic.jpg", do_apply=True, image=image)
+        assert strengths[-1] == 0.55
+
+        explicit_cfg = auto_cfg.model_copy(update={"palette": "warm_gold"})
+        explicit_pipe = Pipeline.build(explicit_cfg)
+        explicit_pipe.banding = {}
+        explicit_pipe.process_one("synthetic.jpg", do_apply=True, image=image)
+        assert strengths[-1] == 2.0                      # explicit user choice remains uncapped
+    finally:
+        apply_mod.palette_grade = original_grade
+        palette_mod.auto_palette_for_image = original_auto

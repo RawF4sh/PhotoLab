@@ -129,7 +129,8 @@ class Pipeline:
         raw = self.segmenter.segment(proxy, concepts)
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
 
-        gstats, region_stats = stats_mod.compute(proxy, resolved.union)
+        resolved_coverages = {r.name: float(r.coverage) for r in resolved.regions}
+        gstats, region_stats = stats_mod.compute(proxy, resolved.union, resolved_coverages)
         present = set(region_stats.keys())
         sc = scene_mod.classify(gstats, present, region_stats)
         region_rule = {name: meta_for(name, self.meta).region() for name in present}
@@ -187,8 +188,13 @@ class Pipeline:
                 pal_name, palette_scale, palette_auto_reason = palette_mod.auto_palette_for_image(
                     sc.name, gstats, present, self.palettes)
         palette_obj = self.palettes.get(pal_name) if pal_name else None
-        palette_arg = ((palette_obj, cfg.palette_strength * cfg.intensity * palette_scale)
-                       if palette_obj is not None else None)
+        palette_strength = cfg.palette_strength * cfg.intensity * palette_scale
+        if palette_auto_reason:
+            # `palette_scale` is an absolute restraint cap, not merely a multiplier. Intensity may
+            # make an explicit/requested palette stronger, but must never push an inferred grade
+            # past the auto picker's ceiling.
+            palette_strength = min(palette_scale, palette_strength)
+        palette_arg = ((palette_obj, palette_strength) if palette_obj is not None else None)
         chroma_neutral_allowance = (
             0.02 + 0.10 * min(1.0, max(0.0, palette_arg[1])) if palette_arg is not None else 0.02
         )
@@ -328,6 +334,7 @@ class Pipeline:
 
         out_rgb = None
         guard_note = None
+        residual_banding: tuple[float, str] | None = None
         if do_apply:
             guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
@@ -381,8 +388,9 @@ class Pipeline:
                 notes_extra.append(f"oversaturation gate: pulled chroma back on {limited * 100:.0f}% of frame")
 
             # Banding gate (spec Phase 1): detect posterization in smooth regions of the EDITED
-            # output; if present, reduce the stretch ops (dehaze/contrast/curve/clarity) and re-apply
-            # ONCE. Measured on downscaled copies so it's cheap. Off when [banding] is absent.
+            # output; if present, reduce every luma-stretch op and re-apply ONCE. Reassess the
+            # rendered result so a residual failure enters the review queue rather than being
+            # silently emitted. Measured on downscaled copies so it's cheap.
             if self.banding:
                 s_small = downscale_long_edge(Image(rgb=img.rgb), 1280).rgb
                 e_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
@@ -390,15 +398,8 @@ class Pipeline:
                 if baction in ("reduce", "fail"):
                     red = 0.35 if baction == "fail" else 0.55
 
-                    def damp(settings: dict) -> dict:
-                        out = dict(settings)
-                        for k in ("dehaze", "contrast", "curve", "clarity", "sharpen"):
-                            if out.get(k):
-                                out[k] *= red
-                        return out
-
-                    gs2 = damp(global_settings)
-                    regions2 = [(a, damp(s)) for a, s in regions_apply]
+                    gs2 = banding.damp_settings(global_settings, red)
+                    regions2 = [(a, banding.damp_settings(s, red)) for a, s in regions_apply]
                     out_rgb = apply_image(
                         img.rgb, regions2, gs2,
                         compositional=[(a, s) for _n, a, s in comp],
@@ -411,12 +412,20 @@ class Pipeline:
                     # The sidecar must report the settings that actually rendered the pixels —
                     # swap in the damped values so the JSON matches the output, not the plan.
                     global_settings = gs2
-                    region_settings = {k: damp(s) for k, s in region_settings.items()}
+                    region_settings = {
+                        k: banding.damp_settings(s, red) for k, s in region_settings.items()
+                    }
+                    e2_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
+                    after_score, after_action, _ = banding.assess(
+                        s_small, e2_small, self.banding)
                     notes_extra.append(
-                        f"banding gate: smooth-region banding {bscore:.2f} → reduced "
-                        f"dehaze/contrast/curve/clarity/sharpen {int((1 - red) * 100)}% and re-applied")
+                        f"banding gate: smooth-region banding {bscore:.2f}→{after_score:.2f}; "
+                        f"reduced luma-stretch ops {int((1 - red) * 100)}% and re-applied")
+                    if after_action != "pass":
+                        residual_banding = (after_score, after_action)
                 elif baction == "warn":
                     notes_extra.append(f"banding watch: smooth-region banding {bscore:.2f} (dither applied)")
+                    residual_banding = (bscore, baction)
 
         # Optional finishing grade: match the look of a reference photo (degrades safely).
         ref_note = None
@@ -492,6 +501,14 @@ class Pipeline:
             post_stats, _ = stats_mod.compute(post_proxy, {})
             quality_score, needs_review, review_reason, warnings = gates.assess(
                 gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate)
+        if residual_banding is not None:
+            bscore, baction = residual_banding
+            warnings = list(warnings) + [f"smooth-region banding {bscore:.2f} ({baction})"]
+            if baction in ("reduce", "fail"):
+                quality_score = min(quality_score, 0.80 if baction == "reduce" else 0.70)
+                needs_review = True
+                band_reason = f"residual smooth-region banding {bscore:.2f}"
+                review_reason = f"{review_reason}; {band_reason}" if review_reason else band_reason
 
         notes = build_notes(gstats, region_stats, resolved.detected)
         if intent_note:

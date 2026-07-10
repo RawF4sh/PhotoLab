@@ -3,6 +3,49 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Pro-tone retune (blind-test-driven)
+
+Two blind tests on real photos (see `scripts/blindtest.py`) established the diagnosis: the engine
+architecture was sound (AutoEdit beat a competent global-auto baseline 10/12 on hard blown-sky
+photos, p≈0.02), but the *policy* was timid and one auto-decision was actively wrong — the auto
+`cool_blue` palette fired at 72–85% strength on scenes with measured positive warmth, fighting the
+photo's actual light. On easy, evenly-lit photos the engine was correct but visually indistinguishable
+from a decent auto — "they look identical."
+
+### Added
+- `scripts/blindtest.py --rules-a/--rules-b`: config-A-vs-config-B blind mode (shared cached
+  segmenter, one SAM pass per photo) — the instrument every rule change below was measured
+  through. `score()` now reports an exact binomial p-value and derives method names from the
+  manifest instead of a hardcoded 3-way constant. Galleries with more than two methods require
+  a predeclared `--pair METHOD_A METHOD_B`; significance output explicitly states its independent-
+  photo assumption.
+- **New stats** (`stats.py`/`contract.py`): `fg_lum`/`fg_p50` (sky-excluded foreground tone —
+  calibrated at ~0.28 vs a sky-skewed `mean_lum` of ~0.6 on real alpine photos); `veil` (a true
+  atmospheric-haze estimate — requires lifted-dark-channel *and* smooth *and* desaturated *and*
+  not-near-white, so bright snow/high-key scenes score near 0 where the legacy dark-channel
+  `haze` stat reads 0.5–0.7); `detail_rms`; `dark_p10`; `snow_cov`/`sky_cov`/`water_cov`;
+  `wb_temp_correction`/`wb_tint_correction`/`wb_confidence` (region-aware white-balance signal),
+  plus `pro_stats_valid`/`subj_cov` availability signals that distinguish absent stats from a
+  legitimate measured zero.
+- **Region-aware auto white balance**: measures the colour cast on a natural gray card — SAM's
+  `snow` region when present (full confidence), else bright near-neutral pixels (reduced
+  confidence). The correction is asymmetric and warmth-preserving: up to +12 warm for a
+  blue/overcast cast, floored at −5 cool, fading to zero as the scene's measured warmth rises —
+  golden-hour light is read as a subject, never neutralized as a cast.
+
+### Changed
+- **Auto-palette restraint**: the automatic `cool_blue` grade now has a hard warmth veto (skipped
+  outright at measured warmth ≥0.008) and every inferred grade is capped end-to-end, even when
+  global intensity exceeds 1 (cool_blue ≤40%, others ≤55%) — an unrequested color decision should
+  whisper, never fight the photo.
+- **Percentile-driven tone policy** ("visibly finished," not just corrected): exposure now targets
+  the sky-excluded foreground median; a deliberate black/white point is set from measured
+  percentiles on washed/flat frames; contrast adapts to the measured tonal spread; clarity adapts
+  to measured local detail; `natural`'s filmic curve strengthened (2.0 → 5.0). Every new expression
+  is guarded by the explicit `pro_stats_valid` marker, so legitimate zero-valued measurements use
+  the new policy while a sidecar or config lacking the new stats reproduces the previous output.
+- 255 dependency-free tests (was 231).
+
 ## [0.2.0] — Unreleased — Pivot to standalone open-vocabulary editor
 
 Research established that segmentation-driven auto-masking is already commoditized (Lightroom

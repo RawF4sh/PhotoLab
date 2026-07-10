@@ -141,7 +141,8 @@ def _binomial_p(wins_a: int, wins_b: int) -> float:
     return min(1.0, 2.0 * tail)
 
 
-def score(results_path: str, manifest_path: str | None = None) -> dict:
+def score(results_path: str, manifest_path: str | None = None,
+          pair: tuple[str, str] | None = None) -> dict:
     """Join blind picks against the hidden manifest and report win-rates (the gate number).
     Method names come from the manifest, so 3-way, 2-way, and rules-A/B galleries all score."""
     manifest_path = manifest_path or os.path.join(os.path.dirname(results_path) or ".", "manifest.csv")
@@ -167,22 +168,34 @@ def score(results_path: str, manifest_path: str | None = None) -> dict:
         pct = 100.0 * wins[m] / total if total else 0.0
         print(f"  {m:9s} {pct:5.1f}%  ({wins[m]}/{total})")
 
-    # Head-to-head pair: the classic AutoEdit-vs-baseline gate when both exist, else the gallery's
-    # two methods (rules-A/B mode), else the top two.
-    if "autoedit" in methods_seen and "baseline" in methods_seen:
-        pair = ("autoedit", "baseline")
+    # Head-to-head pair must be declared independently of the observed wins. Picking the two most
+    # common winners after scoring is selection-biased and can even yield a one-element tuple.
+    if pair is not None:
+        if len(pair) != 2 or pair[0] == pair[1] or any(m not in methods_seen for m in pair):
+            raise ValueError(f"invalid comparison pair {pair!r}; methods are {methods_seen!r}")
+        selected_pair = pair
+    elif "autoedit" in methods_seen and "baseline" in methods_seen:
+        selected_pair = ("autoedit", "baseline")
     elif len(methods_seen) == 2:
-        pair = (methods_seen[0], methods_seen[1])
+        selected_pair = (methods_seen[0], methods_seen[1])
     else:
-        pair = tuple(m for m, _ in wins.most_common(2)) or ("", "")
-    a, b = wins[pair[0]], wins[pair[1]]
+        print("\nNo head-to-head significance test: gallery has more than two methods. "
+              "Pass --pair METHOD_A METHOD_B to declare a comparison before scoring.")
+        return {
+            "wins": dict(wins), "total": total, "head_to_head": None, "p_value": None,
+            "pair": [], "p_value_assumption": "independent-photo Bernoulli trials",
+        }
+    a, b = wins[selected_pair[0]], wins[selected_pair[1]]
     h2h = 100.0 * a / (a + b) if (a + b) else 0.0
     p = _binomial_p(a, b)
-    print(f"\nGate — {pair[0]} vs {pair[1]} head-to-head: {h2h:.1f}% "
+    print(f"\nGate — {selected_pair[0]} vs {selected_pair[1]} head-to-head: {h2h:.1f}% "
           f"({'PASS' if a > b else 'MISS'})  |  exact binomial p = {p:.3f}"
-          f"{'  (significant)' if p < 0.05 else '  (not significant — need more photos)'}")
+          f"{'  (significant under independence)' if p < 0.05 else '  (not significant)'}")
+    print("  Assumption: each ranked photo is an independent trial; deduplicate or block burst/"
+          "near-duplicate frames before interpreting significance.")
     return {"wins": dict(wins), "total": total, "head_to_head": h2h, "p_value": p,
-            "pair": list(pair)}
+            "pair": list(selected_pair),
+            "p_value_assumption": "independent-photo Bernoulli trials"}
 
 
 def _write_html(path: str, photos: list[dict]) -> None:
@@ -353,6 +366,8 @@ def main() -> int:
     ap.add_argument("corpus", nargs="?", help="folder of photos to render")
     ap.add_argument("out", nargs="?", default="dist/blindtest")
     ap.add_argument("--score", metavar="results.csv", help="reveal win-rates from a ranked results.csv")
+    ap.add_argument("--pair", nargs=2, metavar=("METHOD_A", "METHOD_B"),
+                    help="predeclare the head-to-head pair when scoring a gallery with >2 methods")
     ap.add_argument("--configs-dir", dest="configs_dir", default=None)
     ap.add_argument("--backend", choices=["stub", "sam3"], default=None)
     ap.add_argument("--device", default=None)
@@ -370,7 +385,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.score:
-        score(args.score)
+        score(args.score, pair=tuple(args.pair) if args.pair else None)
         return 0
     if not args.corpus:
         ap.error("give a corpus folder to render, or --score results.csv")

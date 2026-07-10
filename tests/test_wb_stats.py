@@ -4,11 +4,20 @@ asymmetric, warmth-preserving correction rule. Blue casts get neutralized; golde
 import numpy as np
 
 from autoedit import stats
-from autoedit.imageio import Image
-from autoedit.rules import eval_expr
+from autoedit.contract import GlobalStatsModel
+from autoedit.decide.base import DecisionContext
+from autoedit.decide.rules_decider import RulesDecider
+from autoedit.imageio import Image, linear_to_srgb
+from autoedit.looks import load as load_looks
+from autoedit.paths import config_path
+from autoedit.rules import eval_expr, load as load_rules
 
-_TEMP_RULE = ("clamp(wb_temp_correction * 0.45 * wb_confidence * "
-              "clamp(1 - max(0, warmth) / 0.035, 0, 1), -5, 12)")
+_RULES = load_rules(config_path("rules.toml"))
+_TEMP_RULE = _RULES["landscape"]["global"]["temp"]
+
+
+def _eval_temp(g, intensity=1.0):
+    return eval_expr(_TEMP_RULE, {**g.model_dump(), "intensity": intensity})
 
 
 def _snow_scene(snow_rgb, size=32):
@@ -23,7 +32,7 @@ def test_blue_cast_on_snow_measured_and_warmed():
     g, _ = stats.compute(*_snow_scene([0.72, 0.72, 0.80]))
     assert g.wb_confidence == 1.0                          # full-frame snow = trusted gray card
     assert g.wb_temp_correction > 20                       # solid warm-correction signal
-    temp = eval_expr(_TEMP_RULE, g.model_dump())
+    temp = _eval_temp(g)
     assert 3.0 < temp <= 12.0                              # bounded, assertive warm-up
 
 
@@ -32,7 +41,7 @@ def test_golden_light_is_preserved_not_neutralized():
     g, _ = stats.compute(*_snow_scene([0.80, 0.76, 0.62]))
     assert g.wb_temp_correction < -20                      # the card DOES measure a warm cast...
     assert g.warmth > 0.02
-    temp = eval_expr(_TEMP_RULE, g.model_dump())
+    temp = _eval_temp(g)
     assert -5.0 <= temp <= 0.0                             # ...but cooling is floored at -5
     if g.warmth >= 0.035:
         assert temp == 0.0                                 # fully warm scene → untouched
@@ -53,4 +62,44 @@ def test_no_reference_means_identity():
     rgb[..., 0] = 0.5                                      # saturated red, dark
     g, _ = stats.compute(Image(rgb=rgb), {})
     assert g.wb_confidence == 0.0
-    assert eval_expr(_TEMP_RULE, g.model_dump()) == 0.0
+    assert _eval_temp(g) == 0.0
+
+
+def test_joint_temperature_tint_solve_targets_corrected_neutral():
+    # In linear light, temp=+50 moves R=.18 and B=.22 to the same .198 target. Green=.199
+    # therefore needs a small NEGATIVE tint, not the positive tint from the original R/B mean.
+    linear = np.array([0.18, 0.199, 0.22], np.float32)
+    rgb = np.broadcast_to(linear_to_srgb(linear), (16, 16, 3)).copy()
+    snow = np.ones((16, 16), bool)
+
+    g, _ = stats.compute(Image(rgb=rgb), {"snow": snow})
+
+    assert 49.0 < g.wb_temp_correction < 51.0
+    assert g.wb_tint_correction < 0.0
+
+
+def test_warmth_fade_reaches_exact_zero_at_threshold():
+    g = GlobalStatsModel(
+        mean_lum=0.6, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.1,
+        pro_stats_valid=1.0, wb_temp_correction=-100.0, wb_confidence=1.0, warmth=0.035,
+    )
+    assert _eval_temp(g) == 0.0
+
+
+def test_auto_wb_bounds_survive_intensity_shaping():
+    looks = load_looks(config_path("looks.toml"))
+    base = GlobalStatsModel(
+        mean_lum=0.6, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.1,
+        pro_stats_valid=1.0, wb_confidence=1.0, warmth=0.0,
+    )
+
+    def decide(correction):
+        g = base.model_copy(update={"wb_temp_correction": correction})
+        ctx = DecisionContext(
+            scene="landscape", gstats=g, region_stats={}, region_rule={}, intensity=2.0,
+            rules=_RULES, looks=looks, look="natural",
+        )
+        return RulesDecider().decide(ctx)[0]
+
+    assert decide(-100.0)["temp"] == -5.0
+    assert decide(100.0)["temp"] == 12.0
