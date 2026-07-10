@@ -21,6 +21,22 @@ from .filters import gaussian_blur
 DEFAULTS = {"warning": 0.12, "reduce_ops": 0.22, "hard_fail": 0.35, "min_coverage": 0.03,
             "absolute_weight": 0.65}
 
+# Luma-stretch operations that can spread a small number of source levels into visible gaps.
+# Keep this centralized so the detector and pipeline remediation cannot silently drift apart.
+STRETCH_OPS = (
+    "exposure", "highlights", "shadows", "whites", "blacks",
+    "dehaze", "contrast", "curve", "clarity", "sharpen",
+)
+
+
+def damp_settings(settings: dict, factor: float) -> dict:
+    """Return a copy with every banding-relevant luma stretch scaled by `factor`."""
+    out = dict(settings)
+    for key in STRETCH_OPS:
+        if out.get(key):
+            out[key] *= factor
+    return out
+
 
 def smooth_region_mask(lum: np.ndarray, hf_thresh: float = 0.012, sigma: float = 9.0) -> np.ndarray:
     """Boolean mask of low-texture pixels (|detail| below threshold) — the banding-prone areas."""

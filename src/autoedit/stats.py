@@ -38,7 +38,7 @@ def _oklab_color_stats(rgb: np.ndarray) -> tuple[float, float]:
 
 
 def _veil_and_detail(lum: np.ndarray, sat: np.ndarray, dark: np.ndarray) -> tuple[float, float]:
-    """(veil, detail_rms) — TRUE atmospheric-haze estimate + mean local detail.
+    """(veil, detail_rms) — TRUE atmospheric-haze estimate + RMS local detail.
 
     The legacy `haze` stat (mean dark channel) conflates *bright/washed* with *hazy*: bright snow
     and limestone score 0.5-0.7 with zero atmosphere (measured on the Dolomites corpus). Veil
@@ -53,10 +53,12 @@ def _veil_and_detail(lum: np.ndarray, sat: np.ndarray, dark: np.ndarray) -> tupl
     # a strict gate zeroes veil on genuinely foggy frames because proxy-scale texture exceeds it
     smooth = np.clip((0.05 - detail) / 0.05, 0.0, 1.0)
     desat = np.clip((0.18 - sat) / 0.18, 0.0, 1.0)
-    notwhite = np.clip((0.92 - lum) / 0.12, 0.0, 1.0)
+    # Treat display-referred luma >= 0.82 as high-key/near-white. The former 0.80→0.92 ramp
+    # assigned a uniform 0.80 neutral snow field the maximum possible veil score.
+    notwhite = np.clip((0.82 - lum) / 0.18, 0.0, 1.0)
     norm_dark = np.clip((dark - 0.25) / 0.45, 0.0, 1.0)
     veil = float((norm_dark * smooth * desat * notwhite).mean())
-    return veil, float(detail.mean())
+    return veil, float(np.sqrt(np.mean(detail * detail)))
 
 
 def _channel_exposure_stats(rgb: np.ndarray) -> dict[str, float]:
@@ -98,7 +100,9 @@ def _channel_exposure_stats(rgb: np.ndarray) -> dict[str, float]:
 
 
 def compute(
-    img: Image, region_masks: dict[str, np.ndarray]
+    img: Image,
+    region_masks: dict[str, np.ndarray],
+    region_coverages: dict[str, float] | None = None,
 ) -> tuple[GlobalStatsModel, dict[str, RegionStatsModel]]:
     rgb = img.rgb
     lum = luma(rgb)
@@ -142,7 +146,12 @@ def compute(
         r_m, g_m, b_m = (float(ref[:, c].mean()) for c in range(3))
         if r_m + b_m > 1e-6 and g_m > 1e-6:
             wb_temp = float(np.clip(500.0 * (b_m - r_m) / (b_m + r_m), -100.0, 100.0))
-            wb_tint = float(np.clip(1000.0 * ((r_m + b_m) / 2.0 - g_m) / g_m, -100.0, 100.0))
+            # Solve tint against the red/blue level AFTER the (possibly clipped) temperature
+            # correction. Using the original arithmetic mean can give tint the wrong sign.
+            r_target = r_m * (1.0 + 0.002 * wb_temp)
+            b_target = b_m * (1.0 - 0.002 * wb_temp)
+            rb_target = (r_target + b_target) / 2.0
+            wb_tint = float(np.clip(1000.0 * (rb_target - g_m) / g_m, -100.0, 100.0))
             wb_conf = float(np.clip(float(ref_mask.mean()) / 0.05, 0.0, 1.0))
             wb_conf *= 1.0 if ref_is_snow else 0.6
 
@@ -153,6 +162,7 @@ def compute(
         shadow_clip=float((lum < _SHADOW).mean()),
         highlight_clip=float((lum > _HIGHLIGHT).mean()),
         haze=float(np.clip(dark.mean(), 0.0, 1.0)),
+        pro_stats_valid=1.0,
         veil=veil, detail_rms=detail_rms,
         dark_p10=float(np.percentile(dark, 10)),
         fg_lum=fg_lum, fg_p50=fg_p50,
@@ -186,15 +196,23 @@ def compute(
         g.sky_lum = region_stats["sky"].lum
         g.sky_sat = region_stats["sky"].sat
         g.blown_sky = region_stats["sky"].clip_high
+    def coverage_for(name: str, fallback: float) -> float:
+        # `None` means the caller has no arbitration information. An explicit mapping means
+        # arbitration ran; a missing key then represents a fully claimed/zero-coverage region.
+        if region_coverages is None:
+            return float(fallback)
+        return float(region_coverages.get(name, 0.0))
+
     if "snow" in region_stats:
-        g.snow_cov = region_stats["snow"].coverage
+        g.snow_cov = coverage_for("snow", region_stats["snow"].coverage)
     if "sky" in region_stats:
-        g.sky_cov = region_stats["sky"].coverage
+        g.sky_cov = coverage_for("sky", region_stats["sky"].coverage)
     if "water" in region_stats:
-        g.water_cov = region_stats["water"].coverage
+        g.water_cov = coverage_for("water", region_stats["water"].coverage)
     if "subject" in region_masks and region_masks["subject"].sum() > 0:
         subj = region_masks["subject"]
         g.subj_lum = float(lum[subj].mean())
+        g.subj_cov = coverage_for("subject", float(subj.mean()))
         bg = ~subj
         if bg.sum() > 0:
             g.bg_lum = float(lum[bg].mean())

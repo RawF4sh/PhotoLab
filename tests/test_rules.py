@@ -12,6 +12,8 @@ from autoedit.rules import load as load_rules
 def test_eval_helpers():
     assert eval_expr("clamp(5, 0, 3)", {}) == 3.0
     assert eval_expr("if(1 > 0, 2, 9)", {}) == 2.0
+    assert eval_expr("if(1 > 0, 2, 1 / 0)", {}) == 2.0   # unchosen branch is not evaluated
+    assert eval_expr("2 if 1 > 0 else 1 / 0", {}) == 2.0
     assert eval_expr("max(min(0.7, 1), 0)", {}) == 0.7
 
 
@@ -79,7 +81,8 @@ def test_shipped_pro_tone_rules_adapt_to_percentiles():
 
     flat = GlobalStatsModel(                              # flat overcast: narrow spread, washed
         mean_lum=0.5, mean_sat=0.08, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
-        lum_p10=0.13, lum_p50=0.40, lum_p90=0.48, fg_p50=0.45, detail_rms=0.02,
+        pro_stats_valid=1.0, lum_p10=0.13, lum_p50=0.40, lum_p90=0.48, fg_p50=0.45,
+        detail_rms=0.02,
     )
     gset, _ = apply(rules, "landscape", flat, {}, {}, intensity=1.0)
     assert gset["contrast"] >= 10                         # decisive contrast on a flat frame
@@ -88,7 +91,8 @@ def test_shipped_pro_tone_rules_adapt_to_percentiles():
 
     crisp = GlobalStatsModel(                             # contrasty frame: full spread, deep blacks
         mean_lum=0.5, mean_sat=0.2, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
-        lum_p10=0.02, lum_p50=0.5, lum_p90=0.92, fg_p50=0.5, detail_rms=0.06,
+        pro_stats_valid=1.0, lum_p10=0.02, lum_p50=0.5, lum_p90=0.92, fg_p50=0.5,
+        detail_rms=0.06,
     )
     gset, _ = apply(rules, "landscape", crisp, {}, {}, intensity=1.0)
     assert gset["contrast"] == 3.0                        # already contrasty → gentle
@@ -109,10 +113,77 @@ def test_shipped_exposure_targets_foreground_not_sky():
     rules = load_rules(config_path("rules.toml"))
     skyheavy = GlobalStatsModel(
         mean_lum=0.60, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.3,
-        lum_p10=0.06, lum_p50=0.55, lum_p90=0.95, fg_p50=0.28, detail_rms=0.03,
+        pro_stats_valid=1.0, lum_p10=0.06, lum_p50=0.55, lum_p90=0.95, fg_p50=0.28,
+        detail_rms=0.03,
     )
     gset, _ = apply(rules, "landscape", skyheavy, {}, {}, intensity=1.0)
     assert gset["exposure"] > 0.15                        # (0.50-0.28)*0.9 ≈ +0.20 EV for the land
+
+
+def test_snow_dominant_scene_gets_extra_shadow_lift():
+    """P3: sub-scene branching via a stat (snow_cov), not a new scene class — alpine shadow
+    detail under snow reads flatter than a typical landscape shadow and gets a touch more lift."""
+    rules = load_rules(config_path("rules.toml"))
+    base = dict(mean_lum=0.55, mean_sat=0.1, shadow_clip=0.1, highlight_clip=0.0,
+                haze=0.2, pro_stats_valid=1.0)
+    plain = GlobalStatsModel(**base, snow_cov=0.0)
+    snowy = GlobalStatsModel(**base, snow_cov=0.5)
+    g_plain, _ = apply(rules, "landscape", plain, {}, {}, intensity=1.0)
+    g_snowy, _ = apply(rules, "landscape", snowy, {}, {}, intensity=1.0)
+    assert g_snowy["shadows"] == g_plain["shadows"] + 3.0
+
+    at_threshold = GlobalStatsModel(**base, snow_cov=0.2)
+    capped_plain = GlobalStatsModel(**{**base, "shadow_clip": 0.5}, snow_cov=0.0)
+    capped_snow = GlobalStatsModel(**{**base, "shadow_clip": 0.5}, snow_cov=0.5)
+    g_threshold, _ = apply(rules, "landscape", at_threshold, {}, {}, intensity=1.0)
+    g_capped_plain, _ = apply(rules, "landscape", capped_plain, {}, {}, intensity=1.0)
+    g_capped_snow, _ = apply(rules, "landscape", capped_snow, {}, {}, intensity=1.0)
+    assert g_threshold["shadows"] == g_plain["shadows"]
+    assert g_capped_plain["shadows"] == g_capped_snow["shadows"] == 30.0
+
+
+def test_wildlife_exposes_for_subject_not_the_frame():
+    """P3: a dark subject (wildlife) against a bright sky/background must be exposed for the
+    ANIMAL, not judged by mean_lum — the priority chain is subj_lum > fg_p50 > mean_lum."""
+    rules = load_rules(config_path("rules.toml"))
+    bright_frame_dark_subject = GlobalStatsModel(
+        mean_lum=0.70, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.1,
+        pro_stats_valid=1.0, subj_lum=0.22, subj_cov=0.1, fg_p50=0.80,
+    )
+    gset, _ = apply(rules, "other", bright_frame_dark_subject, {}, {}, intensity=1.0)
+    assert gset["exposure"] > 0.10                        # lifted for the dark subject
+    # Without a subject, fresh stats use the sky-excluded foreground branch.
+    no_subject = bright_frame_dark_subject.model_copy(update={"subj_lum": 0.0, "subj_cov": 0.0})
+    gset2, _ = apply(rules, "other", no_subject, {}, {}, intensity=1.0)
+    assert gset2["exposure"] == -0.06                     # bright foreground → bounded darkening
+
+    # Presence, not luminance, selects the subject branch: a clipped-black silhouette is valid.
+    black_subject = bright_frame_dark_subject.model_copy(update={"subj_lum": 0.0})
+    gset3, _ = apply(rules, "other", black_subject, {}, {}, intensity=1.0)
+    assert gset3["exposure"] == 0.315
+
+
+def test_legacy_subject_stats_reproduce_pre_retune_other_exposure():
+    """A legacy sidecar could already contain subj_lum; the new P3 policy must still be gated by
+    the explicit pro-stats availability marker, not by that pre-existing field."""
+    rules = load_rules(config_path("rules.toml"))
+    legacy = GlobalStatsModel(
+        mean_lum=0.70, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.1,
+        subj_lum=0.22,  # old field populated, all newly computed fields/default marker remain zero
+    )
+    gset, _ = apply(rules, "other", legacy, {}, {}, intensity=1.0)
+    assert gset["exposure"] == -0.04
+    assert "temp" not in gset and "tint" not in gset
+
+
+def test_valid_zero_foreground_uses_new_exposure_policy():
+    rules = load_rules(config_path("rules.toml"))
+    clipped_black_foreground = GlobalStatsModel(
+        mean_lum=0.25, mean_sat=0.0, shadow_clip=0.75, highlight_clip=0.25, haze=0.25,
+        pro_stats_valid=1.0, fg_p50=0.0, lum_p10=0.0, lum_p90=1.0, detail_rms=0.02,
+    )
+    gset, _ = apply(rules, "landscape", clipped_black_foreground, {}, {}, intensity=1.0)
+    assert gset["exposure"] == 0.32
 
 
 def test_region_channel_clip_is_available_to_rules():

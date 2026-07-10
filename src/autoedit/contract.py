@@ -119,6 +119,7 @@ class GlobalStatsModel(BaseModel):
     sky_sat: float = 0.0
     blown_sky: float = 0.0
     subj_lum: float = 0.0
+    subj_cov: float = 0.0
     bg_lum: float = 0.0
     # EXIF-derived priors (0.0 when the photo carries no usable metadata)
     iso: float = 0.0
@@ -130,10 +131,14 @@ class GlobalStatsModel(BaseModel):
     lum_p90: float = 0.0   # highlight brightness / wash-out
     mean_chroma: float = 0.0  # mean OKLab chroma — how colourful the frame is
     warmth: float = 0.0       # mean OKLab b axis: + = warm/yellow, − = cool/blue
-    # pro-tone signals (all 0.0-defaulted so `iff(x > 0, new, old)` rules degrade gracefully):
+    # Explicit availability separates an older/hand-built zero-filled model from a newly computed
+    # photo whose measured percentile/detail can legitimately be exactly zero (e.g. clipped black).
+    pro_stats_valid: float = 0.0
+    # Pro-tone signals (0.0 defaults preserve older sidecar validation; rules gate on
+    # `pro_stats_valid`, never on the measured value itself):
     veil: float = 0.0         # TRUE atmospheric haze (bright+smooth+desat+not-white) — unlike
     #                           `haze` (dark-channel mean), snow/high-key scenes score ~0
-    detail_rms: float = 0.0   # mean local luma detail — low = flat/soft frame
+    detail_rms: float = 0.0   # root-mean-square local luma detail — low = flat/soft frame
     dark_p10: float = 0.0     # dark-channel 10th percentile — black anchor
     fg_lum: float = 0.0       # sky-EXCLUDED mean luma (falls back to mean_lum without a sky mask)
     fg_p50: float = 0.0       # sky-EXCLUDED median luma — the pro exposure target

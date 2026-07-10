@@ -58,6 +58,19 @@ def test_remediation_reduces_banding():
     assert s_gentle <= s_strong
 
 
+def test_remediation_damps_tone_levels_and_exposure():
+    settings = {
+        "exposure": 0.3, "highlights": -20.0, "shadows": 15.0,
+        "whites": 10.0, "blacks": -18.0, "contrast": 12.0,
+        "temp": 8.0,  # color-only operation is deliberately not part of banding remediation
+    }
+    damped = banding.damp_settings(settings, 0.5)
+
+    for key in ("exposure", "highlights", "shadows", "whites", "blacks", "contrast"):
+        assert damped[key] == settings[key] * 0.5
+    assert damped["temp"] == settings["temp"]
+
+
 def _lum(rgb):
     from autoedit.imageio import luma
     return luma(rgb)

@@ -93,6 +93,10 @@ def _ev(node, ctx):
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name) or node.func.id not in _FUNCS:
             raise ValueError("disallowed function call in rule")
+        if node.func.id == "iff":
+            if len(node.args) != 3:
+                raise ValueError("if() requires exactly three arguments")
+            return _ev(node.args[1], ctx) if _ev(node.args[0], ctx) else _ev(node.args[2], ctx)
         args = [_ev(a, ctx) for a in node.args]
         return _FUNCS[node.func.id](*args)
     raise ValueError(f"disallowed expression element: {type(node).__name__}")
@@ -100,7 +104,8 @@ def _ev(node, ctx):
 
 def eval_expr(expr: str, ctx: dict) -> float:
     # `if(...)` -> `iff(...)` since `if` is a Python keyword and can't be a call target.
-    expr = re.sub(r"\bif\b", "iff", expr)
+    # Rewrite only call syntax; leave Python's ternary `a if cond else b` intact.
+    expr = re.sub(r"\bif\s*(?=\()", "iff", expr)
     tree = ast.parse(expr, mode="eval")
     return float(_ev(tree, ctx))
 
@@ -156,6 +161,9 @@ def apply(
     scene_rules = rules.get(scene) or rules.get("other") or {}
 
     global_settings = _eval_block(scene_rules.get("global", {}), _base_ctx(g, intensity))
+    for op in rules.get("compat", {}).get("omit_zero_global_ops", []):
+        if global_settings.get(op) == 0.0:
+            global_settings.pop(op, None)
 
     region_settings: dict[str, Settings] = {}
     for concept, rstat in region_stats.items():

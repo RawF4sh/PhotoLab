@@ -173,7 +173,7 @@ def test_banding_remediation_reflected_in_sidecar(tmp_path):
         # which would already damp the baseline's reported settings)
         banding_mod.assess = lambda s, e, thr=None: (0.0, "pass", 0.5)
         base = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
-        damped_ops = [k for k in ("dehaze", "contrast", "curve", "clarity", "sharpen")
+        damped_ops = [k for k in banding_mod.STRETCH_OPS
                       if base.global_settings.get(k)]
         assert damped_ops                                # dramatic look sets stretch ops
 
@@ -185,6 +185,24 @@ def test_banding_remediation_reflected_in_sidecar(tmp_path):
     assert any("banding gate" in n for n in result.notes)
     for k in damped_ops:                                 # reported settings = applied (0.55x) ones
         assert abs(result.global_settings[k] - base.global_settings[k] * 0.55) < 1e-6
+
+
+def test_residual_banding_enters_review_queue(tmp_path):
+    img_path = tmp_path / "p.jpg"
+    _make(str(img_path))
+    from autoedit.edit import banding as banding_mod
+
+    cfg = RunConfig(backend="stub", style="dramatic")
+    orig_assess = banding_mod.assess
+    try:
+        banding_mod.assess = lambda s, e, thr=None: (0.40, "fail", 0.5)
+        result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+    finally:
+        banding_mod.assess = orig_assess
+
+    assert result.needs_review
+    assert "residual smooth-region banding" in result.review_reason
+    assert any("smooth-region banding" in warning for warning in result.warnings)
 
 
 def test_reference_is_decoded_once_per_run(tmp_path):
