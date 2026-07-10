@@ -91,8 +91,19 @@ def test_auto_palette_selects_cool_winter_landscape():
                             mean_chroma=0.018, sky_lum=0.75)
     name, strength, reason = auto_palette_for_image("landscape", stats, {"sky", "water"}, pals)
     assert name == "cool_blue"
-    assert 0.5 < strength <= 0.85
+    assert 0.20 <= strength <= 0.40                       # unrequested grades whisper (capped)
     assert "cool" in reason
+
+
+def test_auto_palette_never_cools_a_warm_scene():
+    """Regression for the two blind-test losses: hazy low-chroma alpine scenes with POSITIVE
+    warmth (+0.015/+0.023) must not get a cool grade — the warmth veto is hard."""
+    pals = _palettes()
+    for w in (0.015, 0.023, 0.008):
+        stats = SimpleNamespace(mean_lum=0.55, mean_sat=0.15, haze=0.60, warmth=w,
+                                mean_chroma=0.023, sky_lum=0.70)
+        name, _s, _r = auto_palette_for_image("landscape", stats, {"sky", "mountain", "snow"}, pals)
+        assert name != "cool_blue", f"cool grade fired on warm scene (warmth={w})"
 
 
 def test_auto_palette_selects_warm_scene():
@@ -101,7 +112,7 @@ def test_auto_palette_selects_warm_scene():
                             mean_chroma=0.05, sky_lum=0.70)
     name, strength, reason = auto_palette_for_image("landscape", stats, {"sky"}, pals)
     assert name == "warm_gold"
-    assert strength > 0.55
+    assert 0.30 <= strength <= 0.55                       # capped like every inferred grade
     assert "warm" in reason
 
 
