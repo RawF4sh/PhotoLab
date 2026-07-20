@@ -119,6 +119,47 @@ def test_rules_ab_mode(tmp_path):
     assert res["total"] == 1 and res["p_value"] == 1.0    # n=1 can never be significant
 
 
+def test_score_print_order_is_stable_regardless_of_manifest_row_order(tmp_path):
+    """Regression: the summary table's method row order must not depend on which method happens
+    to appear first in manifest.csv (that first-occurrence order is itself the first photo's
+    RANDOM per-photo shuffle, i.e. --seed-dependent) — otherwise scoring the same corpus across
+    different seeds prints the table in a different, unstable order each time."""
+    import contextlib
+    import io
+
+    bt = _load_blindtest()
+
+    def _score_with_manifest(rows):
+        manifest = tmp_path / f"manifest_{len(rows)}_{rows[0][2]}.csv"
+        results = tmp_path / f"results_{len(rows)}_{rows[0][2]}.csv"
+        with open(manifest, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["photo", "slot", "method"])
+            w.writerows(rows)
+        with open(results, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["photo", "best_slot"])
+            w.writerow(["p1", 0])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            bt.score(str(results), str(manifest))
+        return buf.getvalue()
+
+    # same three methods, manifest rows written in two different first-seen orders
+    out_a = _score_with_manifest([
+        ("p1", 0, "autoedit"), ("p1", 1, "unedited"), ("p1", 2, "baseline"),
+    ])
+    out_b = _score_with_manifest([
+        ("p1", 0, "baseline"), ("p1", 1, "unedited"), ("p1", 2, "autoedit"),
+    ])
+
+    def _row_order(text):
+        return [line.split()[0] for line in text.splitlines()
+                if line.strip().startswith(("unedited", "baseline", "autoedit"))]
+
+    assert _row_order(out_a) == _row_order(out_b) == ["unedited", "baseline", "autoedit"]
+
+
 def test_exact_binomial_values():
     bt = _load_blindtest()
     assert bt._binomial_p(3, 0) == 0.25

@@ -86,6 +86,33 @@ def test_warmth_fade_reaches_exact_zero_at_threshold():
     assert _eval_temp(g) == 0.0
 
 
+def test_wb_fallback_excludes_material_biased_regions():
+    """A pale, low-saturation ROCK region with its own inherent warm bias (beige limestone, not
+    a lighting cast) must NOT become the neutral-pixel WB reference — it would otherwise get
+    misread as a cast, exactly the false-positive class concepts.toml already guards against for
+    skin ('warm rock/grass can score as skin')."""
+    size = 32
+    rgb = np.full((size, size, 3), [0.78, 0.74, 0.70], np.float32)  # sat≈0.10, lum≈0.75 — would
+    rock = np.ones((size, size), bool)                              # otherwise pass the fallback
+    g, _ = stats.compute(Image(rgb=rgb), {"rock": rock})
+    assert g.wb_confidence == 0.0                          # excluded → nothing trustworthy left
+    assert g.wb_temp_correction == 0.0
+
+
+def test_wb_fallback_still_uses_genuine_neutral_pixels_beside_a_biased_region():
+    """The exclusion is scoped to the biased region's pixels only — a real neutral reference
+    elsewhere in frame still measures its actual cast."""
+    size = 32
+    rgb = np.empty((size, size, 3), np.float32)
+    rgb[:16] = [0.78, 0.74, 0.70]   # warm rock — excluded
+    rgb[16:] = [0.72, 0.72, 0.80]   # genuinely neutral gray with a blue cast
+    rock = np.zeros((size, size), bool)
+    rock[:16] = True
+    g, _ = stats.compute(Image(rgb=rgb), {"rock": rock})
+    assert g.wb_confidence > 0.0
+    assert g.wb_temp_correction > 0.0   # measured from the neutral half only
+
+
 def test_auto_wb_bounds_survive_intensity_shaping():
     looks = load_looks(config_path("looks.toml"))
     base = GlobalStatsModel(

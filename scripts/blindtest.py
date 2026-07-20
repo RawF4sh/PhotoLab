@@ -163,8 +163,17 @@ def score(results_path: str, manifest_path: str | None = None,
                 wins[method] += 1
                 total += 1
 
+    # Print order must be stable across runs/seeds — `methods_seen` is manifest row-insertion
+    # order, which is the first photo's per-photo RANDOM shuffle order and so varies by --seed.
+    # Sort by each method's position in the canonical METHODS tuple when it's one of the three
+    # named methods, else alphabetically (covers rules_a/rules_b and any future custom pair) —
+    # fully deterministic regardless of seed, unlike the raw first-seen order.
+    print_order = sorted(
+        methods_seen,
+        key=lambda m: (METHODS.index(m) if m in METHODS else len(METHODS), m),
+    )
     print(f"\nBlind-test results ({total} photos ranked):")
-    for m in methods_seen:
+    for m in print_order:
         pct = 100.0 * wins[m] / total if total else 0.0
         print(f"  {m:9s} {pct:5.1f}%  ({wins[m]}/{total})")
 

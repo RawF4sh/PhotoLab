@@ -171,13 +171,13 @@ def test_banding_remediation_reflected_in_sidecar(tmp_path):
     try:
         # baseline with the gate forced OFF (the real gate does fire on this synthetic image,
         # which would already damp the baseline's reported settings)
-        banding_mod.assess = lambda s, e, thr=None: (0.0, "pass", 0.5)
+        banding_mod.assess = lambda s, e, thr=None, smooth=None: (0.0, "pass", 0.5)
         base = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
         damped_ops = [k for k in banding_mod.STRETCH_OPS
                       if base.global_settings.get(k)]
         assert damped_ops                                # dramatic look sets stretch ops
 
-        banding_mod.assess = lambda s, e, thr=None: (0.30, "reduce", 0.5)
+        banding_mod.assess = lambda s, e, thr=None, smooth=None: (0.30, "reduce", 0.5)
         result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
     finally:
         banding_mod.assess = orig_assess
@@ -195,7 +195,7 @@ def test_residual_banding_enters_review_queue(tmp_path):
     cfg = RunConfig(backend="stub", style="dramatic")
     orig_assess = banding_mod.assess
     try:
-        banding_mod.assess = lambda s, e, thr=None: (0.40, "fail", 0.5)
+        banding_mod.assess = lambda s, e, thr=None, smooth=None: (0.40, "fail", 0.5)
         result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
     finally:
         banding_mod.assess = orig_assess
@@ -203,6 +203,70 @@ def test_residual_banding_enters_review_queue(tmp_path):
     assert result.needs_review
     assert "residual smooth-region banding" in result.review_reason
     assert any("smooth-region banding" in warning for warning in result.warnings)
+
+
+def test_banding_reassessed_after_reference_matching(tmp_path):
+    """Regression: the banding gate's final verdict must reflect the TRULY final pixels — after
+    reference matching, not before. Reference matching is the last thing to touch out_rgb and can
+    itself introduce banding a pre-reference-match check would never see (mirrors why chroma_guard
+    is re-run post-reference-match)."""
+    img_path = tmp_path / "p.jpg"
+    ref_path = tmp_path / "ref.jpg"
+    _make(str(img_path))
+    _make(str(ref_path))
+    from autoedit.edit import banding as banding_mod
+
+    cfg = RunConfig(backend="stub", reference=str(ref_path), reference_strength=0.5)
+    orig_assess = banding_mod.assess
+    calls: list[int] = []
+
+    def fake_assess(s, e, thr=None, smooth=None):
+        calls.append(1)
+        # First call (the pre-remediation-decision check) says clean; only the reassessment that
+        # must run AFTER reference matching sees the final, actually-banded pixels.
+        return (0.0, "pass", 0.5) if len(calls) == 1 else (0.30, "fail", 0.5)
+
+    try:
+        banding_mod.assess = fake_assess
+        result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+    finally:
+        banding_mod.assess = orig_assess
+
+    assert len(calls) == 2, "a post-reference-match reassessment must run even when the first check passed"
+    assert result.needs_review
+    assert "residual smooth-region banding" in result.review_reason
+
+
+def test_banding_warn_after_remediation_gets_small_penalty(tmp_path):
+    """A gate that damped+reapplied once and STILL lands back in 'warn' worked hard — like
+    gates.py's oversaturation 'worked hard' case, that's a small score penalty, not silence. A
+    first-pass warn with NO remediation attempted (covered elsewhere) stays penalty-free."""
+    img_path = tmp_path / "p.jpg"
+    _make(str(img_path))
+    from autoedit.edit import banding as banding_mod
+
+    cfg = RunConfig(backend="stub", style="dramatic")
+    orig_assess = banding_mod.assess
+
+    def run(second_call_result):
+        calls: list[int] = []
+
+        def fake_assess(s, e, thr=None, smooth=None):
+            calls.append(1)
+            return (0.25, "reduce", 0.5) if len(calls) == 1 else second_call_result
+
+        banding_mod.assess = fake_assess
+        try:
+            return Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+        finally:
+            banding_mod.assess = orig_assess
+
+    clean = run((0.0, "pass", 0.5))        # remediation fully worked
+    still_warn = run((0.15, "warn", 0.5))  # remediation helped but not all the way
+
+    assert not clean.needs_review and not still_warn.needs_review  # "warn" alone never forces review
+    assert still_warn.quality_score < clean.quality_score
+    assert abs((clean.quality_score - still_warn.quality_score) - 0.05) < 1e-6
 
 
 def test_reference_is_decoded_once_per_run(tmp_path):
