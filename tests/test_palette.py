@@ -13,7 +13,10 @@ from autoedit.edit.oklab import linear_to_oklab, oklab_to_linear
 from autoedit.edit.palette import palette_grade
 from autoedit.contract import RunConfig
 from autoedit.imageio import Image, linear_to_srgb, srgb_to_linear
-from autoedit.palette import auto_palette_for_image, load_palettes, palette_for_prompt
+from autoedit.palette import (
+    AUTO_DEFAULTS, auto_palette_for_image, load_auto_palette_config, load_palettes,
+    palette_for_prompt,
+)
 from autoedit.paths import configs_dir
 from autoedit.pipeline import Pipeline
 import os
@@ -85,6 +88,46 @@ def test_prompt_to_palette():
     assert palette_for_prompt("warm sunset over the bay", pals) == "warm_gold"
     assert palette_for_prompt("teal orange cinematic", pals) == "teal_orange"
     assert palette_for_prompt("nothing relevant here", pals) is None
+
+
+def test_shipped_palettes_toml_auto_config_matches_defaults():
+    """The shipped [auto.*] block in palettes.toml must mirror AUTO_DEFAULTS exactly — it exists
+    to document/expose the knob, not to silently change behavior out of the box."""
+    cfg = load_auto_palette_config(os.path.join(configs_dir(), "palettes.toml"))
+    assert cfg == AUTO_DEFAULTS
+
+
+def test_auto_palette_config_is_tunable_from_toml(tmp_path):
+    """The whole point of moving these constants to palettes.toml: an A/B tuning workflow that
+    only diffs config files (scripts/blindtest.py --rules-a/--rules-b style) must be able to
+    change the auto-palette policy WITHOUT touching palette.py."""
+    src = open(os.path.join(configs_dir(), "palettes.toml")).read()
+    custom = tmp_path / "palettes.toml"
+    custom.write_text(src.replace("strength_cap = 0.40", "strength_cap = 0.05"))
+
+    pals = load_palettes(str(custom))
+    auto_cfg = load_auto_palette_config(str(custom))
+    assert auto_cfg["cool_blue"]["strength_cap"] == 0.05
+    assert auto_cfg["warm_gold"]["strength_cap"] == AUTO_DEFAULTS["warm_gold"]["strength_cap"]
+
+    stats = SimpleNamespace(mean_lum=0.55, mean_sat=0.06, haze=0.52, warmth=0.0,
+                            mean_chroma=0.018, sky_lum=0.75)
+    name, strength, _r = auto_palette_for_image("landscape", stats, {"sky", "water"}, pals, auto_cfg)
+    assert name == "cool_blue"
+    assert strength <= 0.05                                # the config override took effect
+
+    # a partial override touches only the named key — the rest of that palette's policy, and
+    # every other palette's policy, still falls back to AUTO_DEFAULTS
+    assert auto_cfg["cool_blue"]["warmth_veto"] == AUTO_DEFAULTS["cool_blue"]["warmth_veto"]
+
+
+def test_load_auto_palette_config_degrades_safely_without_a_file():
+    assert load_auto_palette_config("/no/such/palettes.toml") == AUTO_DEFAULTS
+
+
+def test_load_palettes_does_not_treat_auto_table_as_a_palette():
+    pals = load_palettes(os.path.join(configs_dir(), "palettes.toml"))
+    assert "auto" not in pals
 
 
 def test_auto_palette_selects_cool_winter_landscape():

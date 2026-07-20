@@ -99,11 +99,16 @@ def absolute_banding_score(edt_lum: np.ndarray, smooth: np.ndarray) -> float:
     return float(np.clip((0.72 - density) / 0.72, 0.0, 1.0))
 
 
-def assess(src_rgb: np.ndarray, edt_rgb: np.ndarray, thr: dict | None = None
-           ) -> tuple[float, str, float]:
-    """Return (score, action, smooth_coverage). action ∈ pass | warn | reduce | fail."""
+def assess(src_rgb: np.ndarray, edt_rgb: np.ndarray, thr: dict | None = None,
+           smooth: np.ndarray | None = None) -> tuple[float, str, float]:
+    """Return (score, action, smooth_coverage). action ∈ pass | warn | reduce | fail.
+
+    `smooth` lets a caller that assesses the SAME source against multiple edited candidates
+    (e.g. before/after a remediation re-apply) pass in a precomputed `smooth_region_mask` instead
+    of recomputing it from `src_rgb` every call — the mask depends only on the unchanged source."""
     t = {**DEFAULTS, **(thr or {})}
-    smooth = smooth_region_mask(luma(src_rgb))
+    if smooth is None:
+        smooth = smooth_region_mask(luma(src_rgb))
     cov = float(smooth.mean())
     if cov < t["min_coverage"]:
         return 0.0, "pass", cov

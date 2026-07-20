@@ -62,6 +62,7 @@ class Pipeline:
     chroma_max: float | None
     intents: dict
     palettes: dict
+    auto_palette: dict  # [auto.<palette>] thresholds/caps from palettes.toml (rules-as-data)
     banding: dict
     quality_gate: dict | None = None  # post-edit gate thresholds from rules.toml (None → defaults)
     ref_feats: dict | None = None    # cached per-concept reference look (M5); computed once per run
@@ -94,6 +95,7 @@ class Pipeline:
             chroma_max=chroma_max,
             intents=intent_mod.load_intents(cfg.intents_path),
             palettes=palette_mod.load_palettes(cfg.palettes_path),
+            auto_palette=palette_mod.load_auto_palette_config(cfg.palettes_path),
             banding={k: float(v) for k, v in (rules.get("banding", {}) or {}).items()
                      if isinstance(v, (int, float))},
             quality_gate={k: float(v) for k, v in (rules.get("quality_gate", {}) or {}).items()
@@ -186,7 +188,7 @@ class Pipeline:
                 pal_name = None
             if pal_name is None and not cfg.reference:
                 pal_name, palette_scale, palette_auto_reason = palette_mod.auto_palette_for_image(
-                    sc.name, gstats, present, self.palettes)
+                    sc.name, gstats, present, self.palettes, self.auto_palette)
         palette_obj = self.palettes.get(pal_name) if pal_name else None
         palette_strength = cfg.palette_strength * cfg.intensity * palette_scale
         if palette_auto_reason:
@@ -334,7 +336,15 @@ class Pipeline:
 
         out_rgb = None
         guard_note = None
-        residual_banding: tuple[float, str] | None = None
+        # Banding-gate state, threaded from the remediation decision (inside `if do_apply:`) to
+        # the final post-reference-match reassessment (outside it) — must exist even when
+        # do_apply is False, since that final block runs unconditionally on this path.
+        band_smooth = None
+        band_s_small = None
+        band_remediated = False
+        band_pre_score = 0.0
+        band_reduce_factor = None
+        residual_banding: tuple[float, str, bool] | None = None
         if do_apply:
             guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
@@ -388,13 +398,21 @@ class Pipeline:
                 notes_extra.append(f"oversaturation gate: pulled chroma back on {limited * 100:.0f}% of frame")
 
             # Banding gate (spec Phase 1): detect posterization in smooth regions of the EDITED
-            # output; if present, reduce every luma-stretch op and re-apply ONCE. Reassess the
-            # rendered result so a residual failure enters the review queue rather than being
-            # silently emitted. Measured on downscaled copies so it's cheap.
+            # output; if present, reduce every luma-stretch op and re-apply ONCE. The remediation
+            # decision must happen HERE (before any reference-match finishing runs, since it needs
+            # to re-render with damped settings) — but the FINAL verdict is deferred until after
+            # reference matching (below), which is the last thing to touch out_rgb and can
+            # reintroduce banding in the same smooth regions just remediated (mirrors why
+            # chroma_guard is re-run post-reference-match, see that block's comment). Measured on
+            # downscaled copies so it's cheap; the source smoothness mask is computed once and
+            # reused across every assess() call this photo (it depends only on the unchanged
+            # source), never recomputed per candidate.
             if self.banding:
-                s_small = downscale_long_edge(Image(rgb=img.rgb), 1280).rgb
+                band_s_small = downscale_long_edge(Image(rgb=img.rgb), 1280).rgb
+                band_smooth = banding.smooth_region_mask(luma(band_s_small))
                 e_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
-                bscore, baction, _cov = banding.assess(s_small, e_small, self.banding)
+                bscore, baction, _cov = banding.assess(
+                    band_s_small, e_small, self.banding, smooth=band_smooth)
                 if baction in ("reduce", "fail"):
                     red = 0.35 if baction == "fail" else 0.55
 
@@ -415,17 +433,16 @@ class Pipeline:
                     region_settings = {
                         k: banding.damp_settings(s, red) for k, s in region_settings.items()
                     }
-                    e2_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
-                    after_score, after_action, _ = banding.assess(
-                        s_small, e2_small, self.banding)
-                    notes_extra.append(
-                        f"banding gate: smooth-region banding {bscore:.2f}→{after_score:.2f}; "
-                        f"reduced luma-stretch ops {int((1 - red) * 100)}% and re-applied")
-                    if after_action != "pass":
-                        residual_banding = (after_score, after_action)
-                elif baction == "warn":
+                    band_remediated = True
+                    band_pre_score = bscore
+                    band_reduce_factor = red
+                elif baction == "warn" and not cfg.reference:
+                    # No remediation to attempt and nothing left that could still change out_rgb
+                    # (no reference match queued) — this IS the final verdict; report it now. When
+                    # cfg.reference IS set, defer: reference matching could still change the final
+                    # banding state, so let the post-reference reassessment below decide.
                     notes_extra.append(f"banding watch: smooth-region banding {bscore:.2f} (dither applied)")
-                    residual_banding = (bscore, baction)
+                    residual_banding = (bscore, baction, False)
 
         # Optional finishing grade: match the look of a reference photo (degrades safely).
         ref_note = None
@@ -492,6 +509,26 @@ class Pipeline:
             except Exception as e:
                 ref_note = f"reference match skipped ({e})"
 
+        # Final banding verdict — deliberately AFTER reference matching (if any), on whatever
+        # out_rgb actually is now. Runs whenever the gate is on and either remediation touched
+        # the pixels or a reference match could have (cfg.reference): those are the only ways
+        # out_rgb can differ from what the FIRST assess() already judged, so a "pass"-and-untouched
+        # photo doesn't pay for a second identical assessment. Reuses band_smooth/band_s_small
+        # (the source doesn't change) — never recomputes the smoothness mask.
+        if self.banding and band_smooth is not None and (band_remediated or cfg.reference):
+            e_final_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
+            final_score, final_action, _ = banding.assess(
+                band_s_small, e_final_small, self.banding, smooth=band_smooth)
+            if band_remediated:
+                notes_extra.append(
+                    f"banding gate: smooth-region banding {band_pre_score:.2f}→{final_score:.2f}; "
+                    f"reduced luma-stretch ops {int((1 - band_reduce_factor) * 100)}% and re-applied")
+            elif final_action == "warn":
+                notes_extra.append(
+                    f"banding watch: smooth-region banding {final_score:.2f} (dither applied)")
+            if final_action != "pass":
+                residual_banding = (final_score, final_action, band_remediated)
+
         # Post-edit safety assessment — measured on the EDITED output, not the source. Drives
         # the review queue + quality score (Codex review: review gate must read edited output).
         post_stats = None
@@ -502,13 +539,19 @@ class Pipeline:
             quality_score, needs_review, review_reason, warnings = gates.assess(
                 gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate)
         if residual_banding is not None:
-            bscore, baction = residual_banding
+            bscore, baction, was_remediated = residual_banding
             warnings = list(warnings) + [f"smooth-region banding {bscore:.2f} ({baction})"]
             if baction in ("reduce", "fail"):
                 quality_score = min(quality_score, 0.80 if baction == "reduce" else 0.70)
                 needs_review = True
                 band_reason = f"residual smooth-region banding {bscore:.2f}"
                 review_reason = f"{review_reason}; {band_reason}" if review_reason else band_reason
+            elif baction == "warn" and was_remediated:
+                # The gate already damped+reapplied once and STILL lands in "warn" — it worked
+                # hard, same as gates.py's "oversaturation gate worked hard" pattern, which also
+                # applies a small penalty rather than failing hard. A first-pass "warn" (no
+                # remediation attempted) stays a pure heads-up with no score impact.
+                quality_score = max(0.0, quality_score - 0.05)
 
         notes = build_notes(gstats, region_stats, resolved.detected)
         if intent_note:

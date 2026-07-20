@@ -201,3 +201,19 @@ def test_region_channel_clip_is_available_to_rules():
     _, rset = apply(rules, "landscape", g, {"snow": snow}, {"snow": "snow"}, intensity=1.0)
 
     assert rset["snow"]["highlights"] == -34.0
+
+
+def test_landscape_and_other_share_the_documented_sync_keys():
+    """rules.toml's schema has no block-inheritance, so [landscape.global]/[other.global] share 7
+    keys by hand copy-paste (see the SYNC NOTE comments atop each block). Pin them byte-identical
+    so a future edit to only one side is caught here instead of silently drifting."""
+    rules = load_rules(config_path("rules.toml"))
+    landscape = rules["landscape"]["global"]
+    other = rules["other"]["global"]
+    synced_keys = ("blacks", "vibrance", "dehaze", "clarity", "sharpen", "temp", "tint")
+    for key in synced_keys:
+        assert landscape[key] == other[key], (
+            f"[landscape.global].{key} and [other.global].{key} have drifted apart — "
+            "update both (see the SYNC NOTE comment in rules.toml) or remove the key from "
+            "this test's synced_keys list if the divergence is now intentional."
+        )

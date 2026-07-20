@@ -30,6 +30,60 @@ class Palette:
 
 PaletteSet = dict[str, Palette]
 
+# Auto-picker policy — the thresholds/caps behind auto_palette_for_image. Rules-as-data: this is
+# a stats→decision mapping (which palette fires, how strongly), the same category rules.toml
+# expressions govern, so it's tunable from `configs/palettes.toml` (a [auto.<palette>] table) —
+# not a code change. These are the shipped defaults, used verbatim when the TOML has no [auto]
+# section (older configs keep working) and as the per-key fallback for a partial override.
+AUTO_DEFAULTS: dict[str, dict[str, float]] = {
+    "cool_blue": {
+        # Hard veto: skip entirely at/above this measured warmth (blind-test losses were
+        # +0.015/+0.023 warm scenes that got a wrongly-cool grade).
+        "warmth_veto": 0.008,
+        "cool_bonus_threshold": -0.006,   # extra score credit only when GENUINELY cool, not merely neutral
+        "haze_threshold": 0.38,
+        "chroma_threshold": 0.035,
+        "sat_threshold": 0.12,
+        "score_threshold": 0.58,
+        "strength_base": 0.25,
+        "strength_cap": 0.40,             # inferred grades whisper; explicit picks aren't capped
+    },
+    "warm_gold": {
+        "warmth_threshold": 0.030,
+        "mean_lum_threshold": 0.42,
+        "sky_lum_threshold": 0.55,
+        "strength_base": 0.40,
+        "strength_cap": 0.55,
+    },
+    "forest_olive": {
+        "chroma_threshold": 0.035,
+        "score_threshold": 0.48,
+        "strength_base": 0.45,
+        "strength_cap": 0.55,
+    },
+    "muted_film": {
+        "chroma_threshold": 0.022,
+        "sat_threshold": 0.10,
+        "strength": 0.45,
+    },
+}
+
+
+def load_auto_palette_config(path: str) -> dict[str, dict[str, float]]:
+    """Load the `[auto.<palette>]` policy tables from palettes.toml — the tunable thresholds/caps
+    behind the stats-based auto-picker. Missing file/section/key → the shipped default for that
+    key, so the picker degrades safely and a partial override only touches what it names."""
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (FileNotFoundError, OSError):
+        data = {}
+    auto = data.get("auto", {})
+    return {
+        name: {k: float(auto.get(name, {}).get(k, v)) for k, v in defaults.items()}
+        for name, defaults in AUTO_DEFAULTS.items()
+    }
+
 
 def load_palettes(path: str) -> PaletteSet:
     try:
@@ -39,6 +93,8 @@ def load_palettes(path: str) -> PaletteSet:
         return {}
     out: PaletteSet = {}
     for name, body in data.items():
+        if name == "auto":  # [auto.<palette>] holds auto-picker policy, not a palette definition
+            continue
         out[name] = Palette(
             name=name,
             shadow_hue=float(body.get("shadow_hue", 0.0)),
@@ -76,16 +132,19 @@ def palette_for_prompt(prompt: str | None, palettes: PaletteSet) -> str | None:
     return None
 
 
-def auto_palette_for_image(scene: str, gstats, present: set[str], palettes: PaletteSet
+def auto_palette_for_image(scene: str, gstats, present: set[str], palettes: PaletteSet,
+                           auto_cfg: dict[str, dict[str, float]] | None = None
                            ) -> tuple[str | None, float, str]:
     """Choose a palette from image stats when there is no explicit/prompt colour intent.
 
     Returns (palette_name, confidence/strength scale, reason). Confidence is deliberately
     conservative: uncertain images get no palette, and automatic grades are weaker than explicit
-    user selections.
+    user selections. `auto_cfg` (from `load_auto_palette_config` / `configs/palettes.toml`
+    `[auto.*]`) supplies the thresholds/caps; omitted keys/sections fall back to AUTO_DEFAULTS.
     """
     if not palettes:
         return None, 0.0, ""
+    cfg = auto_cfg or AUTO_DEFAULTS
 
     present = set(present or ())
     mean_lum = float(getattr(gstats, "mean_lum", 0.0))
@@ -103,33 +162,39 @@ def auto_palette_for_image(scene: str, gstats, present: set[str], palettes: Pale
     # RESTRAINT (blind-test finding): an UNREQUESTED grade must whisper, and it must never fight
     # the scene's measured warmth — both blind-test losses were warm scenes (+0.015/+0.023) that
     # got a 72% cool grade. Hard warmth veto; real coolness required for a full score; strength
-    # capped at 0.40 (explicit user picks keep full strength — only inferred grades are capped).
-    if "cool_blue" in palettes and landscape and has_cool_context and warmth < 0.008:
+    # capped (explicit user picks keep full strength — only inferred grades are capped).
+    c = cfg["cool_blue"]
+    if "cool_blue" in palettes and landscape and has_cool_context and warmth < c["warmth_veto"]:
         cool_score = 0.0
-        cool_score += 0.30 if haze > 0.38 else 0.0
-        cool_score += 0.28 if chroma < 0.035 or mean_sat < 0.12 else 0.0
-        cool_score += 0.20 if warmth < -0.006 else 0.0     # actually cool, not merely neutral
+        cool_score += 0.30 if haze > c["haze_threshold"] else 0.0
+        cool_score += 0.28 if chroma < c["chroma_threshold"] or mean_sat < c["sat_threshold"] else 0.0
+        cool_score += 0.20 if warmth < c["cool_bonus_threshold"] else 0.0  # genuinely cool, not merely neutral
         cool_score += 0.14 if present & {"snow", "water"} else 0.0
-        if cool_score >= 0.58:
-            return "cool_blue", min(0.40, 0.25 + (cool_score - 0.55)), "cool low-chroma landscape"
+        if cool_score >= c["score_threshold"]:
+            strength = min(c["strength_cap"], c["strength_base"] + (cool_score - 0.55))
+            return "cool_blue", strength, "cool low-chroma landscape"
 
     # Golden-hour / warm-scene read: already-warm highlights, bright sky, not a snowy/cool scene.
-    if "warm_gold" in palettes and warmth > 0.030 and mean_lum > 0.42:
-        warm_score = 0.40 + min(0.15, (warmth - 0.030) * 3.0)
-        if sky_lum > 0.55:
+    c = cfg["warm_gold"]
+    if "warm_gold" in palettes and warmth > c["warmth_threshold"] and mean_lum > c["mean_lum_threshold"]:
+        warm_score = c["strength_base"] + min(0.15, (warmth - c["warmth_threshold"]) * 3.0)
+        if sky_lum > c["sky_lum_threshold"]:
             warm_score += 0.05
         if "snow" not in present:
-            return "warm_gold", min(0.55, warm_score), "warm bright scene"
+            return "warm_gold", min(c["strength_cap"], warm_score), "warm bright scene"
 
     # Green-heavy frames benefit from a restrained olive film palette; skip when a broad sky/water
     # context suggests the colour story should be blue instead.
+    c = cfg["forest_olive"]
     if "forest_olive" in palettes and has_green_context and not (present & {"sky", "water"}):
-        green_score = 0.45 + min(0.10, max(0.0, chroma - 0.035) * 3.0)
-        if green_score >= 0.48:
-            return "forest_olive", min(0.55, green_score), "green-dominant scene"
+        green_score = c["strength_base"] + min(0.10, max(0.0, chroma - c["chroma_threshold"]) * 3.0)
+        if green_score >= c["score_threshold"]:
+            return "forest_olive", min(c["strength_cap"], green_score), "green-dominant scene"
 
     # Low-colour non-winter frames get only a very gentle film mute.
-    if "muted_film" in palettes and chroma < 0.022 and mean_sat < 0.10 and not has_cool_context:
-        return "muted_film", 0.45, "low-colour scene"
+    c = cfg["muted_film"]
+    if ("muted_film" in palettes and chroma < c["chroma_threshold"] and mean_sat < c["sat_threshold"]
+            and not has_cool_context):
+        return "muted_film", c["strength"], "low-colour scene"
 
     return None, 0.0, ""

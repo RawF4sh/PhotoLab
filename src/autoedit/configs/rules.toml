@@ -101,6 +101,11 @@ contrast   = "4"
 sharpen    = "16 * (1 - min(iso, 6400) / 12800)"
 
 # ────────────────────────── landscape ─────────────────────────
+# SYNC NOTE: `blacks`, `vibrance`, `dehaze`, `clarity`, `sharpen`, `temp`, `tint` are copy-pasted
+# byte-for-byte with [other.global] below (this TOML schema has no block-inheritance mechanism —
+# `rules.py::apply()`'s scene fallback is whole-table, not per-key, so partial sharing isn't
+# currently expressible). A change to any of those 7 keys here almost certainly belongs in
+# [other.global] too — check both before assuming you're done.
 [landscape.global]
 # PRO TONE (v0.4, "visibly finished"): expose for the LAND, not the sky-skewed mean; set a
 # deliberate black point on washed files; adapt contrast/clarity to the measured spread/softness.
@@ -210,6 +215,9 @@ hsl_blue_sat = "3"
 # ─────────────────────────── other ────────────────────────────
 [other.global]
 # mirrors landscape's pro-tone policy (same availability guard); see comments there.
+# SYNC NOTE: `blacks`, `vibrance`, `dehaze`, `clarity`, `sharpen`, `temp`, `tint` below are
+# byte-for-byte copies of [landscape.global] — see that block's sync note before changing any of
+# these 7 keys in only one place.
 # Exposure priority: expose for the SUBJECT first (wildlife — a dark eagle against a bright sky
 # must not be judged by the sky), else the sky-excluded foreground, else the legacy mean.
 exposure   = "if(pro_stats_valid > 0, if(subj_cov > 0, clamp(-(subj_lum - 0.45) * 0.7, -0.15, 0.35), clamp(-(fg_p50 - 0.50) * 0.9, -0.06, 0.32)), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"

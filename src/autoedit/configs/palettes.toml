@@ -60,3 +60,38 @@ highlight_hue = 70
 highlight_chroma = 0.025
 neutral_protection = 0.85
 protected = ["skin", "snow"]
+
+# ─────────────────────── auto-picker policy (rules-as-data) ───────────────────────
+# Thresholds/caps behind the stats-based auto palette picker (palette.py::auto_palette_for_image),
+# used when the user gives no explicit palette/colour intent. An UNREQUESTED grade must whisper —
+# strength_cap keeps every auto-inferred grade well below what an explicit `--palette` pick gets.
+# Missing a key/section here falls back to the shipped default (palette.py::AUTO_DEFAULTS), so
+# this block is optional; edit only what you want to retune. Blind-test-tuned: cool_blue's
+# warmth_veto/cool_bonus_threshold exist because an earlier version cooled genuinely-warm scenes.
+[auto.cool_blue]
+warmth_veto = 0.008              # skip the whole palette at/above this measured warmth
+cool_bonus_threshold = -0.006    # extra score credit only when genuinely cool (not merely neutral)
+haze_threshold = 0.38
+chroma_threshold = 0.035
+sat_threshold = 0.12
+score_threshold = 0.58
+strength_base = 0.25
+strength_cap = 0.40
+
+[auto.warm_gold]
+warmth_threshold = 0.030
+mean_lum_threshold = 0.42
+sky_lum_threshold = 0.55
+strength_base = 0.40
+strength_cap = 0.55
+
+[auto.forest_olive]
+chroma_threshold = 0.035
+score_threshold = 0.48
+strength_base = 0.45
+strength_cap = 0.55
+
+[auto.muted_film]
+chroma_threshold = 0.022
+sat_threshold = 0.10
+strength = 0.45

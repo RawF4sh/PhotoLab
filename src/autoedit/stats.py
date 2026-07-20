@@ -26,13 +26,14 @@ def _saturation(rgb: np.ndarray) -> np.ndarray:
     return out
 
 
-def _oklab_color_stats(rgb: np.ndarray) -> tuple[float, float]:
-    """(mean OKLab chroma, mean warmth=b-axis) for the frame. Perceptual colourfulness + warm/cool
-    bias the rules/targets can read. Imported lazily so the stub path needn't touch the colour code."""
+def _oklab_color_stats(lin: np.ndarray) -> tuple[float, float]:
+    """(mean OKLab chroma, mean warmth=b-axis) for the frame, from an already-LINEAR-light rgb
+    array (caller's `srgb_to_linear(rgb)` — computed once in `compute()` and reused for the WB
+    solve too, rather than re-decoding gamma twice). Perceptual colourfulness + warm/cool bias
+    the rules/targets can read. Imported lazily so the stub path needn't touch the colour code."""
     from .edit.oklab import linear_to_oklab
-    from .imageio import srgb_to_linear
 
-    lab = linear_to_oklab(srgb_to_linear(rgb))
+    lab = linear_to_oklab(lin)
     chroma = np.sqrt(lab[..., 1] ** 2 + lab[..., 2] ** 2)
     return float(chroma.mean()), float(lab[..., 2].mean())
 
@@ -108,10 +109,11 @@ def compute(
     lum = luma(rgb)
     sat = _saturation(rgb)
     dark = rgb.min(axis=2)  # dark channel (haze proxy)
+    lin = srgb_to_linear(rgb)  # computed once, reused for OKLab stats AND the WB gray-card solve
 
     # perceptual colour stats in OKLab (mean chroma + warmth); cheap on the proxy.
     p10, p50, p90 = (float(v) for v in np.percentile(lum, (10, 50, 90)))
-    mean_chroma, warmth = _oklab_color_stats(rgb)
+    mean_chroma, warmth = _oklab_color_stats(lin)
     channel_stats = _channel_exposure_stats(rgb)
     veil, detail_rms = _veil_and_detail(lum, sat, dark)
 
@@ -128,10 +130,15 @@ def compute(
 
     # Region-aware auto-WB signal: measure the colour cast on a natural gray card. SAM's `snow`
     # region is the best reference (snow IS neutral); else fall back to bright near-neutral
-    # pixels; else confidence 0 (rules multiply by confidence → identity). Corrections are solved
-    # in the white_balance op's own units (rg=1+0.2t, bg=1-0.2t, gg=1+0.1n) so a rule can apply a
-    # bounded partial correction with one multiply. This is a differentiator: a global auto has
-    # no idea which pixels SHOULD be neutral — the segmenter does.
+    # pixels — EXCLUDING any region known to carry its own inherent material colour (rock, grass,
+    # foliage, mountain, trees can be pale-and-desaturated — beige limestone, dry grass — without
+    # being a neutral illuminant reference; mistaking one for the gray card reads the material's
+    # own colour as a lighting cast). This mirrors the same false-positive pattern concepts.toml
+    # already guards against for skin ("warm rock/grass can score as skin"). Else confidence 0
+    # (rules multiply by confidence → identity). Corrections are solved in the white_balance op's
+    # own units (rg=1+0.2t, bg=1-0.2t, gg=1+0.1n) so a rule can apply a bounded partial correction
+    # with one multiply. This is a differentiator: a global auto has no idea which pixels SHOULD
+    # be neutral — the segmenter does.
     wb_temp = wb_tint = wb_conf = 0.0
     ref_mask, ref_is_snow = None, False
     snow_mask = region_masks.get("snow")
@@ -139,10 +146,14 @@ def compute(
         ref_mask, ref_is_snow = snow_mask, True
     else:
         neutral = (lum >= 0.55) & (lum <= 0.95) & (sat < 0.15)
+        for _biased_name in ("rock", "grass", "foliage", "mountain", "trees"):
+            biased_mask = region_masks.get(_biased_name)
+            if biased_mask is not None:
+                neutral = neutral & ~biased_mask
         if float(neutral.mean()) >= 0.005:
             ref_mask = neutral
     if ref_mask is not None:
-        ref = srgb_to_linear(rgb[ref_mask])
+        ref = lin[ref_mask]  # reuse the frame's already-decoded linear light, not a fresh decode
         r_m, g_m, b_m = (float(ref[:, c].mean()) for c in range(3))
         if r_m + b_m > 1e-6 and g_m > 1e-6:
             wb_temp = float(np.clip(500.0 * (b_m - r_m) / (b_m + r_m), -100.0, 100.0))
