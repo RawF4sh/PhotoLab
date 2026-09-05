@@ -187,3 +187,59 @@ def test_multi_method_score_requires_predeclared_pair(tmp_path):
     declared = bt.score(str(results), str(manifest), pair=("alpha", "beta"))
     assert declared["pair"] == ["alpha", "beta"]
     assert declared["p_value"] == 0.25
+
+
+def test_camera_arm_stratify_groups_and_metrics(tmp_path):
+    """The harness upgrades: a `camera` method (falls back to the source for JPEGs and says so),
+    exposure stratification (N per dark/mid/bright tercile), burst grouping in the manifest,
+    metrics.csv next to the picks, and per-group significance in --score."""
+    bt = _load_blindtest()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    # 6 frames: two bursts (…101/…102/…103 and …200/…201) + one lone frame, brightness spread
+    for name, lvl in (("IMG_0101.jpg", 30), ("IMG_0102.jpg", 40), ("IMG_0103.jpg", 90),
+                      ("IMG_0200.jpg", 120), ("IMG_0201.jpg", 170), ("IMG_0300.jpg", 220)):
+        a = np.full((60, 80, 3), lvl, np.uint8)
+        a[:24] = [120, 150, 210]
+        PILImage.fromarray(a, "RGB").save(str(corpus / name), quality=92)
+
+    groups = bt.burst_groups([str(corpus / n) for n in
+                              ("IMG_0101.jpg", "IMG_0102.jpg", "IMG_0103.jpg", "IMG_0200.jpg", "IMG_0201.jpg", "IMG_0300.jpg")])
+    assert len(set(groups.values())) == 3
+    assert groups[str(corpus / "IMG_0101.jpg")] == groups[str(corpus / "IMG_0103.jpg")]
+    assert groups[str(corpus / "IMG_0200.jpg")] != groups[str(corpus / "IMG_0300.jpg")]
+
+    out = tmp_path / "bt"
+    cfg = bt.make_config(backend="stub")
+    summary = bt.render(str(corpus), str(out), cfg, seed=3, max_px=80, quality=85,
+                        methods=("camera", "autoedit"), per_stratum=1)
+    assert summary["photos"] == 3                            # one per tercile
+    assert summary["camera_missing"] == 3                    # JPEGs carry no camera preview
+    rows = list(csv.DictReader(open(out / "manifest.csv")))
+    assert {r["method"] for r in rows} == {"camera", "autoedit"}
+    assert {r["stratum"] for r in rows} == {"dark", "mid", "bright"}
+    assert all(r["group"].startswith("b") for r in rows)
+    metrics = list(csv.DictReader(open(out / "metrics.csv")))
+    assert len(metrics) == 6 and {"out_fg_p50", "dark_made_darker", "method"} <= set(metrics[0])
+
+    by_photo: dict = {}
+    for r in rows:
+        by_photo.setdefault(r["photo"], {})[r["method"]] = int(r["slot"])
+    with open(out / "results.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["photo", "best_slot"])
+        for pid, methods in by_photo.items():
+            w.writerow([pid, methods["autoedit"]])
+    res = bt.score(str(out / "results.csv"))
+    assert res["pair"] == ["autoedit", "camera"]             # AutoEdit is always the challenger
+    assert res["group_wins"][0] == res["groups"] and res["group_wins"][1] == 0
+    assert res["strata"] == {"dark": 1, "mid": 1, "bright": 1}
+    assert res["n_for_power"]["80%"] < res["n_for_power"]["65%"] < res["n_for_power"]["60%"]
+
+
+def test_n_for_power_is_sane():
+    bt = _load_blindtest()
+    n65 = bt.n_for_power(0.65)
+    assert 75 <= n65 <= 100                                  # a real 65% edge needs ~90 independent photos
+    assert 40 <= bt.n_for_power(0.70) <= 60
+    assert bt.n_for_power(0.95) <= 10
