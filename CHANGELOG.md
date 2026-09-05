@@ -3,6 +3,48 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Dark-RAW diagnosis: objective tone gate + EV-correct exposure
+
+A 204-photo two-way blind test on Dolomites CR2s left dark frames dark or darker. Reproduced on the
+in-repo 110-pair corpus (`curated-dolomites-summer-2026/selected_raw` + camera JPGs): the libraw
+render AutoEdit starts from sits a median **1.4–1.8 EV under the camera's own embedded preview on
+every file**; the exposure rule then treated a luma *difference* as stops (0.3 EV asked where ≈3 EV
+was the deficit), shadows only responded to clipped pixels, and contrast/blacks (pivot 0.5) erased
+the little lift that was applied. The quality gate scored a dark→darker edit 0.94. See
+`PROJECT_ASSESSMENT.md`.
+
+### Added
+- `scripts/tone_report.py` + `autoedit/tonemetrics.py`: objective pass/fail numbers for any folder —
+  mean/percentile luma, sky-excluded foreground, top/middle/bottom bands, dark-pixel coverage,
+  clipping, distance to the camera render, and two flags: **dark photo made darker** and **bright
+  photo pushed into clipping**. Reads sidecars (`--out`) or renders in memory (`--render`);
+  `--fail-on-regression` makes it an unattended gate.
+- New stats (`stats.py`/`contract.py`): `lum_p99`, `headroom_ev` (stops before the 99.5th
+  percentile clips), `dark_cov`, `band_top/mid/bottom_p50`; post-edit **regional** stats and
+  `decode_ev` in the sidecar, plus a `name: luma a → b` note per region.
+- **RAW development candidates** (`imageio.RAW_MODES`, `defaults.toml [decode]`, `--raw-mode`):
+  `none` (unchanged default) | `libraw_auto` | `preview_ev` (match the embedded camera preview's
+  linear median) | `preview_ev_headroom` (same, capped so ≤ clip_budget reaches white) |
+  `tone_target`. `imageio.camera_preview()` exposes the camera render every RAW carries.
+- `scripts/raw_benchmark.py`: ranks the development candidates over a RAW folder against the camera
+  preview (median |EV gap|, clip violations, dark-scene recovery, per-category consistency,
+  outliers, optional pipeline regressions) and names a recommendation — it never flips the default.
+- Rules sandbox: safe `log2` / `log`. Blind-test harness: `camera` arm (`--vs-camera`),
+  `--stratify N` by source-brightness tercile, burst grouping with per-group significance,
+  `metrics.csv` per gallery, `--configs-a/--configs-b`, and a sample-size (power) line.
+- Darkness-regression safety gate (`gates.assess`, `rules.toml [quality_gate]`): a dark source made
+  materially darker is flagged for review unless the prompt asks for dark (`preserve_terms`).
+  `compose.toml` `min_coverage` (a 3% sliver of sky no longer earns a half-frame grad).
+
+### Changed
+- `rules.toml` exposure is **EV-correct**: `0.6·2.2·log2(target/fg_p50)`, capped by `headroom_ev`
+  (landscape/other/people; `other` keeps the subject-first priority). Shadows respond to the
+  foreground-median deficit and dark coverage, not only to clipped pixels. Contrast and blacks fade
+  to zero on dark sources. Mountain/grass/foliage region lifts are EV-correct and relative to the
+  foreground median so they compose with the global lift. Legacy zero-filled stats reproduce the old
+  output exactly (all new terms sit behind `pro_stats_valid`).
+- Tests: 293 (was 265), including per-op proof that no tone op erases a dark-frame lift.
+
 ## [Unreleased] — Pro-tone retune (blind-test-driven)
 
 Two blind tests on real photos (see `scripts/blindtest.py`) established the diagnosis: the engine

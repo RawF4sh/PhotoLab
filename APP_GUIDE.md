@@ -89,7 +89,15 @@ applied at native resolution with edge-aware (guided-filter) mask feathering.
   shadow/mid/highlight hue+chroma targets, **luminance-preserving** (moves color, not brightness),
   with **neutral protection** (whites/snow stay clean) and gamut-safe roll-off (no posterized skies).
   Palettes: `cool_blue`, `teal_orange`, `warm_gold`, `forest_olive`, `muted_film`. "Auto" infers from
-  the intent text or, failing that, from image stats (`auto_palette_for_image`).
+  the intent text or, failing that, from image stats (`auto_palette_for_image`). An explicit pick
+  (typed cue or the Palette dropdown) applies at full configured strength; an *inferred* grade is
+  deliberately restrained — capped at 40% (cool_blue) / 55% (others) and vetoed entirely for
+  cool_blue on a scene with positive measured warmth, so an automatic grade never fights the
+  scene's actual light (a blind-test-driven fix — see `PLAN.md`).
+- **Auto white balance** (region-aware) — measures the colour cast on a natural gray card: SAM's
+  `snow` region when present, else bright near-neutral pixels. Corrects blue/overcast casts up to
+  a bounded amount; the correction fades to zero as the scene's measured warmth rises, so
+  golden-hour light is read as a subject, never neutralized as a cast.
 - **Reference** (§4) and **Learned mode** (§7).
 
 ### Edit ops (frozen order, `edit/ops.py`)
@@ -113,6 +121,12 @@ targeted HSL → color grade → sharpen`. An empty settings dict is a strict no
   source-relative, and **auto-remediates**: reduces the stretch ops (dehaze/contrast/curve/clarity)
   and re-applies once — the sidecar reports the damped settings that actually rendered. Backed by
   **output dither** (±1 LSB deterministic) + **lossless WebP previews** so gradients never contour.
+- **Darkness-regression gate** (`edit/gates.py`, `rules.toml [quality_gate]`) — source-relative: a
+  photo whose foreground or bottom-band median is already dark (< 0.30) must not come out materially
+  darker, or it is flagged for review. Never an absolute brightness target (night frames left alone
+  pass); a prompt containing a `preserve_terms` word ("moody", "night", …) opts out.
+  `scripts/tone_report.py` runs the same check over a whole folder (dark→darker, pushed-into-clipping,
+  distance to the camera render) as an unattended gate.
 - **Post-edit assessment** — `quality_score`, `needs_review`, `warnings`, measured on the *edited*
   output. Thresholds are data (`rules.toml [quality_gate]`). Drives the review queue and variant
   scoring.
@@ -327,13 +341,16 @@ autoedit doctor | presets | styles
 ## 14. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable —
-**231 tests** across 46 files, currently green. Coverage: each edit op's math, identity no-op, real
-dehaze, OKLab palette (direction / neutral protection / gamut), banding detector + dither + sidecar
-consistency, segmentation cache, RAW+JPEG grouping, EXIF orientation (all 8 values), decode
-robustness (grayscale/RGBA/CMYK/16-bit), intent parsing, batch consistency (+ toggle), culling,
-review labels (+ crash recovery), dataset pairing (+ burst safety) + preservation, aesthetic critic,
-region reference matching (+ policy re-enforcement), recipe train/predict + learned fallback, LLM
-merge clamping, variant scoring, atomic emit + collision de-dup, security/trust boundary
+**293 tests** across 50 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`). Coverage: each edit op's math, identity no-op, real
+dehaze, OKLab palette (direction / neutral protection / gamut / auto-grade restraint), banding
+detector + dither + sidecar consistency, segmentation cache, RAW+JPEG grouping, EXIF orientation
+(all 8 values), decode robustness (grayscale/RGBA/CMYK/16-bit), the `veil` atmospheric-haze
+estimate vs the legacy dark-channel stat, sky-excluded foreground tone, region-aware auto-WB
+(cast measurement + warmth-preserving correction), percentile-driven rule goldens, intent parsing,
+batch consistency (+ toggle), culling, review labels (+ crash recovery), dataset pairing
+(+ burst safety) + preservation, aesthetic critic, region reference matching (+ policy
+re-enforcement), recipe train/predict + learned fallback, LLM merge clamping, variant scoring,
+atomic emit + collision de-dup, security/trust boundary, and the blind-test A/B harness
 (traversal / symlink / DNS-rebinding / secret-leak), config hardening, and the web service.
 
 **Definition of done** per change: `tests/run_all.py` green; a stub corpus run

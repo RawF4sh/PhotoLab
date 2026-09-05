@@ -125,6 +125,42 @@ Computed on the proxy. Produces the named variables rules read.
 `iso`, `exposure_ev`. Convenience vars derived from named regions when present: `sky_lum/sky_sat/
 blown_sky`, `subj_lum`, `bg_lum`.
 
+**Pro-tone signals** (v0.4, blind-test-driven — see `PLAN.md`'s retune): `lum_p10/p50/p90`
+(percentile black/white points — deliberate levels, not just clip-driven recovery); `fg_lum`/
+`fg_p50` (**sky-excluded** mean/median luma — a big bright sky skews `mean_lum` toward "already
+bright" while the land sits dark; rules expose for `fg_p50`, not the sky-skewed mean); `veil`
+(the *true* atmospheric-haze estimate — requires lifted-dark-channel **and** smooth **and**
+desaturated **and** not-near-white, so bright snow/high-key scenes score near 0 where the legacy
+`haze` stat — pure dark-channel mean — reads 0.5–0.7 on them); `detail_rms` (mean local luma
+detail, drives adaptive clarity); `mean_chroma`/`warmth` (OKLab colourfulness/cast).
+
+**Region-aware auto white balance**: `wb_temp_correction`/`wb_tint_correction`/`wb_confidence` —
+measures the colour cast on a natural gray card. SAM's `snow` region is the reference when
+present (confidence 1.0 — snow *is* neutral); else bright near-neutral pixels at reduced
+confidence (0.6); else confidence 0 (no reference → rules yield identity). This is a
+differentiator no global auto has: a segmenter knows *which pixels should be neutral*. The rule
+correction is asymmetric and warmth-preserving — up to +12 warm for a blue/overcast cast, floored
+at −5 cool, and fades to zero as measured `warmth` rises so golden-hour light is a subject, never
+neutralized as a cast.
+
+**Tone-report signals** (dark-RAW diagnosis, see `PROJECT_ASSESSMENT.md`): `lum_p99`, `headroom_ev`
+(stops of global lift before the 99.5th percentile reaches white — every exposure rule is capped by
+it), `dark_cov` (fraction of pixels below 0.10 luma: dark-but-*unclipped*, which `shadow_clip`'s
+0.02 threshold cannot see), and `band_top/mid/bottom_p50` (median luma of the frame's thirds, so a
+sidecar shows *where* brightness moved). The same stats are recomputed on the edited pixels with the
+same masks (`post_edit_stats` + `post_region_stats`, plus a `name: luma a → b` note per region), and
+`scripts/tone_report.py` / `autoedit/tonemetrics.py` turn them into the objective gate: *dark photo
+made darker* and *bright photo pushed into clipping*. Exposure rules are **logarithmic** —
+`0.6·2.2·log2(target/fg_p50)` — because stops are a ratio of linear light; the earlier linear-delta
+form asked for 0.3 EV where the true deficit was ≈3 EV.
+
+**RAW development** (`imageio.RAW_MODES`, `defaults.toml [decode]`): the historical libraw render
+(`none`, still the default) sits a median 1.4–1.8 EV under the camera's own embedded JPEG on real
+CR2s. Candidates lift the *linear* demosaic before gamma: `preview_ev` (match the embedded preview's
+median), `preview_ev_headroom` (same, capped so ≤ `clip_budget` of pixels reach white),
+`tone_target`, `libraw_auto`. `imageio.camera_preview()` exposes the camera render every RAW carries;
+`scripts/raw_benchmark.py` ranks the candidates against it and only *recommends*.
+
 **Per region** (`RegionStatsModel`): `lum`, `sat`, `clip_low`, `clip_high`, `coverage`. Inside a
 region rule block these surface as `region_lum`, `region_sat`, `region_clip_low/high`,
 `region_coverage`, and `region_vs_global_lum` (= `region_lum − mean_lum`).
@@ -164,17 +200,24 @@ no `eval()`, no attribute access, no arbitrary calls (only `clamp/min/max/abs/if
 comparisons), so an edited/untrusted rules file can't execute code. A bad single rule logs and is
 skipped — it never kills the photo. Rule keys **are** edit-op names consumed directly by `edit/ops.py`.
 
-Example (current landscape global):
+Example (current landscape global — the v0.4 pro-tone policy):
 ```toml
 [landscape.global]
-exposure   = "clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30)"   # lift dark frames, barely darken bright ones
-highlights = "clamp(-highlight_clip * 90 - max(0, mean_lum - 0.62) * 28, -42, 0)"
-shadows    = "clamp(shadow_clip * 70 + 8, 8, 30)"
-dehaze     = "clamp((haze - 0.28) * 110, 0, 35)"               # proportional to measured haze
+# expose for the sky-excluded foreground, not the sky-skewed mean
+exposure = "if(fg_p50 > 0, clamp(-(fg_p50 - 0.50) * 0.9, -0.06, 0.32), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"
+contrast = "if(lum_p90 > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16), 5)"   # spread-adaptive
+blacks   = "if(lum_p10 > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)), 0)"
+temp     = "clamp(wb_temp_correction * 0.45 * wb_confidence * clamp(1 - max(0, warmth) / 0.035, 0, 1), -5, 12)"
 ```
+Every percentile/WB expression is `if(stat > 0, new, old)`-guarded, so zero-filled stats (older
+sidecars, hand-built tests) reproduce the pre-v0.4 output exactly — the policy only activates when
+the richer signal is actually available.
 
-The baseline is intentionally **restrained / true-to-life** (validated against a blind test). The
-assertive looks (`punchy`/`dramatic`) are the opt-in for bold results.
+Deliberately **"visibly finished," not just corrected** (retuned after two blind tests on real
+photos found the old baseline correct-but-invisible on evenly-lit scenes): a deliberate black/white
+point, contrast that adapts to the measured tonal spread, and region-aware auto white balance
+(§4) all fire by default. Still restrained relative to the assertive looks — `punchy`/`dramatic`
+are the opt-in for a stronger commitment.
 
 ### looks.toml (`looks.py`) — magnitude shaping
 
@@ -454,10 +497,14 @@ autoedit styles | presets                  # list profiles
 ## 18. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable.
-**107 tests** currently green. Any new edit op needs a math test; rule changes need a golden test.
-Coverage includes: identity no-op, each op's math, dehaze (identity + real haze reduction),
-segmentation cache (overlap reuse, absent-concept sentinel, LRU), RAW+JPEG grouping, intent parsing,
-guards/gates, security/trust boundary, batch consistency, web service preview/jobs.
+**293 tests** currently green. Any new edit op needs a math test; rule changes need a golden test —
+percentile/WB rule goldens assert BOTH the new adaptive behavior on populated stats AND exact
+byte-for-byte reproduction of the pre-retune output on zero-filled stats. Coverage includes:
+identity no-op, each op's math, dehaze (identity + real haze reduction), the `veil` vs legacy
+`haze` divergence on bright-but-not-hazy scenes, sky-excluded foreground stats, region-aware
+auto-WB (cast measurement + warmth-preserving correction), segmentation cache (overlap reuse,
+absent-concept sentinel, LRU), RAW+JPEG grouping, intent parsing, guards/gates, security/trust
+boundary, batch consistency, web service preview/jobs, and the blind-test A/B harness itself.
 
 **Definition of done** (per change): test suite green; a stub corpus run completes with sidecars +
 manifest; configs/docs updated if behavior changed.

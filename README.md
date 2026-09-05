@@ -64,6 +64,7 @@ autoedit run ./photos ./out --dry-run                              # decisions +
 autoedit curate ./photos ./curated --mode best --count 300         # copy likely keepers for review
 autoedit train-aesthetic labels.csv ./images ./aesthetic.json       # train a lightweight taste scorer
 autoedit curate ./photos ./curated --mode aesthetic --aesthetic-model ./aesthetic.json
+autoedit run ./raws ./out --raw-mode preview_ev_headroom       # RAW development candidate (default: none)
 autoedit doctor        # check device + backend availability
 autoedit presets       # list concept presets
 ```
@@ -107,6 +108,8 @@ local `./configs` dir or `--configs-dir`):
 
 ```bash
 PYTHONPATH=src python tests/run_all.py    # zero-dependency test runner (or: python -m pytest)
+PYTHONPATH=src python scripts/tone_report.py ./raws --render --backend stub   # objective tone gate (dark→darker, clipping, vs camera)
+PYTHONPATH=src python scripts/raw_benchmark.py ./raws                          # rank RAW development candidates vs the camera render
 ```
 
 Architecture and conventions: [CLAUDE.md](CLAUDE.md). The implementation plan that produced

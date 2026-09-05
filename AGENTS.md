@@ -48,3 +48,5 @@ auto-mask fixed regions).
 - `PYTHONPATH=src python tests/run_all.py` green.
 - `autoedit run ./test-corpus ./out --backend stub` completes with sidecars + manifest.
 - Config/docs updated if behavior changed.
+- Any exposure/tone/decode change: `PYTHONPATH=src python scripts/tone_report.py <raw-folder> --render --fail-on-regression` reports 0 dark→darker and 0 pushed-into-clipping (use the in-repo
+  `curated-dolomites-summer-2026/selected_raw` corpus when present; it never runs in CI).
