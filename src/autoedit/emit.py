@@ -34,6 +34,8 @@ def build_result(
     review_reason: str = "",
     warnings: list[str] | None = None,
     batch_group: str = "",
+    post_region_stats: list[RegionStatsModel] | None = None,
+    decode_ev: float = 0.0,
 ) -> Result:
     rm = region_meta or {}
     return Result(
@@ -52,6 +54,8 @@ def build_result(
         composition=[MaskOps(target=name, ops=ops) for name, ops in compositional.items()],
         notes=notes,
         post_edit_stats=post_edit_stats,
+        post_region_stats=list(post_region_stats or []),
+        decode_ev=float(decode_ev),
         quality_score=quality_score,
         needs_review=needs_review,
         review_reason=review_reason,

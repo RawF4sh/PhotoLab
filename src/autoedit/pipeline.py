@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,9 +21,9 @@ from .contract import Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
 from .edit import apply_image, banding, build_alpha, gates, reference as ref_match, linear_alpha
-from .imageio import Image, downscale_long_edge, load_image, luma
+from .imageio import Image, downscale_long_edge, load_image, luma, raw_opts_from
 from .notes import build_notes
-from .segment import make_segmenter, resolve
+from .segment import ResolvedRegions, make_segmenter, resolve
 from .segment.base import Segmenter
 from .styles import Style, combine_brief, load_styles, style_for
 
@@ -35,6 +36,10 @@ _DEFAULT_GUARD_OPS = {
 }
 # Default oversaturation gate: a pixel's chroma may grow by at most +30% over the source.
 _DEFAULT_CHROMA_MAX = 0.30
+# Prompt words that mean "I want it dark" — they opt the photo out of the darkness-regression
+# gate (rules.toml [quality_gate].preserve_terms overrides this list).
+_DEFAULT_PRESERVE_TERMS = ("moody", "dark", "night", "low key", "low-key", "silhouette",
+                          "preserve exposure", "keep exposure")
 
 
 def _vertical_band_alpha(full_hw: tuple[int, int], top: float, peak: float, bottom: float) -> np.ndarray:
@@ -104,7 +109,7 @@ class Pipeline:
 
     def concepts_for(self, style: Style) -> list[str]:
         """Resolution: explicit --concepts > --preset > the style's set > the generic preset."""
-        if self.cfg.concepts:
+        if self.cfg.concepts is not None:
             return list(self.cfg.concepts)
         if self.cfg.preset:
             return self.presets.get(self.cfg.preset) or []
@@ -114,7 +119,9 @@ class Pipeline:
 
     def process_one(self, path: str, do_apply: bool = True,
                     image: Image | None = None, exposure_bias: float = 0.0,
-                    batch_group: str = "") -> tuple[np.ndarray | None, Result]:
+                    batch_group: str = "",
+                    on_resolved: Callable[[ResolvedRegions], None] | None = None,
+                    ) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
 
@@ -124,12 +131,16 @@ class Pipeline:
 
         # `image` lets callers (e.g. the UI preview) pass a pre-downscaled proxy so the full-res
         # apply stays fast; the batch/export path passes nothing → full resolution.
-        img: Image = image if image is not None else load_image(path)
+        img: Image = image if image is not None else load_image(path, decode=raw_opts_from(cfg))
         proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
 
-        raw = self.segmenter.segment(proxy, concepts)
+        raw = self.segmenter.segment(proxy, concepts) if concepts else []
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
+        # Optional read-only observer for diagnostics such as preview mask overlays. Reuse the
+        # exact arbitration used by apply; arrays stay out of the serializable sidecar.
+        if on_resolved is not None:
+            on_resolved(resolved)
 
         resolved_coverages = {r.name: float(r.coverage) for r in resolved.regions}
         gstats, region_stats = stats_mod.compute(proxy, resolved.union, resolved_coverages)
@@ -532,12 +543,23 @@ class Pipeline:
         # Post-edit safety assessment — measured on the EDITED output, not the source. Drives
         # the review queue + quality score (Codex review: review gate must read edited output).
         post_stats = None
+        post_regions: dict = {}
         quality_score, needs_review, review_reason, warnings = 1.0, False, "", []
         if do_apply and out_rgb is not None:
             post_proxy = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
-            post_stats, _ = stats_mod.compute(post_proxy, {})
+            # Same masks as the source stats, so the sidecar shows per-region pre→post luma
+            # (the diagnostics the dark-RAW investigation lacked). Masks are proxy-res; the
+            # post proxy has the proxy's shape by construction — guard anyway.
+            same_shape = post_proxy.rgb.shape[:2] == proxy.rgb.shape[:2]
+            post_stats, post_regions = stats_mod.compute(
+                post_proxy, resolved.union if same_shape else {},
+                resolved_coverages if same_shape else None)
+            preserve_terms = (self.rules.get("quality_gate", {}) or {}).get(
+                "preserve_terms", _DEFAULT_PRESERVE_TERMS)
+            preserve = bool(cfg.prompt) and any(t in cfg.prompt.lower() for t in preserve_terms)
             quality_score, needs_review, review_reason, warnings = gates.assess(
-                gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate)
+                gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate,
+                preserve_exposure=preserve)
         if residual_banding is not None:
             bscore, baction, was_remediated = residual_banding
             warnings = list(warnings) + [f"smooth-region banding {bscore:.2f} ({baction})"]
@@ -554,6 +576,12 @@ class Pipeline:
                 quality_score = max(0.0, quality_score - 0.05)
 
         notes = build_notes(gstats, region_stats, resolved.detected)
+        if img.decode_ev:
+            notes.append(f"raw develop: {cfg.raw_mode} {img.decode_ev:+.2f} EV at decode")
+        for name, pre_r in region_stats.items():  # where did the brightness actually move?
+            post_r = post_regions.get(name)
+            if post_r is not None:
+                notes.append(f"{name}: luma {pre_r.lum:.2f} → {post_r.lum:.2f}")
         if intent_note:
             notes.append(intent_note)
         if region_ref_note:
@@ -592,6 +620,8 @@ class Pipeline:
             review_reason=review_reason,
             warnings=warnings,
             batch_group=batch_group,
+            post_region_stats=list(post_regions.values()),
+            decode_ev=float(img.decode_ev),
             decider=self.decider.name,
             model=cfg.llm_model if cfg.decider == "llm" else None,
             timing_ms=(time.perf_counter() - t0) * 1000.0,

@@ -54,6 +54,14 @@ pip install -e '.[accel]'   # + OpenCV/Kornia/colour-science/tifffile/rawpy (qua
 No GPU needed to try it: the **stub segmenter** (heuristic sky/subject/skin) runs the whole
 pipeline on CPU. Swap to real SAM 3 with `--backend sam3`.
 
+**First run with SAM 3** (once per machine): the weights are gated on Hugging Face under Meta's
+SAM License. Accept it at https://huggingface.co/facebook/sam3, then `huggingface-cli login`
+(or set `HF_TOKEN`); the ~850 MB model downloads on first use and is cached. `autoedit doctor`
+tells you exactly which of these steps is missing. Apple Silicon runs on the `mps` device out of
+the box (a CPU fallback is enabled for the few ops Metal lacks); NVIDIA uses `cuda`; anything else
+falls back to CPU (slow but works). Camera RAW input (`.cr2/.nef/.arw/.dng`…) needs the `accel`
+extra for `rawpy`.
+
 ## Use
 
 ```bash
@@ -74,9 +82,11 @@ does not teach the editor how to transform an original into an edit; it acts as 
 for culling huge folders, filtering generated/reference edits, prioritizing human review, and
 choosing the best variants from a batch.
 
-> **Planned:** `autoedit ui` — a local web app (FastAPI + browser): drop a folder, pick a
-> style, type what you want, preview before/after, run the batch. Same backend, so the local
-> app and a future hosted version share one codebase. See [PLAN.md](PLAN.md) §5.
+Launch **Studio** with `pip install -e '.[ui]'` and `autoedit ui`. Open a folder, pick a style,
+add or toggle named concepts, generate a before/after preview, and run the checked photos.
+The Masks button shows the actual resolved region footprints, before edge feathering. Concept
+choices and Settings → RAW development apply to both preview and export. “None” selects zero
+photos and disables the batch. See [APP_GUIDE.md](APP_GUIDE.md) for the full workflow.
 
 Run without installing:
 ```bash
@@ -110,7 +120,13 @@ local `./configs` dir or `--configs-dir`):
 PYTHONPATH=src python tests/run_all.py    # zero-dependency test runner (or: python -m pytest)
 PYTHONPATH=src python scripts/tone_report.py ./raws --render --backend stub   # objective tone gate (dark→darker, clipping, vs camera)
 PYTHONPATH=src python scripts/raw_benchmark.py ./raws                          # rank RAW development candidates vs the camera render
+PYTHONPATH=src python scripts/blindtest.py ./raws ./out-blind --backend sam3 --raw-mode none --methods baseline,camera,autoedit --stratify 8
 ```
+
+Use `tone_report.py --fail-on-regression` for an unattended gate; incomplete reports fail too.
+Blind galleries retain the run configuration and file hashes in `run.json`, plus pipeline sidecars
+with mask-aware statistics and review reasons. Rank the gallery in `index.html`, download its votes,
+then score them with `scripts/blindtest.py --score path/to/results.csv`.
 
 Architecture and conventions: [CLAUDE.md](CLAUDE.md). The implementation plan that produced
 this: see the approved plan referenced in [CHANGELOG.md](CHANGELOG.md).

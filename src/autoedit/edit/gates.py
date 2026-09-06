@@ -33,11 +33,17 @@ GATE_DEFAULTS = {
     "review_score": 0.85,     # quality score below this → needs review
     "review_highlight": 0.05,  # hard review triggers regardless of score
     "review_shadow": 0.12,
+    "clip_budget": 0.005,    # added clipped fraction vs source; a hard review trigger
+    "clip_penalty": 0.25,
+    # Source-relative darkness regression: a source whose (sky-excluded) foreground median or
+    # bottom band sits below `dark_source` must not come out more than `dark_regress` darker.
+    "dark_source": 0.30,
+    "dark_regress": 0.01,
 }
 
 
 def assess(pre, post, chroma_limited: float = 0.0,
-           thr: dict | None = None) -> tuple[float, bool, str, list[str]]:
+           thr: dict | None = None, preserve_exposure: bool = False) -> tuple[float, bool, str, list[str]]:
     """Judge the EDITED output against the source (both GlobalStatsModel). Returns
     (quality_score 0..1, needs_review, review_reason, warnings).
 
@@ -50,6 +56,20 @@ def assess(pre, post, chroma_limited: float = 0.0,
     score = 1.0
 
     hi, lo = float(post.highlight_clip), float(post.shadow_clip)
+    # A small newly clipped area can destroy snow/cloud detail while the absolute clipped
+    # fraction is still below the old warning threshold. Check the source-relative increase
+    # independently of score, including single-channel clipping that luminance can hide.
+    introduced_clipping = False
+    for label, key in (("highlight", "highlight_clip"),
+                       ("RGB highlight", "rgb_highlight_clip_any")):
+        before = float(getattr(pre, key, 0.0))
+        after = float(getattr(post, key, 0.0))
+        if after - before > t["clip_budget"]:
+            introduced_clipping = True
+            warnings.append(f"{label} clipping increased +{(after - before) * 100:.2f}% "
+                            f"({before * 100:.2f}% → {after * 100:.2f}%)")
+    if introduced_clipping:
+        score -= t["clip_penalty"]
     if hi > t["highlight_clip"]:
         warnings.append(f"highlight clipping {hi * 100:.1f}%")
         score -= min(0.35, (hi - t["highlight_clip"]) * 4.0)
@@ -66,8 +86,25 @@ def assess(pre, post, chroma_limited: float = 0.0,
         warnings.append(f"oversaturation gate worked hard ({chroma_limited * 100:.0f}% of frame)")
         score -= 0.05  # the gate already corrected it; flag for a look, don't fail hard
 
+    # Darkness regression (dark-RAW diagnosis): a dark source made materially darker is the one
+    # failure the old gate could not see — it scored a dark→darker edit 0.94. RELATIVE to the
+    # source, never an absolute brightness: a night frame left alone passes, a bright frame is
+    # untouched, and an explicit moody/preserve intent (`preserve_exposure`) opts out. Only for
+    # freshly measured stats (pro_stats_valid) — zero-filled legacy models must not trip it.
+    if not preserve_exposure and float(getattr(pre, "pro_stats_valid", 0.0)) > 0:
+        for label, a, b in (
+            ("foreground median", getattr(pre, "fg_p50", 0.0), getattr(post, "fg_p50", 0.0)),
+            ("bottom-band median", getattr(pre, "band_bottom_p50", 0.0), getattr(post, "band_bottom_p50", 0.0)),
+        ):
+            a, b = float(a), float(b)
+            if a < t["dark_source"] and b < a - t["dark_regress"]:
+                warnings.append(f"dark source made darker ({label} {a:.2f} → {b:.2f})")
+                score -= 0.25
+                break
+
     score = max(0.0, round(score, 3))
-    needs_review = score < t["review_score"] or hi > t["review_highlight"] or lo > t["review_shadow"]
+    needs_review = (introduced_clipping or score < t["review_score"]
+                    or hi > t["review_highlight"] or lo > t["review_shadow"])
     reason = "; ".join(warnings) if needs_review else ""
     return score, needs_review, reason, warnings
 

@@ -278,9 +278,9 @@ def test_reference_is_decoded_once_per_run(tmp_path):
     calls: list[str] = []
     orig = pl.load_image
 
-    def counting(path):
+    def counting(path, **kw):
         calls.append(str(path))
-        return orig(path)
+        return orig(path, **kw)
 
     pl.load_image = counting
     try:
@@ -312,3 +312,16 @@ def test_pipeline_reference_mountain_highlight_records_composition(tmp_path):
 
     assert any(c.target == "reference_mountain_highlight" for c in result.composition)
     assert any("reference mountain highlight" in n for n in result.notes)
+
+
+def test_post_region_stats_and_luma_notes(tmp_path):
+    """The sidecar must show WHERE brightness moved: per-region stats measured on the edited
+    pixels with the same masks, plus a 'name: luma a → b' note per region."""
+    img_path = tmp_path / "p.jpg"
+    _make(str(img_path))
+    _, result = Pipeline.build(RunConfig(backend="stub")).process_one(str(img_path), do_apply=True)
+    pre = {r.name for r in result.region_stats}
+    post = {r.name for r in result.post_region_stats}
+    assert post and post <= pre
+    assert any("luma" in n and "→" in n for n in result.notes)
+    assert result.post_edit_stats.band_bottom_p50 >= 0.0 and result.decode_ev == 0.0

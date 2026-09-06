@@ -112,7 +112,18 @@ def compute(
     lin = srgb_to_linear(rgb)  # computed once, reused for OKLab stats AND the WB gray-card solve
 
     # perceptual colour stats in OKLab (mean chroma + warmth); cheap on the proxy.
-    p10, p50, p90 = (float(v) for v in np.percentile(lum, (10, 50, 90)))
+    p10, p50, p90, p99 = (float(v) for v in np.percentile(lum, (10, 50, 90, 99)))
+    # Highlight headroom uses each pixel's brightest RGB channel: luminance averaging can hide
+    # channel clipping in bright snow/clouds. Take the percentile AFTER the per-pixel maximum
+    # so the 0.5% budget covers any-channel clipping across the frame, not 0.5% per channel.
+    # Exposure, contrast and whites consume this same measured headroom in the rule baseline.
+    p995 = float(np.percentile(rgb.max(axis=-1), 99.5))
+    headroom_ev = max(0.0, float(np.log2(
+        float(srgb_to_linear(np.float32(_HIGHLIGHT))) / max(float(srgb_to_linear(np.float32(p995))), 1e-5))))
+    dark_cov = float((lum < 0.10).mean())
+    third = max(1, lum.shape[0] // 3)
+    band_top, band_mid, band_bottom = (float(np.median(b)) for b in
+                                       (lum[:third], lum[third:2 * third], lum[2 * third:]) if b.size)
     mean_chroma, warmth = _oklab_color_stats(lin)
     channel_stats = _channel_exposure_stats(rgb)
     veil, detail_rms = _veil_and_detail(lum, sat, dark)
@@ -180,7 +191,8 @@ def compute(
         wb_temp_correction=wb_temp, wb_tint_correction=wb_tint, wb_confidence=wb_conf,
         iso=float(ex.get("iso", 0.0) or 0.0),
         exposure_ev=float(ex.get("exposure_ev", 0.0) or 0.0),
-        lum_p10=p10, lum_p50=p50, lum_p90=p90,
+        lum_p10=p10, lum_p50=p50, lum_p90=p90, lum_p99=p99, headroom_ev=headroom_ev,
+        dark_cov=dark_cov, band_top_p50=band_top, band_mid_p50=band_mid, band_bottom_p50=band_bottom,
         mean_chroma=mean_chroma, warmth=warmth,
         **channel_stats,
     )

@@ -22,8 +22,13 @@ from .contract import RunConfig
 
 def _flatten(d: dict) -> dict:
     """Map a defaults-shaped TOML ([run]/[segment]/[output]/[llm]) to RunConfig kwargs."""
-    run, seg, out, llm = (d.get(k, {}) for k in ("run", "segment", "output", "llm"))
+    run, seg, out, llm, dec = (d.get(k, {}) for k in ("run", "segment", "output", "llm", "decode"))
     kw: dict = {}
+    _dec_map = {"raw_mode": "raw_mode", "max_ev": "raw_max_ev", "clip_budget": "raw_clip_budget",
+                "tone_target_p50": "raw_tone_target_p50", "fallback_ev": "raw_fallback_ev"}
+    for src, dst in _dec_map.items():
+        if src in dec:
+            kw[dst] = dec[src]
     for k in ("style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
               "decider", "emit"):
         if k in run:
@@ -81,6 +86,7 @@ def load_run_config(args) -> RunConfig:
         "llm_mode": getattr(args, "llm_mode", None),
         "backend": getattr(args, "backend", None),
         "device": getattr(args, "device", None),
+        "raw_mode": getattr(args, "raw_mode", None),
         "out_format": getattr(args, "format", None),
         "quality": getattr(args, "quality", None),
         "analysis_long_edge": getattr(args, "analysis_long_edge", None),
@@ -122,10 +128,14 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--llm-mode", dest="llm_mode", choices=["refine", "propose"])
     p.add_argument("--backend", choices=["stub", "sam3"])
     p.add_argument("--device")
+    p.add_argument("--raw-mode", dest="raw_mode",
+                   choices=["none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"],
+                   help="RAW development: none (default libraw render) | libraw_auto | preview_ev | "
+                        "preview_ev_headroom | tone_target (see scripts/raw_benchmark.py)")
     p.add_argument("--format", choices=["jpeg", "tiff"])
     p.add_argument("--quality", type=int)
     p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int)
-    p.add_argument("--emit", choices=["baked", "editable", "both"])
+    p.add_argument("--emit", choices=["baked"], help="output kind (only baked pixels exist today; an XMP hand-off is not implemented)")
     p.add_argument("--no-compose", dest="compose", action="store_false", default=None,
                    help="disable radial/linear compositional moves (vignette, sky grad)")
     p.add_argument("--no-vignette", dest="vignette", action="store_false", default=None,

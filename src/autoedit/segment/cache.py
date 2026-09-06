@@ -14,7 +14,10 @@ In-memory images (no path) bypass the cache to avoid content collisions. LRU-bou
 from __future__ import annotations
 
 import os
+import hashlib
 import threading
+
+import numpy as np
 
 from ..imageio import Image
 from .base import RegionMask, Segmenter
@@ -31,14 +34,16 @@ class CachingSegmenter:
         self._lock = threading.Lock()
 
     def _key(self, img: Image):
-        """Identity for the cache: path + proxy shape + mtime. None → don't cache (no path)."""
+        """Path + proxy pixels + mtime. RAW development can change pixels at the same path/size."""
         if not img.path:
             return None
         try:
             mtime = os.path.getmtime(img.path)
         except OSError:
             mtime = None
-        return (img.path, img.rgb.shape, mtime)
+        pixels = np.ascontiguousarray(img.rgb)
+        digest = hashlib.blake2b(memoryview(pixels).cast("B"), digest_size=16).digest()
+        return (img.path, img.rgb.shape, str(img.rgb.dtype), mtime, digest)
 
     def segment(self, img: Image, concepts: list[str]) -> list[RegionMask]:
         key = self._key(img)

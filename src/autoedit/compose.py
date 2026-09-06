@@ -29,6 +29,7 @@ class Move:
     radius_scale: float = 1.4
     frm: str = "top"  # linear: top|bottom|left|right
     coverage: float = 0.5
+    min_coverage: float = 0.0  # the `when` concept must cover at least this frame fraction
 
 
 def load_compose(path: str) -> list[Move]:
@@ -54,6 +55,7 @@ def load_compose(path: str) -> list[Move]:
                 radius_scale=float(body.get("radius_scale", 1.4)),
                 frm=frm,
                 coverage=float(body.get("coverage", 0.5)),
+                min_coverage=float(body.get("min_coverage", 0.0)),
             )
         )
     return moves
@@ -72,8 +74,12 @@ def _bbox_norm(mask: np.ndarray) -> tuple[float, float, float, float]:
 
 
 def _triggers(m: Move, union: dict[str, np.ndarray]) -> bool:
-    """A move fires when its `when` concept is present, or unconditionally for `when="always"`."""
-    return m.when == "always" or m.when in union
+    """A move fires when its `when` concept is present (covering ≥ `min_coverage` of the frame),
+    or unconditionally for `when="always"`. A 3% sliver of sky must not earn a half-frame grad."""
+    if m.when == "always":
+        return True
+    mask = union.get(m.when)
+    return mask is not None and (m.min_coverage <= 0.0 or float(mask.mean()) >= m.min_coverage)
 
 
 def settings_for(moves: list[Move], union: dict[str, np.ndarray], intensity: float) -> dict[str, Settings]:

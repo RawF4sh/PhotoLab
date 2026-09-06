@@ -19,7 +19,7 @@ from .filters import box_min, gaussian_blur, guided_filter
 _EPS = 1e-6
 
 OP_NAMES = (
-    "exposure", "contrast", "highlights", "shadows", "whites", "blacks",
+    "exposure", "highlight_rolloff", "contrast", "highlights", "shadows", "whites", "blacks",
     "curve", "clarity", "vibrance", "saturation", "dehaze", "temp", "tint",
     # color grading (split-tone) — tint shadows/highlights independently
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
@@ -31,6 +31,7 @@ OP_NAMES = (
 
 OP_BOUNDS = {
     "exposure": (-3.0, 3.0),
+    "highlight_rolloff": (0.0, 100.0),
     "contrast": (-100.0, 100.0),
     "highlights": (-100.0, 100.0),
     "shadows": (-100.0, 100.0),
@@ -86,9 +87,52 @@ def _resize_float(a: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.asarray(pil.resize(size, PILImage.BILINEAR)).astype(np.float32)
 
 
-def exposure(rgb: np.ndarray, ev: float) -> np.ndarray:
-    lin = srgb_to_linear(rgb) * (2.0**ev)
-    return linear_to_srgb(lin)
+# Linear value of the clip threshold the stats/gates use (luma 0.98 in gamma). The knee's
+# asymptote sits HERE, not at 1.0, so a kneed highlight never counts as clipped.
+_WHITE_LIN = float(srgb_to_linear(np.float32(0.98)))
+
+
+def highlight_rolloff(lin: np.ndarray, amount: float) -> np.ndarray:
+    """Soft highlight knee in LINEAR light — what a camera's tone curve does that a bare exposure
+    multiply cannot. With W = the clip level (0.98 gamma) and knee point kp = W·(1 − amount/200)
+    (amount 40 → kp ≈ 0.76 linear ≈ 0.88 gamma), values above kp follow
+    kp + (W−kp)·(1 − exp(−(x−kp)/(W−kp))): continuous with slope 1 at kp, monotonic, asymptote W,
+    so anything an exposure lift pushes past white compresses into [kp, W) instead of clipping.
+    Pixels below kp are untouched; amount 0 is the identity."""
+    if amount <= 0.0:
+        return lin
+    kp = _WHITE_LIN * (1.0 - 0.5 * min(amount, 100.0) / 100.0)
+    over = lin > kp
+    if not over.any():
+        return lin
+    out = lin.copy()
+    x = (lin[over] - kp) / (_WHITE_LIN - kp)
+    out[over] = kp + (_WHITE_LIN - kp) * (1.0 - np.exp(-x))
+    return out
+
+
+def light(rgb: np.ndarray, temp: float = 0.0, tint: float = 0.0, ev: float = 0.0,
+          rolloff: float = 0.0) -> np.ndarray:
+    """White balance + exposure + highlight knee in ONE linear pass (one decode, one encode).
+    The separate `white_balance`/`exposure` ops are kept for tests and callers; apply_ops uses
+    this because each gamma round-trip on a 22 MP frame costs ~0.5 s. No intermediate clip
+    between WB and exposure — a channel WB pushes past white is still lifted/kneed as light."""
+    lin = srgb_to_linear(rgb)
+    if temp or tint:
+        lin = lin.copy()
+        lin[..., 0] *= 1.0 + 0.2 * (temp / 100.0)
+        lin[..., 1] *= 1.0 + 0.1 * (tint / 100.0)
+        lin[..., 2] *= 1.0 - 0.2 * (temp / 100.0)
+    if ev:
+        lin = lin * (2.0 ** ev)
+    return linear_to_srgb(highlight_rolloff(lin, rolloff))
+
+
+def exposure(rgb: np.ndarray, ev: float, rolloff: float = 0.0) -> np.ndarray:
+    """Exposure in stops (linear multiply); `rolloff` > 0 adds the highlight knee BEFORE the
+    values are re-encoded, which is the only point where a lift can be compressed rather than
+    clipped (`linear_to_srgb` clips to [0, 1])."""
+    return light(rgb, ev=ev, rolloff=rolloff)
 
 
 def white_balance(rgb: np.ndarray, temp: float, tint: float) -> np.ndarray:
@@ -291,10 +335,9 @@ def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
     """Apply a settings bundle in the frozen order. Does not mutate the input."""
     out = rgb
     temp, tint = settings.get("temp", 0.0), settings.get("tint", 0.0)
-    if temp or tint:
-        out = white_balance(out, temp, tint)
-    if settings.get("exposure", 0.0):
-        out = exposure(out, settings["exposure"])
+    ev, rolloff = settings.get("exposure", 0.0), settings.get("highlight_rolloff", 0.0)
+    if temp or tint or ev or rolloff:  # WB → exposure → knee, one linear pass (frozen order kept)
+        out = light(out, temp, tint, ev, rolloff)
     if any(settings.get(k, 0.0) for k in ("highlights", "shadows", "whites", "blacks")):
         out = tone(out, settings.get("highlights", 0.0), settings.get("shadows", 0.0),
                    settings.get("whites", 0.0), settings.get("blacks", 0.0))

@@ -49,11 +49,14 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .muted{color:var(--ink-3)} .cap{text-transform:uppercase;letter-spacing:.07em;font-size:10.5px;font-weight:600;color:var(--ink-3)}
 
 /* ---- app grid -------------------------------------------------------------- */
-.app{display:grid;grid-template-rows:46px 1fr 24px;height:100vh}
-.work{display:grid;grid-template-columns:236px 1fr 312px;min-height:0;overflow:hidden}
+.app{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:46px 1fr 24px;height:100vh}
+.work{display:grid;grid-template-columns:236px minmax(0,1fr) 312px;min-height:0;overflow:hidden}
 
 /* ---- top bar --------------------------------------------------------------- */
-.topbar{display:flex;align-items:center;gap:14px;padding:0 12px;border-bottom:1px solid var(--line);background:#141416}
+.topbar{display:flex;align-items:center;gap:14px;padding:0 12px;border-bottom:1px solid var(--line);background:#141416;
+  min-width:0;overflow-x:auto}
+.topbar>*{flex-shrink:0}
+.topbar .folder{flex-shrink:1;min-width:60px}
 .brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;letter-spacing:-.01em;padding-right:4px}
 .brand .mk{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#6f9fe0,#4a78c0)}
 .brand span{color:var(--ink-3);font-weight:450}
@@ -159,6 +162,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .cursor-split{cursor:ew-resize}
 .mask-ov{position:absolute;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:0;transition:opacity .2s;z-index:2}
 .mask-ov.show{opacity:.45}
+.mask-region{position:absolute;inset:0;mask-size:contain;mask-repeat:no-repeat;mask-position:center;
+  -webkit-mask-size:contain;-webkit-mask-repeat:no-repeat;-webkit-mask-position:center}
 /* generating */
 .genov{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;
   background:rgba(10,10,11,.55);backdrop-filter:blur(2px);color:#fff;font-size:12px;font-weight:550;z-index:6}
@@ -196,9 +201,11 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 
 /* concept chips */
 .concept{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--r);background:var(--elev);
+  width:100%;text-align:left;font:inherit;
   border:1px solid var(--line-2);cursor:pointer;transition:.12s;margin-bottom:5px}
 .concept:hover{border-color:#3d3d46}
 .concept.on{border-color:rgba(91,143,214,.45);background:var(--accent-dim)}
+.concept:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .concept .ck{width:15px;height:15px;border-radius:4px;border:1.5px solid var(--line-2);display:grid;place-items:center;
   color:transparent;flex:none}
 .concept.on .ck{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -372,7 +379,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="seg" id="viewseg" style="display:none">
       <button data-v="before">Before</button><button data-v="after">After</button>
       <button data-v="split" class="on">Split</button><button data-v="side">Side</button></div>
-    <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" title="Show detected edit regions on the split preview" style="display:none">
+    <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" aria-pressed="false" title="Show resolved region masks before edge feathering" style="display:none">
       <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
     <button class="tbtn" id="variantsBtn" aria-label="Generate variants" title="Render several recipes for this photo, scored + ranked; apply the best" style="display:none">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Variants</button>
@@ -444,6 +451,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
             <span class="state" id="previewState">No photo</span>
           </div>
         </div></div>
+      <div id="previewError" role="alert" class="tip" style="padding:0 13px;color:var(--danger)"></div>
       <div class="dsec"><div class="dsec-h"><h4>Style</h4></div>
         <div class="dsec-b"><div class="styles" id="styles"></div></div></div>
       <div class="dsec"><div class="dsec-h"><h4>Intensity</h4></div>
@@ -480,8 +488,9 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
         <div class="dsec-b"><div id="concepts"><div class="tip">Open a photo to detect regions.</div></div>
           <div style="display:flex;gap:7px;margin-top:9px">
-            <input class="tinput" id="newConcept" placeholder="add a concept — e.g. dress, glacier"/>
-            <button class="minibtn" id="addConcept">Add</button></div></div></div>
+            <input class="tinput" id="newConcept" aria-label="New concept" placeholder="add a concept — e.g. dress, glacier"/>
+            <button class="minibtn" id="addConcept">Add</button></div>
+          <div class="tip" style="margin-top:8px">Choose regions for preview and batch. Off skips that region; global edits still apply. Masks show the resolved areas before edge feathering.</div></div></div>
       <div class="dsec collap"><div class="dsec-h" data-collap><h4>Adjustments</h4>
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
         <div class="dsec-b"><div id="globals"><div class="tip">No edit yet.</div></div></div></div>
@@ -601,7 +610,15 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <span class="tip" id="recipeName" style="margin-left:8px">no model — falls back to rules</span></div>
         <div class="tip" style="margin-top:6px">Learned predicts the global edit from a model trained on your approved pairs (build a Dataset, then <code>train-recipe</code>). Per-region edits + all safety gates stay the same; falls back to rules with no model.</div></div>
       <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
-      <div class="kv"><b>RAW decode</b><span class="v">rawpy · .dng/.cr2/.nef/.arw</span></div>
+      <div class="field"><label for="rawMode">RAW development</label>
+        <select class="tinput" id="rawMode">
+          <option value="none">Standard</option>
+          <option value="preview_ev_headroom">Camera brightness, protect highlights</option>
+          <option value="preview_ev">Match camera brightness</option>
+          <option value="libraw_auto">Automatic brightness</option>
+          <option value="tone_target">Balanced midtones</option>
+        </select>
+        <div class="tip" style="margin-top:6px">Used for preview and export. Applies to RAW photos; JPEG and TIFF are unchanged.</div></div>
       <div class="kv"><b>Cache</b><span class="v">~/Library/Caches/autoedit</span></div>
       <div class="field" style="margin-top:16px"><label>Anthropic API key — only used if the brief planner is on</label>
         <input class="tinput" type="password" placeholder="sk-ant-… (stored locally)" style="height:34px"/></div>
@@ -656,9 +673,11 @@ const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=
 
 const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural',intensity:0.8,preview:null,loading:false,
   previewDirty:false, previewToken:0,
-  run:new Set(),        /* stems chosen for the batch; empty = run all */
+  run:new Set(),        /* explicit stems chosen for the batch; empty = run none */
+  styleConcepts:{},customConcepts:[],disabledConcepts:new Set(),
   preferRaw:true,       /* for RAW+JPEG pairs, which source to edit by default */
   outFormat:'jpeg',     /* batch output format (jpeg | tiff) */
+  rawMode:'none',       /* shared RAW development for preview and export */
   prompt:'',            /* free-text look intent ("warm sunset, moody") */
   palette:'',           /* '' = auto (infer from intent); else a palettes.toml name */
   paletteStrength:0.8,  /* 0..1 regional split-tone grade strength */
@@ -678,6 +697,7 @@ const editOptions=()=>({
   palette:STATE.palette,palette_strength:STATE.paletteStrength,
   reference:STATE.reference,reference_strength:STATE.referenceStrength,
   decider:STATE.decider,recipe_model:STATE.recipeModel,
+  concepts:selectedConcepts(),raw_mode:STATE.rawMode,
   backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent
 });
 
@@ -783,14 +803,15 @@ function switchSource(i){const p=STATE.files[i];if(!p.pair)return;
 function toggleRun(stem){STATE.run.has(stem)?STATE.run.delete(stem):STATE.run.add(stem);syncRun();}
 function syncRun(){document.querySelectorAll('#film .frow').forEach((r,i)=>{
     const ck=r.querySelector('.fck');if(ck)ck.classList.toggle('on',STATE.run.has(STATE.files[i].stem));});
-  const n=STATE.run.size;$('#runCount').textContent=n?`Run: ${n} of ${STATE.files.length}`:'Run: all';
+  const n=STATE.run.size;$('#runCount').textContent=`Run: ${n} of ${STATE.files.length}`;
+  $('#runBtn').disabled=!STATE.served||!n;
   const lbl=$('#runBtn').querySelector('.lbl');if(lbl)lbl.textContent=n?`Run ${n}`:'Run batch';}
 
 function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
   const p=STATE.files[i];
   $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
-  $('#runBtn').disabled=false;$('#variantsBtn').style.display='';
+  syncRun();$('#variantsBtn').style.display='';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
   showSourceOnly(true);}
@@ -808,13 +829,24 @@ $('#viewseg').addEventListener('click',e=>{const b=e.target.closest('[data-v]');
   ba.addEventListener('pointerdown',e=>{drag=true;set(e);});
   window.addEventListener('pointermove',e=>drag&&set(e));window.addEventListener('pointerup',()=>drag=false);})();
 let maskOn=false;
+function renderMaskOverlay(){
+  const overlay=$('#maskOv');overlay.replaceChildren();
+  (STATE.preview?.mask_overlays||[]).forEach(m=>{
+    const layer=el('div','mask-region');layer.dataset.concept=m.name;
+    layer.style.backgroundColor=ccol(m.name);
+    layer.style.maskImage=`url("${m.alpha}")`;layer.style.webkitMaskImage=`url("${m.alpha}")`;
+    overlay.appendChild(layer);
+  });
+}
 function updateMaskButton(){
-  const show=!!(STATE.preview&&$('#ba').classList.contains('mode-split'));
+  const show=!!(STATE.preview?.mask_overlays?.length&&$('#ba').classList.contains('mode-split'));
   $('#maskBtn').style.display=show?'':'none';
   if(!show){maskOn=false;$('#maskOv').classList.remove('show');$('#maskBtn').classList.remove('primary');}
+  $('#maskBtn').setAttribute('aria-pressed',String(maskOn));
 }
 $('#maskBtn').onclick=()=>{if(!STATE.preview||!$('#ba').classList.contains('mode-split'))return;
-  maskOn=!maskOn;$('#maskOv').classList.toggle('show',maskOn);$('#maskBtn').classList.toggle('primary',maskOn);};
+  maskOn=!maskOn;$('#maskOv').classList.toggle('show',maskOn);$('#maskBtn').classList.toggle('primary',maskOn);
+  $('#maskBtn').setAttribute('aria-pressed',String(maskOn));};
 
 /* ---- preview load + apply ---------------------------------------------- */
 function setPreviewState(text, cls){
@@ -824,7 +856,8 @@ function setPreviewState(text, cls){
 }
 function markPreviewStale(){
   STATE.preview=null; STATE.previewDirty=true; STATE.previewToken++;
-  updateMaskButton();
+  $('#previewError').textContent='';
+  renderMaskOverlay();updateMaskButton();renderConcepts();
   if(STATE.loading){$('#ba').classList.remove('gen');STATE.loading=false;}
   if(real()&&STATE.sel>=0){
     setPreviewState('Needs update','stale');
@@ -836,23 +869,24 @@ function markPreviewStale(){
 }
 function showSourceOnly(markDirty){
   if(!real()||STATE.sel<0)return;
+  STATE.loading=false;$('#previewError').textContent='';
   const src=thumbURL(STATE.files[STATE.sel].thumbPath,1100);
   $('#baSizer').src=src;$('#baBefore').src=src;$('#baAfter').src=src;
   $('#ba').classList.remove('gen');setView('before');
-  $('#concepts').innerHTML='<div class="tip">Adjust settings, then generate a preview.</div>';
   $('#globals').innerHTML='<div class="tip">No preview generated.</div>';
   $('#regions').innerHTML='<div class="tip">No region edits yet.</div>';
   $('#why').innerHTML='<div class="tip">No notes yet.</div>';
   $('#stScene').textContent='';$('#sbScene').textContent='';$('#sbQuality').textContent='';
   STATE.preview=null; STATE.previewDirty=!!markDirty; STATE.previewToken++;
-  updateMaskButton();
+  renderMaskOverlay();updateMaskButton();renderConcepts();
   setPreviewState(markDirty?'Ready':'No preview', markDirty?'stale':'');
 }
 function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].thumbPath,1100);
+  $('#previewError').textContent='';
   $('#baSizer').src=src;$('#baBefore').src=src;$('#baAfter').src=src;
   $('#ba').classList.add('gen');
   setPreviewState('Generating…','busy');
-  $('#concepts').innerHTML='<div class="tip" style="display:flex;gap:9px;align-items:center"><span class="spin" style="width:13px;height:13px;border-width:2px"></span>Segmenting with SAM 3… first run loads the model (~20–40s)</div>';}
+  renderConcepts();}
 
 async function loadPreview(){
   if(STATE.loading||!real()||!STATE.served){if(!STATE.served)standaloneNote();return;}
@@ -863,9 +897,9 @@ async function loadPreview(){
     const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({file:p.path,...opts})})).json();
     if(token!==STATE.previewToken)return;
-    if(res.error){$('#concepts').innerHTML=`<div class="note warn">${res.error}</div>`;$('#ba').classList.remove('gen');}
+    if(res.error){$('#previewError').textContent=res.error;$('#ba').classList.remove('gen');}
     else{STATE.preview=res;applyPreview(res);}
-  }catch(e){if(token===STATE.previewToken){$('#concepts').innerHTML=`<div class="note warn">${e}</div>`;$('#ba').classList.remove('gen');}}
+  }catch(e){if(token===STATE.previewToken){$('#previewError').textContent=String(e);$('#ba').classList.remove('gen');}}
   if(token===STATE.previewToken){STATE.loading=false;setPreviewState(STATE.preview?'Current':'Needs update',STATE.preview?'ready':'stale');}
 }
 $('#genPreviewBtn').onclick=()=>loadPreview();
@@ -874,20 +908,13 @@ function applyPreview(res){const r=res.result||{};const ba=$('#ba');
   STATE.previewDirty=false;
   $('#baBefore').src=res.before;$('#baAfter').src=res.after;$('#baSizer').src=res.after;
   ba.classList.remove('gen');setView('split');
-  $('#maskOv').style.background='linear-gradient(135deg, rgba(91,143,214,.26), rgba(92,192,138,.20), rgba(224,163,90,.18))';
+  renderMaskOverlay();updateMaskButton();
   setPreviewState('Current','ready');
   $('#stScene').textContent=r.scene?'· '+r.scene:'';
   $('#sbScene').textContent=r.scene?'Scene: '+r.scene:'';
   $('#sbQuality').textContent=r.quality_score!=null?'Quality '+(+r.quality_score).toFixed(2)+(r.needs_review?' · review':''):'';
 
-  // concepts (real confidences)
-  const c=$('#concepts');c.innerHTML='';const cs=r.concepts||[];
-  if(!cs.length)c.innerHTML='<div class="tip">No concepts detected.</div>';
-  cs.forEach(d=>{const conf=Math.round((d.score||0)*100);const chip=el('div','concept'+(d.present?' on':''));
-    chip.innerHTML=`<span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
-      <span class="sw" style="background:${ccol(d.name)}"></span><span class="nm">${d.name}</span>
-      <span class="cf">${d.present?conf+'%':'—'}</span>`;
-    chip.onclick=()=>chip.classList.toggle('on');c.appendChild(chip);});
+  renderConcepts();
 
   // global adjustments (Lightroom-style value rows)
   const g=$('#globals');g.innerHTML='';const gs=r.global_settings||{};let any=false;
@@ -907,26 +934,48 @@ function applyPreview(res){const r=res.result||{};const ba=$('#ba');
     const desc=Object.entries(ops).filter(([k,v])=>v).slice(0,4).map(([k,v])=>`${k} ${fmtVal(k,v)}`).join(' · ')||'—';
     const cov=m.coverage?` · ${Math.round(m.coverage*100)}%`:'';
     rg.appendChild(el('div','region',`<span class="bar" style="background:${ccol(m.target)}"></span>
-      <div><div class="nm">${m.target}${cov}</div><div class="ds">${desc}</div></div>`));});
+      <div><div class="nm">${esc(m.target)}${cov}</div><div class="ds">${esc(desc)}</div></div>`));});
 
   // why
   const notes=r.notes||[];
-  $('#why').innerHTML=notes.length?'<ul>'+notes.map(w=>`<li>${w}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>';
+  $('#why').innerHTML=notes.length?'<ul>'+notes.map(w=>`<li>${esc(w)}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>';
 }
 
-/* ---- concepts add ------------------------------------------------------- */
-$('#addConcept').onclick=()=>{const v=$('#newConcept').value.trim();if(!v)return;
-  const chip=el('div','concept on');chip.innerHTML=`<span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>
-    <span class="sw" style="background:#8a8d96"></span><span class="nm">${v}</span><span class="cf">new</span>`;
-  chip.onclick=()=>chip.classList.toggle('on');$('#concepts').appendChild(chip);$('#newConcept').value='';};
+/* ---- editable concept selection (independent of per-photo detections) ---- */
+function conceptNames(){return [...new Set([...(STATE.styleConcepts[STATE.style]||[]),...STATE.customConcepts])];}
+function selectedConcepts(){return conceptNames().filter(name=>!STATE.disabledConcepts.has(name));}
+function renderConcepts(){
+  const container=$('#concepts');container.replaceChildren();
+  const detected=new Map((STATE.preview?.result?.concepts||[]).map(d=>[d.name,d]));
+  conceptNames().forEach(name=>{
+    const enabled=!STATE.disabledConcepts.has(name),d=detected.get(name);
+    const chip=el('button','concept'+(enabled?' on':''));chip.type='button';
+    chip.setAttribute('aria-pressed',String(enabled));chip.setAttribute('aria-label',`Include ${name}`);
+    chip.innerHTML='<span class="ck" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span>';
+    const sw=el('span','sw');sw.style.background=ccol(name);chip.appendChild(sw);
+    const label=el('span','nm');label.textContent=name;chip.appendChild(label);
+    const status=el('span','cf');status.textContent=!enabled?'Off':d?(d.present?Math.round(d.score*100)+'%':'Not found'):'Ready';
+    chip.appendChild(status);
+    chip.onclick=()=>{enabled?STATE.disabledConcepts.add(name):STATE.disabledConcepts.delete(name);markPreviewStale();};
+    container.appendChild(chip);
+  });
+  if(!conceptNames().length)container.appendChild(el('div','tip','Add a region to edit.'));
+}
+$('#addConcept').onclick=()=>{
+  const name=$('#newConcept').value.trim().replace(/\s+/g,' ').toLowerCase();if(!name)return;
+  if(!conceptNames().includes(name))STATE.customConcepts.push(name);
+  STATE.disabledConcepts.delete(name);$('#newConcept').value='';markPreviewStale();
+};
+$('#newConcept').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#addConcept').click();}});
 
 /* ---- pickers ------------------------------------------------------------ */
 async function loadFolderPath(path){
     const groups=await(await fetch('/api/groups?dir='+encodeURIComponent(path))).json();
     if(groups.error){alert(groups.error);return;}
     if(!groups.length){alert('No supported images found in that folder.');return;}
-    STATE.dir=path;STATE.mode='folder';STATE.run.clear();
+    STATE.dir=path;STATE.mode='folder';
     STATE.files=groups.map(g=>mkItem(g,path));
+    STATE.run=new Set(STATE.files.map(f=>f.stem));
     STATE.hasPairs=STATE.files.some(f=>f.pair);
     const nfiles=groups.reduce((a,g)=>a+g.members.length,0);
     $('#folderName').textContent=path;
@@ -945,6 +994,7 @@ async function pickSingle(){if(!STATE.served){standaloneNote();return;}
     STATE.dir=null;STATE.mode='single';STATE.run.clear();STATE.hasPairs=false;
     STATE.files=[mkItem({stem:name.replace(/\.[^.]+$/,''),raw:raw?name:null,pixel:raw?null:name,members:[{name,kind:raw?'raw':'pixel'}]},'')];
     STATE.files[0].path=path;STATE.files[0].thumbPath=path;   // absolute path, no dir join
+    STATE.run=new Set([STATE.files[0].stem]);
     $('#folderName').textContent=path;$('#sbCount').textContent='1 photo';$('#viewseg').style.display='';$('#maskBtn').style.display='';
     $('#selbar').style.display='none';$('#preferWrap').style.display='none';
     renderFilm();selectPhoto(0);
@@ -1034,12 +1084,13 @@ $('#cullRun').onclick=async()=>{
 let JOB=null,pollT=null;
 $('#runBtn').onclick=startRun;
 function startRun(){if(!real()||!STATE.served)return;
+  const items=STATE.files.filter(f=>STATE.run.has(f.stem));
+  if(!items.length)return;
   $('#runDrawer').classList.add('open');$('#qlist').innerHTML='';
   $('#runBar').style.width='0';$('#runPct').textContent='0%';$('#cDone').textContent=$('#cRev').textContent=$('#cFail').textContent='0';
   const body=editOptions();
   // Always send explicit source paths (one per group) so a RAW+JPEG pair is edited ONCE, on the
-  // chosen source — never both. Subset = the checked stems; otherwise every group.
-  const items=STATE.run.size?STATE.files.filter(f=>STATE.run.has(f.stem)):STATE.files;
+  // chosen source — never both. Only checked photos are processed.
   body.files=items.map(f=>f.path);
   fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{if(j.error){alert(j.error);return;}JOB=j;renderQueue(j);pollJob();})
@@ -1200,6 +1251,7 @@ function applyVariant(o){
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
 $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
+$('#rawMode').onchange=e=>{STATE.rawMode=e.target.value;markPreviewStale();};
 /* edit engine (M6): rules | learned recipe predictor */
 $('#engineSeg').addEventListener('click',e=>{const b=e.target.closest('[data-eng]');if(!b)return;
   STATE.decider=b.dataset.eng;$('#recipeRow').style.display=STATE.decider==='learned'?'':'none';markPreviewStale();});
@@ -1260,7 +1312,8 @@ window.addEventListener('keydown',e=>{if(!real()||e.target.matches('input,textar
 
 /* ---- boot --------------------------------------------------------------- */
 renderStyles();renderChips();renderPalettes();renderFilm();
-fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length){STATE.served=true;}
+fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length){STATE.served=true;
+  STATE.styleConcepts=Object.fromEntries(s.map(style=>[style.name,style.concepts||[]]));renderConcepts();syncRun();}
   if(!STATE.served)standaloneNote();}).catch(()=>standaloneNote());
 </script>
 </body>

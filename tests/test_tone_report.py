@@ -2,15 +2,25 @@
 in-memory render path produces one row per photo with the camera arm absent for JPEGs."""
 
 import importlib.util
+import json
 import pathlib
+import subprocess
+import sys
 
 import numpy as np
 from PIL import Image as PILImage
 
 from autoedit import tonemetrics as tm
-from autoedit.contract import RunConfig
+from autoedit.contract import GlobalStatsModel, RunConfig
 
 _TR = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "tone_report.py"
+
+
+def _report_module():
+    spec = importlib.util.spec_from_file_location("tone_report", _TR)
+    tr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tr)
+    return tr
 
 
 def _f(**kw):
@@ -74,9 +84,7 @@ def test_describe_matches_stats_fields():
 
 
 def test_render_report_on_synthetic_folder(tmp_path):
-    spec = importlib.util.spec_from_file_location("tone_report", _TR)
-    tr = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tr)
+    tr = _report_module()
 
     corpus = tmp_path / "c"
     corpus.mkdir()
@@ -87,6 +95,101 @@ def test_render_report_on_synthetic_folder(tmp_path):
     rows = tr.rows_by_render(str(corpus), RunConfig(backend="stub"), max_px=96, quiet=True)
     assert len(rows) == 2
     assert all("out_fg_p50" in r and "src_band_bottom_p50" in r for r in rows)
+    assert all("d_rgb_highlight_clip_any" in r and "review_reason" in r for r in rows)
     csv_path = tmp_path / "r.csv"
     tm.write_csv(rows, str(csv_path))
     assert csv_path.read_text().count("\n") == 3
+
+
+def test_render_failure_is_recorded_and_later_photo_is_still_assessed(tmp_path):
+    (tmp_path / "a-broken.png").write_bytes(b"not an image")
+    PILImage.new("RGB", (32, 32), (100, 100, 100)).save(tmp_path / "b-good.png")
+    errors = []
+    rows = _report_module().rows_by_render(str(tmp_path), RunConfig(backend="stub"),
+                                           max_px=32, camera=False, quiet=True, errors=errors)
+    assert [r["name"] for r in rows] == ["b-good.png"]
+    assert [e["name"] for e in errors] == ["a-broken.png"]
+    assert "cannot identify image" in errors[0]["error"]
+
+
+def test_render_cli_gate_fails_partial_report_even_when_successes_have_no_regressions(tmp_path):
+    (tmp_path / "a-broken.png").write_bytes(b"not an image")
+    PILImage.new("RGB", (32, 32), (100, 100, 100)).save(tmp_path / "b-good.png")
+    report = tmp_path / "report.json"
+    result = subprocess.run([sys.executable, str(_TR), str(tmp_path), "--render", "--backend", "stub",
+                             "--max-px", "32", "--no-camera", "--fail-on-regression", "--json", str(report)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 1, result.stderr
+    data = json.loads(report.read_text())
+    assert data["summary"]["n"] == 1 and data["summary"]["expected"] == 2
+    assert data["summary"]["errors"] == 1 and data["summary"]["complete"] is False
+    assert data["summary"]["dark_made_darker"] == data["summary"]["bright_pushed_to_clip"] == 0
+    assert data["errors"][0]["name"] == "a-broken.png"
+    assert "1 of 2 sources could not be assessed" in result.stderr
+
+
+def _sidecar_stats(**kw):
+    return GlobalStatsModel(mean_lum=0.4, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0,
+                            haze=0.2, fg_p50=0.4, band_bottom_p50=0.4, lum_p50=0.4,
+                            lum_p90=0.7, **kw).model_dump()
+
+
+def test_sidecar_failures_are_isolated_and_make_cli_gate_fail(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    src.mkdir()
+    out.mkdir()
+    for name in ("a-missing", "b-invalid", "c-no-post", "d-good"):
+        (src / f"{name}.png").write_bytes(b"source pixels are not needed for sidecar reports")
+    (out / "b-invalid.autoedit.json").write_text("{invalid")
+    (out / "c-no-post.autoedit.json").write_text(json.dumps({"global_stats": _sidecar_stats()}))
+    (out / "d-good.autoedit.json").write_text(json.dumps({"global_stats": _sidecar_stats(),
+                                                         "post_edit_stats": _sidecar_stats()}))
+    report = tmp_path / "report.json"
+    result = subprocess.run([sys.executable, str(_TR), str(src), "--out", str(out), "--no-camera",
+                             "--fail-on-regression", "--json", str(report)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 1, result.stderr
+    data = json.loads(report.read_text())
+    assert [r["name"] for r in data["rows"]] == ["d-good.png"]
+    assert {e["name"] for e in data["errors"]} == {"a-missing.png", "b-invalid.png", "c-no-post.png"}
+    assert data["summary"]["expected"] == 4 and data["summary"]["errors"] == 3
+    assert data["summary"]["complete"] is False
+
+
+def test_rgb_review_diagnostics_survive_reports_without_changing_luminance_gate(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    src.mkdir()
+    out.mkdir()
+    (src / "p.png").write_bytes(b"source pixels are not needed for sidecar reports")
+    reason = "RGB highlight clipping increased +1.00%"
+    (out / "p.autoedit.json").write_text(json.dumps({
+        "global_stats": _sidecar_stats(rgb_highlight_clip_any=0.001),
+        "post_edit_stats": _sidecar_stats(rgb_highlight_clip_any=0.011),
+        "quality_score": 0.75, "needs_review": True, "review_reason": reason,
+    }))
+    report, csv_path = tmp_path / "report.json", tmp_path / "report.csv"
+    result = subprocess.run([sys.executable, str(_TR), str(src), "--out", str(out), "--no-camera",
+                             "--fail-on-regression", "--json", str(report), "--csv", str(csv_path)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(report.read_text())
+    row = data["rows"][0]
+    assert row["src_rgb_highlight_clip_any"] == 0.001 and row["out_rgb_highlight_clip_any"] == 0.011
+    assert abs(row["d_rgb_highlight_clip_any"] - 0.01) < 1e-12
+    assert row["needs_review"] is True and row["review_reason"] == reason
+    assert not row["bright_pushed_to_clip"] and not row["dark_made_darker"]
+    assert data["summary"]["complete"] is True and data["errors"] == []
+    assert reason in csv_path.read_text() and reason in result.stdout
+
+
+def test_empty_failed_report_still_writes_error_artifact(tmp_path):
+    (tmp_path / "broken.png").write_bytes(b"not an image")
+    report = tmp_path / "report.json"
+    result = subprocess.run([sys.executable, str(_TR), str(tmp_path), "--render", "--backend", "stub",
+                             "--no-camera", "--fail-on-regression", "--json", str(report)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode != 0
+    data = json.loads(report.read_text())
+    assert data["rows"] == [] and data["summary"]["n"] == 0
+    assert data["summary"]["expected"] == data["summary"]["errors"] == 1
+    assert data["errors"][0]["name"] == "broken.png"

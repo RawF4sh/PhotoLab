@@ -63,3 +63,15 @@ def test_pipeline_records_composition(tmp_path):
     _, result = Pipeline.build(RunConfig(backend="stub")).process_one(str(p), True)
     targets = {m.target for m in result.composition}
     assert "subject_vignette" in targets and "sky_grad" in targets
+
+
+def test_sky_grad_requires_min_coverage():
+    """A 4% sliver of sky must not earn a half-frame darkening (compose.toml min_coverage)."""
+    moves = load_compose(config_path("compose.toml"))
+    sliver = {"sky": np.zeros((50, 50), bool)}
+    sliver["sky"][:2] = True
+    assert "sky_grad" not in settings_for(moves, sliver, 1.0)
+    real = {"sky": np.zeros((50, 50), bool)}
+    real["sky"][:15] = True                                  # 30%
+    assert "sky_grad" in settings_for(moves, real, 1.0)
+    assert Move(name="m", when="sky", shape="linear", min_coverage=0.0).min_coverage == 0.0

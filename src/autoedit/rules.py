@@ -11,6 +11,7 @@ Rule keys ARE edit-op names (exposure, contrast, ...) consumed directly by edit/
 from __future__ import annotations
 
 import ast
+import math
 import re
 import tomllib
 
@@ -35,7 +36,16 @@ def _iff(cond, a, b):
     return a if cond else b
 
 
-_FUNCS = {"clamp": _clamp, "min": min, "max": max, "abs": abs, "iff": _iff}
+def _log2(x: float) -> float:
+    """Safe log2 for EV arithmetic in rules: exposure in stops is log2(target/current) — a
+    linear luma difference is NOT stops (that mistake capped dark-frame lifts at ~0.3 EV).
+    Floored at 1e-6 so a black region yields a large finite number the rule then clamps,
+    instead of a ValueError that would drop the whole rule."""
+    return math.log2(max(float(x), 1e-6))
+
+
+_FUNCS = {"clamp": _clamp, "min": min, "max": max, "abs": abs, "iff": _iff,
+          "log2": _log2, "log": lambda x: math.log(max(float(x), 1e-6))}
 
 _BINOPS = {
     ast.Add: lambda a, b: a + b,
@@ -136,9 +146,18 @@ def _region_ctx(g: GlobalStatsModel, r: RegionStatsModel, intensity: float) -> d
 
 def _eval_block(block: dict[str, str], ctx: dict) -> Settings:
     out: Settings = {}
-    for op, expr in block.items():
+    # Exposure spends highlight headroom before the tone/finishing ops run. Evaluate it first
+    # regardless of TOML key order, and expose its intensity-scaled baseline value to later
+    # rules. Looks do not change exposure beyond this scaling; later decider/intent changes
+    # remain subject to the post-edit quality gate. Keep this context local to each block.
+    ctx = {**ctx, "planned_exposure": 0.0}
+    order = (["exposure"] if "exposure" in block else []) + [k for k in block if k != "exposure"]
+    for op in order:
+        expr = block[op]
         try:
             out[op] = eval_expr(expr, ctx)
+            if op == "exposure":
+                ctx["planned_exposure"] = out[op] * ctx["intensity"]
         except Exception as e:  # a bad single rule must not kill the photo
             import sys
 

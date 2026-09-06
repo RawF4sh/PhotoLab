@@ -12,7 +12,11 @@
 #   rgb_highlight_clip_any, rgb_highlight_clip_all, rgb_highlight_recoverable
 #   sky_lum, sky_sat, blown_sky, subj_lum, subj_cov, bg_lum (0.0 when absent)
 #   pro_stats_valid                                  (1 for freshly computed stats; 0 for legacy)
-#   lum_p10, lum_p50, lum_p90, fg_lum, fg_p50, detail_rms, veil, dark_p10
+#   lum_p10, lum_p50, lum_p90, lum_p99, fg_lum, fg_p50, detail_rms, veil, dark_p10
+#   headroom_ev  (stops before p99.5 of per-pixel max(R,G,B) clips — bounds exposure/contrast/whites)
+#   planned_exposure  (this block's baseline exposure in EV after intensity; evaluated first)
+#   dark_cov     (fraction of pixels with luma < 0.10: dark-but-unclipped, which shadow_clip can't see)
+#   band_top_p50, band_mid_p50, band_bottom_p50     (median luma of the top/middle/bottom thirds)
 #   snow_cov, sky_cov, water_cov, wb_temp_correction, wb_tint_correction, wb_confidence
 #   iso, exposure_ev                                (EXIF priors; 0.0 when the photo has no metadata)
 # Variables ALSO available inside a non-global region block (about THAT region):
@@ -21,11 +25,27 @@
 #   region_r_shadow_clip, region_g_shadow_clip, region_b_shadow_clip
 #   region_r_highlight_clip, region_g_highlight_clip, region_b_highlight_clip
 #   region_channel_shadow_clip, region_channel_highlight_clip, region_rgb_highlight_recoverable
-# Helpers: clamp(x, lo, hi), min, max, if(cond, a, b), abs, and the operators + - * / and comparisons.
+# Helpers: clamp(x, lo, hi), min, max, if(cond, a, b), abs, log2, log, and the operators + - * /
+# and comparisons.
 #
 # Units match the apply engine (src/autoedit/edit/ops.py):
 #   exposure = stops (EV);  contrast/highlights/shadows/whites/blacks/clarity/vibrance/
 #   saturation/dehaze = roughly [-100, 100];  temp/tint = white-balance units.
+#
+# EXPOSURE IS LOGARITHMIC. Stops to move a gamma-encoded median m to target t are
+#   EV = log2(lin(t)/lin(m)) ≈ 2.2 * log2(t / m)          (sRGB ≈ gamma 2.2)
+# so the exposure rules below use `k * 2.2 * log2(target / stat)` with k the correction fraction
+# (0.6 = lift 60% of the way), CAPPED BY `headroom_ev - 0.15` so a lift can never blow the highlights
+# (the 0.15 EV margin keeps the 99.5th percentile off white once shadows/whites/sharpen add on top).
+# The old form `-(fg_p50 - 0.50) * 0.9` treated a luma DIFFERENCE as stops: for fg_p50 = 0.17 it
+# asked for 0.30 EV where ≈3.1 EV is the true deficit (a 10× under-correction on dark RAWs).
+# Ops that pivot at mid-gray (contrast, blacks) are faded out on dark sources with
+# `clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1)` — on a frame that sits entirely below the pivot they
+# are pure darkening and were measured erasing the whole exposure lift.
+# Global contrast also fades with `clamp(headroom_ev, 0, 1)`: full strength needs at least
+# one stop of highlight headroom. Exposure alone cannot protect snow/clouds when the later
+# contrast pass raises near-white pixels. This applies to every scene, including bright
+# backgrounds in people photos; legacy stats retain their previous contrast.
 #
 # TUNING NOTE: a RESTRAINED, true-to-life baseline (retuned v0.3) — bright and clean, NOT an
 # HDR look. Principles: never force-darken a sky that isn't blown; recover highlights gently;
@@ -63,24 +83,44 @@ reduce_ops = 0.22
 hard_fail = 0.35
 min_coverage = 0.03
 
-# Post-edit quality gate (review queue): thresholds the safety assessment reads. Optional —
-# these are the built-in defaults; uncomment the block to tune when a photo gets flagged.
-# [quality_gate]
-# highlight_clip = 0.02   # post-edit highlight clipping above this → warn + score penalty
-# shadow_clip = 0.06      # post-edit shadow clipping above this → warn + score penalty
-# sat_delta = 0.10        # mean saturation rise vs source above this → warn + score penalty
-# review_score = 0.85     # quality score below this → needs review
-# review_highlight = 0.05 # hard review triggers regardless of score
-# review_shadow = 0.12
+# Post-edit quality gate (review queue): thresholds the safety assessment reads. Omitted keys
+# use the built-in defaults (edit/gates.py GATE_DEFAULTS):
+#   highlight_clip = 0.02   # post-edit highlight clipping above this → warn + score penalty
+#   shadow_clip = 0.06      # post-edit shadow clipping above this → warn + score penalty
+#   sat_delta = 0.10        # mean saturation rise vs source above this → warn + score penalty
+#   review_score = 0.85     # quality score below this → needs review
+#   review_highlight = 0.05 # hard review triggers regardless of score
+#   review_shadow = 0.12
+[quality_gate]
+# Added clipping is a hard review trigger, even below the absolute warning thresholds. Uses
+# the tone report's 0.5% budget; also checks the fraction clipping any RGB channel.
+clip_budget = 0.005
+clip_penalty = 0.25
+# Darkness regression (source-relative): a source whose foreground / bottom-band median is below
+# `dark_source` must not come out more than `dark_regress` darker → warning + review. Never an
+# absolute brightness target, so night frames left alone pass. A prompt containing any of
+# `preserve_terms` opts the photo out (the user asked for dark).
+dark_source = 0.30
+dark_regress = 0.01
+preserve_terms = ["moody", "dark", "night", "low key", "low-key", "silhouette", "preserve exposure", "keep exposure"]
 
 # ─────────────────────────── people ───────────────────────────
 [people.global]
-exposure   = "clamp(-(mean_lum - 0.48) * 1.0, -0.10, 0.25)"
-contrast   = "8"
+# EV-correct lift toward a 0.45 foreground median (60% of the deficit), never past the highlight
+# headroom; legacy mean_lum form when the pro stats are absent.
+exposure   = "if(pro_stats_valid > 0, clamp(0.6 * 2.2 * log2(0.45 / max(fg_p50, 0.02)), -0.10, min(0.8, max(0, headroom_ev - 0.15) + 0.3 * clamp((0.9 - headroom_ev) / 0.9, 0, 1))), clamp(-(mean_lum - 0.48) * 1.0, -0.10, 0.25))"
+# Highlight knee (edit/ops.py highlight_rolloff): a soft shoulder in linear light that lets the lift
+# above go ~0.3 EV past the clip headroom without clipping — the camera-curve behaviour a bare
+# multiply lacks (RAW benchmark: matching the camera median by exposure alone clipped 70% of
+# files). Strength rises as headroom vanishes; 0 on frames with ≥ 0.9 EV of room.
+highlight_rolloff = "if(pro_stats_valid > 0, clamp((0.9 - headroom_ev) * 45, 0, 40), 0)"
+contrast   = "if(pro_stats_valid > 0, 8 * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 8)"
 highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 85, -40, 0)" # recover blown/channel-clipped background
-shadows    = "clamp(shadow_clip * 65 + 5, 5, 26)"
-whites     = "clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 40, 0, 8), 0)"
-blacks     = "-3"
+# open shadows for DARKNESS (foreground median, dark coverage), not only for clipped pixels
+shadows    = "clamp(shadow_clip * 65 + 5 + if(pro_stats_valid > 0, max(0, 0.35 - fg_p50) * 80 + dark_cov * 30, 0), 5, 40)"
+# Both white-point lifts share the headroom left after exposure; negative recovery stays.
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 40, 0, 8), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+blacks     = "if(pro_stats_valid > 0, -3 * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1), -3)"
 vibrance   = "4"
 clarity    = "4"
 sharpen    = "12 * (1 - min(iso, 6400) / 12800)"   # ease output sharpening as ISO (noise) rises
@@ -114,23 +154,37 @@ sharpen    = "16 * (1 - min(iso, 6400) / 12800)"
 #
 # Expose for the foreground median (sky-excluded): calibrated on the Dolomites corpora, fg_p50
 # sits ~0.26-0.29 while mean_lum reads ~0.5-0.6 — the sky was masking a dark subject.
-exposure   = "if(pro_stats_valid > 0, clamp(-(fg_p50 - 0.50) * 0.9, -0.06, 0.32), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"
+# EV-CORRECT (see header): 60% of log2 deficit to a 0.45 median, capped by highlight headroom so
+# a bright sky/snow frame gets ~0 global lift and the dark valley is left to shadows/regions.
+exposure   = "if(pro_stats_valid > 0, clamp(0.6 * 2.2 * log2(0.45 / max(fg_p50, 0.02)), -0.06, min(1.0, max(0, headroom_ev - 0.15) + 0.3 * clamp((0.9 - headroom_ev) / 0.9, 0, 1))), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"
+# Highlight knee (edit/ops.py highlight_rolloff): a soft shoulder in linear light that lets the lift
+# above go ~0.3 EV past the clip headroom without clipping — the camera-curve behaviour a bare
+# multiply lacks (RAW benchmark: matching the camera median by exposure alone clipped 70% of
+# files). Strength rises as headroom vanishes; 0 on frames with ≥ 0.9 EV of room.
+highlight_rolloff = "if(pro_stats_valid > 0, clamp((0.9 - headroom_ev) * 45, 0, 40), 0)"
 # Adaptive contrast from the tonal spread: flat frames (p90-p10 ~0.25) get decisive contrast,
-# already-contrasty alpine frames (~0.87) stay at the old gentle 3-5.
-contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16), 5)"
+# already-contrasty alpine frames (~0.87) start at a gentle 3. Faded to 0 on dark sources
+# (contrast pivots at 0.5), and scaled by highlight headroom to preserve snow/cloud detail.
+contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 5)"
 # recover highlights for real clipping AND hold them back on already-bright frames, so a clean
 # bright sky is never pushed INTO clipping. Never positive.
 highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -42, 0)"
 # open shadows so it never feels dark; a snow-dominant frame (snow_cov>0.2) gets a touch more lift
 # — alpine shadow detail (rock/texture under snow) reads flatter than a typical landscape shadow.
 # Sub-scene branching via a stat, not a new scene class — no rule-table duplication.
-shadows    = "clamp(shadow_clip * 70 + 8 + if(pro_stats_valid > 0, if(snow_cov > 0.2, 3, 0), 0), 8, 30)"
+# DARKNESS, not just clipping: shadow_clip counts luma < 0.02 and reads ~0 on a frame whose
+# foreground median is 0.17 with a quarter of its pixels below 0.10 — so the lift also scales
+# with the foreground-median deficit and the dark-pixel coverage.
+shadows    = "clamp(shadow_clip * 70 + 8 + if(pro_stats_valid > 0, if(snow_cov > 0.2, 3, 0) + max(0, 0.35 - fg_p50) * 90 + dark_cov * 40, 0), 8, 45)"
 # white point: the old clip-guard PLUS a dull-highlight lift when p90 never reaches bright
-# (washed/overcast files get their whites placed deliberately — the "finished" look).
-whites     = "clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -18, 5) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)"
+# (washed/overcast files get their whites placed deliberately — the "finished" look). The lift
+# fades out as highlight headroom vanishes, including the positive base term. Negative recovery
+# remains intact. Deduct planned exposure: a modest p90 does not mean the near-white RGB tail
+# still has room after the earlier lift. Negative exposure is not credited as extra white lift.
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -18, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -18, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
 # black point: deepen washed files toward a true black (never lifts — shadows does the lifting).
 # The haze factor backs off when dehaze is already working (dehaze deepens blacks too).
-blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)), 0)"
+blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1), 0)"
 vibrance   = "4"
 # Adaptive clarity: soft frames (low measured detail) get more local contrast, already-crisp
 # frames get less (they were previously over-clarified at a constant 6).
@@ -167,10 +221,13 @@ hsl_blue_sat = "3"
 
 # dehaze + local contrast to define ridgelines — restrained so rock doesn't go gritty
 [landscape.mountain]
+# lift a mountain that sits below the foreground median (EV-correct, RELATIVE to fg_p50 so it
+# composes with the global lift instead of double-counting the same deficit)
+exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.05, 0.5), 0)"
 dehaze     = "8"
 clarity    = "12"
 contrast   = "6"
-shadows    = "6"
+shadows    = "clamp(6 + if(pro_stats_valid > 0, max(0, 0.30 - region_lum) * 80, 0), 6, 30)"
 vibrance   = "5"
 sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
 
@@ -186,7 +243,7 @@ temp       = "0"                                            # snow stays neutral
 
 # trees / bushes: healthy green, not neon
 [landscape.foliage]
-exposure   = "clamp((mean_lum - region_lum) * 0.3, -0.05, 0.16)"
+exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.05, 0.5), clamp((mean_lum - region_lum) * 0.3, -0.05, 0.16))"
 vibrance   = "5"
 saturation = "clamp((0.5 - region_sat) * 12, -4, 6)"
 clarity    = "6"
@@ -195,7 +252,7 @@ hsl_green_lum = "3"
 
 # foreground grass: lifted out of the shadows, true green (no golden cast)
 [landscape.grass]
-exposure   = "clamp((mean_lum - region_lum) * 0.35, -0.04, 0.2)"
+exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.04, 0.5), clamp((mean_lum - region_lum) * 0.35, -0.04, 0.2))"
 vibrance   = "5"
 saturation = "4"
 clarity    = "6"
@@ -220,12 +277,17 @@ hsl_blue_sat = "3"
 # these 7 keys in only one place.
 # Exposure priority: expose for the SUBJECT first (wildlife — a dark eagle against a bright sky
 # must not be judged by the sky), else the sky-excluded foreground, else the legacy mean.
-exposure   = "if(pro_stats_valid > 0, if(subj_cov > 0, clamp(-(subj_lum - 0.45) * 0.7, -0.15, 0.35), clamp(-(fg_p50 - 0.50) * 0.9, -0.06, 0.32)), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"
-contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16), 6)"
+exposure   = "if(pro_stats_valid > 0, if(subj_cov > 0, clamp(0.6 * 2.2 * log2(0.45 / max(subj_lum, 0.02)), -0.15, min(1.0, max(0, headroom_ev - 0.15) + 0.3 * clamp((0.9 - headroom_ev) / 0.9, 0, 1))), clamp(0.6 * 2.2 * log2(0.45 / max(fg_p50, 0.02)), -0.06, min(1.0, max(0, headroom_ev - 0.15) + 0.3 * clamp((0.9 - headroom_ev) / 0.9, 0, 1)))), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"
+# Highlight knee (edit/ops.py highlight_rolloff): a soft shoulder in linear light that lets the lift
+# above go ~0.3 EV past the clip headroom without clipping — the camera-curve behaviour a bare
+# multiply lacks (RAW benchmark: matching the camera median by exposure alone clipped 70% of
+# files). Strength rises as headroom vanishes; 0 on frames with ≥ 0.9 EV of room.
+highlight_rolloff = "if(pro_stats_valid > 0, clamp((0.9 - headroom_ev) * 45, 0, 40), 0)"
+contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 6)"
 highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -40, 0)"
-shadows    = "clamp(shadow_clip * 65 + 8, 8, 28)"
-whites     = "clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)"
-blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)), 0)"
+shadows    = "clamp(shadow_clip * 65 + 8 + if(pro_stats_valid > 0, max(0, 0.35 - fg_p50) * 90 + dark_cov * 40, 0), 8, 45)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1), 0)"
 vibrance   = "4"
 clarity    = "if(pro_stats_valid > 0, clamp(4 + (0.035 - detail_rms) * 250, 3, 12), 6)"
 dehaze     = "clamp((haze - 0.32) * 70, 0, 18)"

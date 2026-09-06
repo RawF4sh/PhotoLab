@@ -19,7 +19,7 @@ from PIL import Image as PILImage
 from .. import batch, curate, emit, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
-from ..imageio import downscale_long_edge, is_raw, is_supported, load_image
+from ..imageio import downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
 from ..pipeline import Pipeline
 from ..styles import load_styles
 
@@ -28,7 +28,7 @@ _ALLOWED = (
     "style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
-    "emit", "compose", "vignette", "sharpen",
+    "emit", "compose", "vignette", "sharpen", "raw_mode",
 )
 
 
@@ -49,7 +49,7 @@ def make_cfg(opts: dict, configs_dir: str | None = None) -> RunConfig:
     concepts = opts.get("concepts")
     if isinstance(concepts, str) and concepts.strip():
         kw["concepts"] = [c.strip() for c in concepts.split(",") if c.strip()]
-    elif isinstance(concepts, list) and concepts:
+    elif isinstance(concepts, list):
         kw["concepts"] = concepts
     return RunConfig(**kw)
 
@@ -243,6 +243,24 @@ def check_image(path: str) -> None:
                          f"not a sidecar like .xmp")
 
 
+def _mask_previews(resolved) -> list[dict]:
+    """Lossless transparent proxy masks, after overlap arbitration, from this render's resolve.
+
+    White RGB with an alpha channel lets the UI tint each named region in its legend color.
+    These show the region footprints before full-resolution edge feathering.
+    """
+    overlays = []
+    for region in resolved.regions:
+        alpha = PILImage.fromarray(region.mask.astype(np.uint8) * 255)
+        mask = PILImage.new("RGBA", alpha.size, (255, 255, 255, 0))
+        mask.putalpha(alpha)
+        buf = io.BytesIO()
+        mask.save(buf, format="PNG")
+        overlays.append({"name": region.name, "coverage": region.coverage,
+                         "alpha": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()})
+    return overlays
+
+
 def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560) -> dict:
     """Render a single-image before/after preview + the decision sidecar.
 
@@ -255,14 +273,18 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir)
     pipe = build_pipeline(cfg)
-    work = load_image(image_path)
+    work = load_image(image_path, decode=raw_opts_from(cfg))
     if work.long_edge > 4096:                       # bound apply cost on very large files
         work = downscale_long_edge(work, 4096)
+    overlays = []
     with INFERENCE_LOCK:
-        out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
+        out_rgb, result = pipe.process_one(
+            image_path, do_apply=True, image=work,
+            on_resolved=lambda resolved: overlays.extend(_mask_previews(resolved)))
     return {
         "before": _img_b64(work.rgb, max_px, fmt="webp"),
         "after": _img_b64(out_rgb, max_px, fmt="webp"),
+        "mask_overlays": overlays,
         "result": result.model_dump(),
     }
 
@@ -384,12 +406,17 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
         except Exception:
             model = None
 
-    work = downscale_long_edge(load_image(image_path), 1400)   # shared proxy → fast, seg cached
+    work = None
+    decode_opts = None
     scored = []
     for spec in specs:
         o = {k: v for k, v in opts.items() if k not in ("variants", "aesthetic_model")}
         o.update(variants.spec_opts(spec))
         cfg = make_cfg(o, configs_dir)
+        raw_opts = raw_opts_from(cfg)
+        if work is None or raw_opts != decode_opts:
+            work = downscale_long_edge(load_image(image_path, decode=raw_opts), 1400)
+            decode_opts = raw_opts
         pipe = build_pipeline(cfg)
         with INFERENCE_LOCK:
             out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)

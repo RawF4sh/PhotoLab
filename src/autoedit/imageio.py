@@ -40,6 +40,7 @@ class Image:
     source_bits: int = 8
     path: str | None = None
     exif: dict | None = None  # small normalized metadata dict (iso, exposure_ev) — {} if none
+    decode_ev: float = 0.0    # RAW development lift applied at decode (see RAW_MODES)
 
     @property
     def height(self) -> int:
@@ -64,16 +65,19 @@ def is_raw(path: str) -> bool:
     return path.lower().endswith(tuple(_RAW_EXT))
 
 
-def load_image(path: str) -> Image:
+def load_image(path: str, decode: dict | None = None) -> Image:
     """Decode any supported image to the working representation, preserving bit depth.
+
+    `decode` holds the RAW development options (RunConfig `raw_*` fields, see `raw_opts_from`);
+    it is ignored for non-RAW input, whose bytes are unchanged by this parameter.
 
     Order matters: read 16-bit data BEFORE any RGB conversion (Pillow's `convert("RGB")`
     collapses high-bit-depth data to 8-bit), and convert ICC → sRGB for 8-bit inputs so the
     working space is defined rather than assumed."""
     # 0) Camera RAW (.dng/.cr2/.nef/.arw/…) → demosaic at 16-bit via rawpy/libraw.
-    raw = _decode_raw(path)
+    raw = _decode_raw(path, decode)
     if raw is not None:
-        rgb, bits = raw
+        rgb, bits, ev = raw
         # RAW is the preferred edit source, so EXIF priors (ISO → restrained sharpening)
         # matter most here. Many RAWs are TIFF-containers Pillow can read metadata from;
         # rawpy already outputs upright pixels, so only the ISO/EV tags are wanted.
@@ -81,7 +85,8 @@ def load_image(path: str) -> Image:
             exif = _read_exif(PILImage.open(path))
         except Exception:
             exif = {}
-        return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif)
+        return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif,
+                     decode_ev=ev)
 
     pil = PILImage.open(path)
     exif = _read_exif(pil)
@@ -116,10 +121,114 @@ def load_image(path: str) -> Image:
     return Image(rgb=np.ascontiguousarray(np.clip(rgb, 0.0, 1.0)), source_bits=bits, path=path, exif=exif)
 
 
-def _decode_raw(path: str):
-    """Demosaic a camera RAW to 16-bit sRGB via rawpy/libraw. Returns (rgb[0,1], 16) or None
-    when the path isn't a RAW. Uses the camera white balance and skips rawpy's auto-brighten so
-    the input reflects the real capture — AutoEdit's own rules then decide exposure."""
+# RAW development modes (RunConfig.raw_mode). "none" is the historical libraw render — camera WB,
+# no auto-bright, plain gamma — and stays the default. Measured on 110 Dolomites CR2s it sits a
+# median 1.4–1.8 EV under the camera's OWN embedded JPEG, so the other modes are candidates that
+# lift the LINEAR demosaic before gamma; scripts/raw_benchmark.py ranks them, nothing flips the
+# default automatically.
+RAW_MODES = ("none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target")
+_RAW_DEFAULTS = {"raw_mode": "none", "raw_max_ev": 2.5, "raw_clip_budget": 0.005,
+                 "raw_tone_target_p50": 0.40, "raw_fallback_ev": 1.4}
+# Headroom-capped modes stop this many stops short of the clip level, so the pipeline's own
+# whites/shadows/sharpen (which run AFTER decode) don't push the top percentile into white.
+# Mirrors the `headroom_ev - 0.15` margin the exposure rules use (configs/rules.toml).
+_HEADROOM_MARGIN_EV = 0.15
+
+
+def raw_opts_from(cfg) -> dict:
+    """The RAW development options a RunConfig carries (its raw_* fields), shaped for
+    `load_image(decode=...)`. Works on any object exposing those attributes."""
+    return {k: getattr(cfg, k) for k in _RAW_DEFAULTS if hasattr(cfg, k)}
+
+
+def develop_ev(lin_rgb: np.ndarray, camera_rgb: np.ndarray | None, opts: dict | None) -> float:
+    """Stops of linear lift a development mode asks for. Pure math (testable without a RAW).
+
+    lin_rgb     the LINEAR demosaic (float [0,1]); camera_rgb the camera's gamma-encoded preview
+                or None.
+    preview_ev            match the preview's linear median (raw_fallback_ev without a preview)
+    preview_ev_headroom   same, but never past the highlight headroom (minus a 0.15 EV margin) —
+                          at most `raw_clip_budget` of pixels may reach white. The sky is protected by construction; the
+                          residual foreground deficit is left to the shadows / region rules.
+    tone_target           ignore the camera: put the median at `raw_tone_target_p50` (gamma),
+                          headroom-capped.
+    none / libraw_auto    0 — libraw's own render, with or without its 1%-clip auto-bright.
+    Never negative (a mode never darkens), never above raw_max_ev."""
+    o = {**_RAW_DEFAULTS, **(opts or {})}
+    mode = o["raw_mode"]
+    if mode not in RAW_MODES:
+        raise ValueError(f"unknown raw_mode {mode!r}; choose one of {RAW_MODES}")
+    if mode not in ("preview_ev", "preview_ev_headroom", "tone_target"):
+        return 0.0
+    lum_lin = luma(lin_rgb)
+    raw_p50 = max(float(np.percentile(lum_lin, 50)), 1e-5)
+    clip_q = 100.0 * (1.0 - float(o["raw_clip_budget"]))
+    white = float(srgb_to_linear(np.float32(0.98)))
+    headroom = max(0.0, float(np.log2(white / max(float(np.percentile(lum_lin, clip_q)), 1e-5)))
+                   - _HEADROOM_MARGIN_EV)
+    if mode == "tone_target":
+        target = float(srgb_to_linear(np.float32(o["raw_tone_target_p50"])))
+        ev = min(float(np.log2(target / raw_p50)), headroom)
+    elif camera_rgb is None:
+        ev = float(o["raw_fallback_ev"])
+    else:
+        cam_p50 = max(float(np.percentile(luma(srgb_to_linear(camera_rgb)), 50)), 1e-5)
+        ev = float(np.log2(cam_p50 / raw_p50))
+    if mode == "preview_ev_headroom":
+        ev = min(ev, headroom)
+    return float(np.clip(ev, 0.0, float(o["raw_max_ev"])))
+
+
+def _preview_rgb(raw, max_px: int = 1024) -> np.ndarray | None:
+    """The camera-rendered JPEG preview embedded in an open rawpy RAW, as float gamma RGB with
+    the long edge ≤ max_px, in stored orientation. None when absent or unreadable."""
+    try:
+        import io
+
+        import rawpy
+
+        t = raw.extract_thumb()
+        if t.format == rawpy.ThumbFormat.JPEG:
+            pil = PILImage.open(io.BytesIO(t.data)).convert("RGB")
+        else:
+            pil = PILImage.fromarray(np.asarray(t.data)).convert("RGB")
+        pil.thumbnail((max_px, max_px))
+        return np.asarray(pil).astype(np.float32) / 255.0
+    except Exception:
+        return None
+
+
+def camera_preview(path: str, max_px: int = 1600, like: np.ndarray | None = None) -> np.ndarray | None:
+    """The camera's own render of a RAW file (its embedded JPEG preview), upright, float gamma
+    RGB — the free calibration target every RAW carries, no paired JPG needed. `like` (an HxW…
+    array of the decoded RAW) fixes a preview whose stored orientation disagrees with the
+    demosaic. None for non-RAW input or when the file has no preview."""
+    if not is_raw(path):
+        return None
+    try:
+        import rawpy
+
+        with rawpy.imread(path) as raw:
+            rgb = _preview_rgb(raw, max_px)
+    except Exception:
+        return None
+    if rgb is None:
+        return None
+    try:
+        rgb = _apply_exif_orientation(rgb, _orientation_of(PILImage.open(path)))
+    except Exception:
+        pass
+    if like is not None and (like.shape[0] > like.shape[1]) != (rgb.shape[0] > rgb.shape[1]):
+        rgb = np.rot90(rgb)
+    return np.ascontiguousarray(rgb)
+
+
+def _decode_raw(path: str, opts: dict | None = None):
+    """Demosaic a camera RAW to 16-bit via rawpy/libraw. Returns (rgb[0,1], 16, decode_ev) or
+    None when the path isn't a RAW. Camera white balance always. `opts` = RunConfig raw_* fields
+    (see RAW_MODES); an extra `half_size` key is a benchmark speed knob (quarter-res demosaic).
+    "none" reproduces the historical render byte-for-byte; the lifting modes decode LINEAR, apply
+    `develop_ev` stops, then encode with the sRGB curve (our working space)."""
     if not path.lower().endswith(tuple(_RAW_EXT)):
         return None
     try:
@@ -129,14 +238,26 @@ def _decode_raw(path: str):
             "RAW files (.dng/.cr2/.nef/.arw/…) need the rawpy decoder — install the accel "
             "extra: pip install '.[accel]'"
         ) from exc
+    o = {**_RAW_DEFAULTS, **(opts or {})}
+    mode = o["raw_mode"]
+    if mode not in RAW_MODES:
+        raise ValueError(f"unknown raw_mode {mode!r}; choose one of {RAW_MODES}")
+    common = dict(output_bps=16, use_camera_wb=True, half_size=bool(o.get("half_size", False)))
     with rawpy.imread(path) as raw:
-        rgb16 = raw.postprocess(
-            output_bps=16,            # keep 16-bit precision
-            use_camera_wb=True,       # honor the camera's white balance (no green/magenta cast)
-            no_auto_bright=True,      # don't auto-stretch — feed AutoEdit the true exposure
-            gamma=(2.222, 4.5),       # sRGB-ish tone curve → our gamma working space
-        )
-    return np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0), 16
+        if mode in ("none", "libraw_auto"):
+            rgb16 = raw.postprocess(
+                no_auto_bright=(mode == "none"),  # "none": feed the true exposure, no stretch
+                gamma=(2.222, 4.5),                # sRGB-ish tone curve → our gamma working space
+                **common,
+            )
+            return np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0), 16, 0.0
+        lin = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
+        lin = lin.astype(np.float32) / 65535.0
+        cam = _preview_rgb(raw) if mode.startswith("preview") else None
+    ev = develop_ev(lin, cam, o)
+    if ev:
+        lin = lin * np.float32(2.0 ** ev)
+    return linear_to_srgb(np.clip(lin, 0.0, 1.0)), 16, ev
 
 
 def _orientation_of(pil: PILImage.Image) -> int:
@@ -267,7 +388,8 @@ def downscale_long_edge(img: Image, long_edge: int) -> Image:
         for c in range(3)
     ]
     rgb = np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
-    return Image(rgb=rgb, source_bits=img.source_bits, path=img.path, exif=img.exif)
+    return Image(rgb=rgb, source_bits=img.source_bits, path=img.path, exif=img.exif,
+                 decode_ev=img.decode_ev)
 
 
 def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:

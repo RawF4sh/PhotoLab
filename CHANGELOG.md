@@ -3,6 +3,70 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Shared highlight budget and reproducible evaluation
+
+### Fixed
+- White-point lifts now use highlight headroom remaining after the planned exposure adjustment,
+  including intensity. The rules evaluator makes `planned_exposure` available before later rules
+  regardless of TOML key order, with an independent value per global/region block. This fixes the
+  neutral-frame regression introduced by the highlight knee while preserving its foreground lift.
+- `tone_report.py --fail-on-regression` now rejects partial reports. Failed renders, missing or
+  invalid sidecars and measurement errors stay isolated but are counted and named in the report.
+
+### Added
+- Tone rows retain any-channel RGB clipping changes and review reasons alongside luminance metrics.
+- Blind galleries record public configuration, config/source hashes, backend metadata (revision
+  when exposed by the runtime) and
+  pipeline sidecars with mask-aware safety results. JPEG quality follows the resolved config
+  (95 by default) and supports `--quality`. Whole-frame comparison metrics and blind shuffling remain.
+
+### Validation and remaining issues
+- 322 tests pass; stub CLI smoke emits a JPEG, sidecar and manifest. Full 110-RAW stub report
+  is complete with 0 dark→darker and 0 luminance-clipping regressions; three separate RGB
+  review flags remain. Real SAM checks confirm two of those RGB flags (0008 and 0042).
+- Thirteen SAM risk cases and four native exports pass the tone gates with no review flags.
+  A fresh 24-photo/72-variant baseline/camera/AutoEdit gallery also passes both AutoEdit tone
+  gates and RGB review, with verified source/config hashes and 23 burst groups. These sets overlap.
+- Native crop inspection confirms a remaining defect: regional exposure can flatten bright
+  snow texture before global rolloff moves it below the clipping threshold. A region-only knee
+  tune did not preserve useful 8-bit highlight amplitude and was not adopted. Reproduction,
+  crops and exact results are under `out-validation-2026-09-06/`; no new human rankings exist.
+
+## [Unreleased] — Highlight detail and clipping review
+
+### Fixed
+- Highlight headroom now measures the 99.5th percentile of per-pixel max(R,G,B), protecting
+  individual color channels that the previous luminance estimate could miss. Both positive
+  white-point terms use the existing headroom guard; negative highlight recovery stays active.
+- Global contrast now fades with highlight headroom in every scene. This prevents the finishing
+  pass from consuming the headroom protected by the exposure rules on bright snow/backgrounds.
+  Full contrast needs one stop of headroom; legacy stats retain their previous settings.
+- New clipping above a configurable 0.5 percentage-point budget triggers review regardless of
+  the overall quality score or absolute clipping fraction. Both luminance and any-channel RGB
+  clipping are compared with the source, with before/after values in the warning.
+- Regression coverage includes contrast goldens across scenes, a bright-tail image through the
+  full finishing stack, and a deliberately clipping recipe routed into the review queue.
+
+### Validation
+- 307 tests passed; stub CLI smoke emitted images, sidecars and a run manifest.
+- All 110 Dolomites RAWs rendered with the default natural recipe, RAW mode `none` and stub
+  backend at 1024px: 0 dark→darker and 0 pushed-into-clipping (previously 0 and 4).
+  The four original failures also pass RGB clipping review; one other photo remains flagged
+  by the stricter RGB check.
+
+## [Unreleased] — Studio region controls and preview fidelity
+
+### Fixed
+- Studio sends added/enabled concepts to preview and batch, preserving disabled selections across
+  photos. An explicit empty concept list disables region editing instead of restoring defaults.
+- Masks displays actual arbitrated region footprints from the preview's segmentation pass, with
+  transparent backgrounds and colors matching the concept controls. Stale masks are cleared.
+- Preview and variants honor the same RAW development options as export; Studio exposes the
+  mode in Settings. Segmentation cache keys include proxy pixels so changing development cannot
+  reuse stale masks. The default RAW mode and tone rules are unchanged.
+- “None” selects zero photos and disables Run. An explicit empty API selection is rejected before
+  a job or output folder is created; omitting `files` still scans the input folder.
+
 ## [Unreleased] — Dark-RAW diagnosis: objective tone gate + EV-correct exposure
 
 A 204-photo two-way blind test on Dolomites CR2s left dark frames dark or darker. Reproduced on the
@@ -36,6 +100,23 @@ the little lift that was applied. The quality gate scored a dark→darker edit 0
   materially darker is flagged for review unless the prompt asks for dark (`preserve_terms`).
   `compose.toml` `min_coverage` (a 3% sliver of sky no longer earns a half-frame grad).
 
+### Added (follow-up pass)
+- **Highlight knee** op `highlight_rolloff` (`edit/ops.py`): a soft shoulder in linear light whose
+  asymptote is the clip level, applied inside the exposure pass so a lift compresses into white
+  instead of clipping. Rule: strength rises as `headroom_ev` falls; the exposure cap gains up to
+  0.3 EV when the knee is on. Measured on the highlight-risk subset: −0.16 EV closer to the
+  camera render, no new dark→darker, ≤ 1 marginal clip flag.
+- `edit/filters.py`: OpenCV fast path for box blur / erosion when the `accel` extra is installed
+  (identical numerics to ~5e-6; a 22 MP stub run went 28 s → 21 s). numpy stays the reference.
+- `apply_ops` runs white balance → exposure → knee as one linear pass (`ops.light`); the
+  standalone `white_balance`/`exposure` ops remain.
+- README: first-run SAM 3 notes (gated weights, `huggingface-cli login`, MPS/CUDA/CPU, rawpy).
+
+### Removed
+- `emit = "editable" | "both"`: accepted but never implemented (no XMP hand-off exists). Only
+  `baked` remains; `--emit editable` now fails at argument parsing instead of silently writing
+  nothing.
+
 ### Changed
 - `rules.toml` exposure is **EV-correct**: `0.6·2.2·log2(target/fg_p50)`, capped by `headroom_ev`
   (landscape/other/people; `other` keeps the subject-first priority). Shadows respond to the
@@ -43,7 +124,8 @@ the little lift that was applied. The quality gate scored a dark→darker edit 0
   to zero on dark sources. Mountain/grass/foliage region lifts are EV-correct and relative to the
   foreground median so they compose with the global lift. Legacy zero-filled stats reproduce the old
   output exactly (all new terms sit behind `pro_stats_valid`).
-- Tests: 293 (was 265), including per-op proof that no tone op erases a dark-frame lift.
+- Tests: 311 (was 265), including per-op proof that no tone op erases a dark-frame lift and
+  knee math / routing / rule goldens.
 
 ## [Unreleased] — Pro-tone retune (blind-test-driven)
 

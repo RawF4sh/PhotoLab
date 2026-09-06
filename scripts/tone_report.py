@@ -11,8 +11,9 @@ render. Every later engine change is judged by this table, not by eye.
   # B) render in memory (nothing written) — the quick engine gate while tuning rules
   PYTHONPATH=src python3 scripts/tone_report.py SRC --render --backend stub --raw-mode none --limit 24
 
-`--fail-on-regression` exits 1 when any dark_made_darker / bright_pushed_to_clip row exists, so the
-report doubles as an unattended gate.
+`--fail-on-regression` exits nonzero when any dark_made_darker / bright_pushed_to_clip row
+exists or a source cannot be assessed, so a partial report cannot pass the unattended gate.
+RGB clipping deltas and review reasons remain available alongside the luminance gate.
 """
 
 from __future__ import annotations
@@ -36,31 +37,51 @@ def _cam(path: str, camera: bool) -> dict | None:
     return tm.describe(rgb) if rgb is not None else None
 
 
-def rows_from_sidecars(src_dir: str, out_dir: str, camera: bool = True, thr: dict | None = None) -> list[dict]:
+def _record_error(path: str, exc: Exception, errors: list[dict] | None) -> None:
+    error = {"name": os.path.basename(path), "path": path, "error": f"{type(exc).__name__}: {exc}"}
+    if errors is not None:
+        errors.append(error)
+    print(f"{error['name']} ERROR: {error['error']}", file=sys.stderr)
+
+
+def _review_fields(src: GlobalStatsModel, out: GlobalStatsModel, reason: str) -> dict:
+    before, after = src.rgb_highlight_clip_any, out.rgb_highlight_clip_any
+    return {"src_rgb_highlight_clip_any": float(before),
+            "out_rgb_highlight_clip_any": float(after),
+            "d_rgb_highlight_clip_any": float(after - before), "review_reason": reason}
+
+
+def rows_from_sidecars(src_dir: str, out_dir: str, camera: bool = True, thr: dict | None = None,
+                       errors: list[dict] | None = None) -> list[dict]:
     """Rows for a batch already written by `autoedit run` (reads the sidecars' pre/post stats)."""
     rows: list[dict] = []
     for p in batch.list_images(src_dir):
         stem = os.path.splitext(os.path.basename(p))[0]
         sidecar = os.path.join(out_dir, f"{stem}.autoedit.json")
-        if not os.path.exists(sidecar):
+        try:
+            with open(sidecar) as fh:
+                d = json.load(fh)
+            if not d.get("global_stats") or not d.get("post_edit_stats"):
+                raise ValueError("sidecar is missing source or post-edit stats")
+            pre = GlobalStatsModel(**d["global_stats"])
+            post = GlobalStatsModel(**d["post_edit_stats"])
+            src, out = tm.from_global(pre), tm.from_global(post)
+            row = tm.row_for(os.path.basename(p), src, out, _cam(p, camera), **(thr or {}))
+            row.update(decode_ev=float(d.get("decode_ev", 0.0)), quality_score=d.get("quality_score"),
+                       needs_review=d.get("needs_review"),
+                       exposure=float((d.get("global_settings") or {}).get("exposure", 0.0)),
+                       shadows=float((d.get("global_settings") or {}).get("shadows", 0.0)))
+            row.update(_review_fields(pre, post, d.get("review_reason") or ""))
+        except Exception as exc:  # missing/invalid sidecars must not hide a partial corpus
+            _record_error(p, exc, errors)
             continue
-        with open(sidecar) as fh:
-            d = json.load(fh)
-        if not d.get("global_stats") or not d.get("post_edit_stats"):
-            continue
-        src = tm.from_global(GlobalStatsModel(**d["global_stats"]))
-        out = tm.from_global(GlobalStatsModel(**d["post_edit_stats"]))
-        row = tm.row_for(os.path.basename(p), src, out, _cam(p, camera), **(thr or {}))
-        row.update(decode_ev=float(d.get("decode_ev", 0.0)), quality_score=d.get("quality_score"),
-                   needs_review=d.get("needs_review"),
-                   exposure=float((d.get("global_settings") or {}).get("exposure", 0.0)),
-                   shadows=float((d.get("global_settings") or {}).get("shadows", 0.0)))
         rows.append(row)
     return rows
 
 
 def rows_by_render(src_dir: str, cfg: RunConfig, limit: int | None = None, max_px: int = 1024,
-                   camera: bool = True, thr: dict | None = None, quiet: bool = False) -> list[dict]:
+                   camera: bool = True, thr: dict | None = None, quiet: bool = False,
+                   errors: list[dict] | None = None) -> list[dict]:
     """Rows by rendering each photo in memory on a `max_px` proxy (no files written)."""
     from autoedit.pipeline import Pipeline
 
@@ -74,16 +95,17 @@ def rows_by_render(src_dir: str, cfg: RunConfig, limit: int | None = None, max_p
             img = load_image(p, decode=raw_opts_from(cfg))
             work = downscale_long_edge(img, max_px)
             _, res = pipe.process_one(p, do_apply=True, image=work)
+            src = tm.from_global(res.global_stats)
+            out = tm.from_global(res.post_edit_stats)
+            row = tm.row_for(os.path.basename(p), src, out, _cam(p, camera), **(thr or {}))
+            row.update(decode_ev=float(res.decode_ev), quality_score=res.quality_score,
+                       needs_review=res.needs_review,
+                       exposure=float(res.global_settings.get("exposure", 0.0)),
+                       shadows=float(res.global_settings.get("shadows", 0.0)))
+            row.update(_review_fields(res.global_stats, res.post_edit_stats, res.review_reason))
         except Exception as e:  # one bad photo never aborts the report
-            print(f"[{i}/{len(images)}] {os.path.basename(p)} ERROR: {e}", file=sys.stderr)
+            _record_error(p, e, errors)
             continue
-        src = tm.from_global(res.global_stats)
-        out = tm.from_global(res.post_edit_stats)
-        row = tm.row_for(os.path.basename(p), src, out, _cam(p, camera), **(thr or {}))
-        row.update(decode_ev=float(res.decode_ev), quality_score=res.quality_score,
-                   needs_review=res.needs_review,
-                   exposure=float(res.global_settings.get("exposure", 0.0)),
-                   shadows=float(res.global_settings.get("shadows", 0.0)))
         rows.append(row)
         if not quiet:
             print(f"[{i}/{len(images)}] {os.path.basename(p)}  fg {src['fg_p50']:.2f}→{out['fg_p50']:.2f}"
@@ -95,7 +117,7 @@ def rows_by_render(src_dir: str, cfg: RunConfig, limit: int | None = None, max_p
 
 def print_table(rows: list[dict], summary: dict) -> None:
     hdr = (f"{'photo':30s} {'cat':9s} {'fg src→out':11s} {'bottom src→out':15s} {'dark% src→out':14s} "
-           f"{'+clip':6s} {'EV vs cam':9s} flags")
+           f"{'+clip':6s} {'+RGB':6s} {'EV vs cam':9s} flags / review reason")
     print(hdr)
     for r in rows:
         ev = f"{r['ev_vs_camera']:+.2f}" if "ev_vs_camera" in r else "   -  "
@@ -104,7 +126,8 @@ def print_table(rows: list[dict], summary: dict) -> None:
               f"{r['src_fg_p50']:.2f}→{r['out_fg_p50']:.2f}   "
               f"{r['src_band_bottom_p50']:.2f}→{r['out_band_bottom_p50']:.2f}       "
               f"{100 * r['src_dark_cov']:4.0f}→{100 * r['out_dark_cov']:<4.0f}     "
-              f"{100 * r['d_clip_hi']:+5.1f}% {ev:9s} {flags}")
+              f"{100 * r['d_clip_hi']:+5.1f}% {100 * r.get('d_rgb_highlight_clip_any', 0):+5.1f}% "
+              f"{ev:9s} {flags} {r.get('review_reason', '')}")
     print("\nSummary:")
     for k, v in summary.items():
         print(f"  {k:28s} {v}")
@@ -126,12 +149,13 @@ def main() -> int:
     ap.add_argument("--dark-regress", dest="dark_regress", type=float, default=0.01)
     ap.add_argument("--clip-budget", dest="clip_budget", type=float, default=0.005)
     ap.add_argument("--csv", help="write per-photo rows here")
-    ap.add_argument("--json", help="write {summary, rows} here")
+    ap.add_argument("--json", help="write {summary, rows, errors} here")
     ap.add_argument("--fail-on-regression", dest="fail", action="store_true",
-                    help="exit 1 if any dark_made_darker / bright_pushed_to_clip row exists")
+                    help="exit nonzero for tone regressions or any source that cannot be assessed")
     args = ap.parse_args()
 
     thr = dict(dark_source=args.dark_source, dark_regress=args.dark_regress, clip_budget=args.clip_budget)
+    errors: list[dict] = []
     if args.render:
         kw = {"backend": args.backend}
         if args.raw_mode:
@@ -141,27 +165,29 @@ def main() -> int:
         if args.intensity is not None:
             kw["intensity"] = args.intensity
         rows = rows_by_render(args.src, RunConfig(**kw), limit=args.limit, max_px=args.max_px,
-                              camera=args.camera, thr=thr)
+                              camera=args.camera, thr=thr, errors=errors)
     elif args.out:
-        rows = rows_from_sidecars(args.src, args.out, camera=args.camera, thr=thr)
+        rows = rows_from_sidecars(args.src, args.out, camera=args.camera, thr=thr, errors=errors)
     else:
         ap.error("give --out OUT_DIR (read sidecars) or --render")
-    if not rows:
-        print("no rows (no sidecars found / nothing rendered)", file=sys.stderr)
-        return 2
     summary = tm.summarize(rows)
+    summary.update(expected=len(rows) + len(errors), errors=len(errors), complete=bool(rows) and not errors)
     print_table(rows, summary)
-    if args.csv:
+    if args.csv and rows:
         tm.write_csv(rows, args.csv)
         print(f"wrote {args.csv}")
     if args.json:
         with open(args.json, "w") as fh:
-            json.dump({"summary": summary, "rows": rows}, fh, indent=1, default=float)
+            json.dump({"summary": summary, "rows": rows, "errors": errors}, fh, indent=1, default=float)
         print(f"wrote {args.json}")
+    if not rows:
+        print("no rows (no sidecars found / nothing rendered)", file=sys.stderr)
+        return 2
     bad = summary["dark_made_darker"] + summary["bright_pushed_to_clip"]
-    if args.fail and bad:
+    if args.fail and (bad or errors):
         print(f"\nGATE FAILED: {summary['dark_made_darker']} dark→darker, "
-              f"{summary['bright_pushed_to_clip']} pushed into clipping", file=sys.stderr)
+              f"{summary['bright_pushed_to_clip']} pushed into clipping, "
+              f"{len(errors)} of {summary['expected']} sources could not be assessed", file=sys.stderr)
         return 1
     return 0
 

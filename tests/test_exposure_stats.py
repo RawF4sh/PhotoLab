@@ -116,3 +116,45 @@ def test_region_channel_stats_are_computed_inside_mask():
     assert sky.g_highlight_clip == 1.0
     assert sky.channel_highlight_clip == 1.0
     assert sky.rgb_highlight_recoverable == 1.0
+
+
+def test_headroom_dark_cov_and_spatial_bands():
+    rgb = np.empty((60, 40, 3), np.float32)
+    rgb[:20] = 0.8                                          # bright top third
+    rgb[20:40] = 0.4
+    rgb[40:] = 0.05                                         # dark, unclipped bottom third
+    g, _ = stats.compute(Image(rgb=rgb), {})
+    assert abs(g.band_top_p50 - 0.8) < 0.01 and abs(g.band_mid_p50 - 0.4) < 0.01
+    assert abs(g.band_bottom_p50 - 0.05) < 0.01
+    assert abs(g.dark_cov - 1 / 3) < 0.02
+    assert g.shadow_clip == 0.0                             # dark but NOT clipped — the case shadow_clip misses
+    assert abs(g.lum_p99 - 0.8) < 0.01
+    assert 0.5 < g.headroom_ev < 0.8                        # log2(lin(0.98)/lin(0.8)) ≈ 0.66 stops of room
+    white = np.full((10, 10, 3), 0.99, np.float32)
+    assert stats.compute(Image(rgb=white), {})[0].headroom_ev == 0.0
+
+
+def test_headroom_bounds_the_brightest_channel_even_when_luma_is_dim():
+    from autoedit.edit.ops import exposure
+
+    for channel in range(3):
+        rgb = np.full((20, 20, 3), 0.4, np.float32)
+        rgb[:2, :, channel] = 0.9
+        measured, _ = stats.compute(Image(rgb=rgb), {})
+        # Applying the measured EV reaches the clipping threshold in that channel. A luma
+        # percentile would permit a much larger lift and already clip it to 1.0.
+        at_limit = exposure(rgb, measured.headroom_ev)
+        assert abs(float(at_limit.max()) - 0.98) < 1e-5, channel
+        assert exposure(rgb, measured.headroom_ev + 0.02).max() > 0.98
+
+
+def test_headroom_budget_counts_any_clipped_channel_across_the_frame():
+    rgb = np.full((100, 100, 3), 0.4, np.float32)
+    pixels = rgb.reshape(-1, 3)
+    for channel in range(3):
+        pixels[channel * 30:(channel + 1) * 30, channel] = 0.99
+    measured, _ = stats.compute(Image(rgb=rgb), {})
+    assert measured.highlight_clip == 0.0               # luminance sees no clipped pixels
+    assert measured.channel_highlight_clip < 0.005      # each channel individually fits the budget
+    assert measured.rgb_highlight_clip_any > 0.005      # their union does not
+    assert measured.headroom_ev == 0.0

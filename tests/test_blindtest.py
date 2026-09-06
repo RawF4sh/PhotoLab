@@ -1,9 +1,13 @@
 """Blind-test harness: renders 3 variants/photo, shuffles, and scores picks against the manifest."""
 
 import csv
+import hashlib
 import importlib.util
+import json
 import pathlib
+import shutil
 import sys
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image as PILImage
@@ -108,6 +112,12 @@ def test_rules_ab_mode(tmp_path):
 
     rows = list(csv.DictReader(open(out / "manifest.csv")))
     assert {r["method"] for r in rows} == {"rules_a", "rules_b"}
+    metadata = json.loads((out / "run.json").read_text())
+    configs = metadata["pipelines"]
+    assert configs["rules_a"]["config_files"]["rules_path"]["sha256"] == hashlib.sha256(ra.read_bytes()).hexdigest()
+    assert configs["rules_b"]["config_files"]["rules_path"]["sha256"] == hashlib.sha256(rb.read_bytes()).hexdigest()
+    assert {item["method"] for item in metadata["sidecars"]} == {"rules_a", "rules_b"}
+    assert all((out / item["path"]).exists() for item in metadata["sidecars"])
     s0 = np.asarray(PILImage.open(out / "photo001" / "slot0.jpg"), np.float32)
     s1 = np.asarray(PILImage.open(out / "photo001" / "slot1.jpg"), np.float32)
     assert np.abs(s0 - s1).mean() > 1.0                   # the configured vibrance delta is visible
@@ -243,3 +253,94 @@ def test_n_for_power_is_sane():
     assert 75 <= n65 <= 100                                  # a real 65% edge needs ~90 independent photos
     assert 40 <= bt.n_for_power(0.70) <= 60
     assert bt.n_for_power(0.95) <= 10
+
+
+def test_gallery_retains_pipeline_sidecars_and_public_run_metadata(tmp_path):
+    bt = _load_blindtest()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    source = corpus / "IMG_0101.jpg"
+    _make(str(source), [70, 120, 80])
+    original = source.read_bytes()
+    cfg = bt.make_config(backend="stub").model_copy(update={"api_key": "test-secret-do-not-serialize"})
+    out = tmp_path / "gallery"
+    bt.render(str(corpus), str(out), cfg, seed=4, max_px=160,
+              methods=("baseline", "camera", "autoedit"))
+
+    metadata_text = (out / "run.json").read_text()
+    metadata = json.loads(metadata_text)
+    assert "test-secret-do-not-serialize" not in metadata_text and '"api_key"' not in metadata_text
+    assert metadata["status"] == "complete" and metadata["summary"]["photos"] == 1
+    assert metadata["config"]["quality"] == metadata["render"]["quality"] == 95
+    assert metadata["render"]["methods"] == ["baseline", "camera", "autoedit"]
+    assert metadata["render"]["metrics_scope"] == "whole_frame_before_jpeg_encoding"
+    assert metadata["render"]["batch_consistency"] is False
+    assert metadata["harness_sha256"] == hashlib.sha256(_BT.read_bytes()).hexdigest()
+    assert metadata["sources"][0]["sha256"] == hashlib.sha256(original).hexdigest()
+    assert source.read_bytes() == original
+    rules_metadata = metadata["config_files"]["rules_path"]
+    assert rules_metadata["sha256"] == hashlib.sha256(pathlib.Path(cfg.rules_path).read_bytes()).hexdigest()
+    assert pathlib.Path(rules_metadata["path"]).is_absolute()
+    assert metadata["pipelines"]["autoedit"]["segmenter"]["name"] == "stub"
+
+    manifest = list(csv.DictReader((out / "manifest.csv").open()))
+    autoedit_row = next(row for row in manifest if row["method"] == "autoedit")
+    sidecar_path = f"{autoedit_row['photo']}/slot{autoedit_row['slot']}.autoedit.json"
+    assert metadata["sidecars"] == [{"photo": "photo001", "slot": int(autoedit_row["slot"]),
+                                      "method": "autoedit", "path": sidecar_path}]
+    sidecar = json.loads((out / sidecar_path).read_text())
+    assert sidecar["global_stats"] and sidecar["post_edit_stats"]
+    assert sidecar["region_stats"] and sidecar["post_region_stats"]
+    assert {"needs_review", "quality_score", "review_reason", "warnings", "decode_ev"} <= sidecar.keys()
+    assert "rgb_highlight_clip_any" in sidecar["global_stats"]
+    assert "rgb_highlight_clip_any" in sidecar["post_edit_stats"]
+
+    # Fair comparison metrics remain whole-frame, while the sidecar retains sky-excluded stats.
+    rows = list(csv.DictReader((out / "metrics.csv").open()))
+    assert len(rows) == 3
+    whole_frame = bt.tm.describe(bt.load_image(str(source)).rgb)
+    assert all(abs(float(row["src_fg_p50"]) - whole_frame["fg_p50"]) < 1e-7 for row in rows)
+    assert abs(sidecar["global_stats"]["fg_p50"] - whole_frame["fg_p50"]) > 0.01
+
+
+def test_cli_quality_uses_config_default_and_explicit_override(tmp_path):
+    bt = _load_blindtest()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    _make(str(corpus / "a.jpg"), [70, 120, 80])
+    configs = tmp_path / "configs"
+    shutil.copytree(pathlib.Path(bt.paths.configs_dir()), configs)
+    defaults = configs / "defaults.toml"
+    defaults.write_text(defaults.read_text().replace("quality = 95", "quality = 71"))
+    assert bt.make_config(str(configs)).quality == 71
+
+    for override, expected in ((None, 71), (83, 83)):
+        out = tmp_path / f"quality-{expected}"
+        argv = [str(_BT), str(corpus), str(out), "--configs-dir", str(configs),
+                "--backend", "stub", "--max-px", "160", "--methods", "baseline,camera,autoedit"]
+        if override is not None:
+            argv += ["--quality", str(override)]
+        with patch.object(sys, "argv", argv), patch.object(bt, "save_image", wraps=bt.save_image) as save:
+            assert bt.main() == 0
+            assert save.call_count == 3
+            assert all(call.args[3] == expected for call in save.call_args_list)
+        metadata = json.loads((out / "run.json").read_text())
+        assert metadata["config"]["quality"] == expected
+        assert metadata["render"]["quality"] == expected
+        assert metadata["pipelines"]["autoedit"]["config"]["quality"] == expected
+
+
+def test_no_metrics_still_retains_pipeline_results_and_explicit_api_quality(tmp_path):
+    bt = _load_blindtest()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    _make(str(corpus / "a.jpg"), [70, 120, 80])
+    cfg = bt.make_config(backend="stub")
+    out = tmp_path / "gallery"
+    bt.render(str(corpus), str(out), cfg, max_px=160, quality=86, metrics=False)
+    metadata = json.loads((out / "run.json").read_text())
+    assert metadata["config"]["quality"] == 95 and metadata["render"]["quality"] == 86
+    assert metadata["render"]["metrics"] is False
+    assert not (out / "metrics.csv").exists()
+    assert len(metadata["sidecars"]) == 1
+    assert (out / metadata["sidecars"][0]["path"]).exists()

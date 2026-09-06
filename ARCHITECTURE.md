@@ -269,10 +269,14 @@ brief/thumb into it.
 ## 8. Edit ops (`edit/ops.py`) — the frozen order
 
 `apply_ops(rgb, settings)` runs ops in a **frozen order**, each gated on a non-zero amount. An
-empty/all-zero settings dict is a **strict no-op** (a test guards identity):
+empty/all-zero settings dict is a **strict no-op** (a test guards identity). White balance,
+exposure and the **highlight knee** (`highlight_rolloff`, a soft shoulder in linear light whose
+asymptote is the 0.98 clip level) run as ONE linear pass (`ops.light`) — the knee is the only
+place a lift can compress into white instead of clipping, which is what the camera's own tone
+curve does and a bare multiply cannot:
 
 ```
-white balance → exposure → tone(highlights/shadows/whites/blacks) → contrast → curve
+white balance → exposure (+ highlight knee) → tone(highlights/shadows/whites/blacks) → contrast → curve
   → dehaze → clarity → vibrance/saturation → targeted HSL → color grade → sharpen
 ```
 
@@ -497,7 +501,7 @@ autoedit styles | presets                  # list profiles
 ## 18. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable.
-**293 tests** currently green. Any new edit op needs a math test; rule changes need a golden test —
+**322 tests** currently green. Any new edit op needs a math test; rule changes need a golden test —
 percentile/WB rule goldens assert BOTH the new adaptive behavior on populated stats AND exact
 byte-for-byte reproduction of the pre-retune output on zero-filled stats. Coverage includes:
 identity no-op, each op's math, dehaze (identity + real haze reduction), the `veil` vs legacy

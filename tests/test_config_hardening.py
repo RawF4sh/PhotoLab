@@ -28,7 +28,8 @@ def test_quality_gate_thresholds_are_overridable():
     _, needs_default, _, warn_default = gates.assess(pre, post)
     assert warn_default and "highlight" in warn_default[0]      # 4% clip > 2% default → warned
     score, needs_loose, _, warn_loose = gates.assess(pre, post, thr={"highlight_clip": 0.10,
-                                                                     "review_highlight": 0.20})
+                                                                  "review_highlight": 0.20,
+                                                                  "clip_budget": 0.10})
     assert warn_loose == [] and not needs_loose and score == 1.0  # loosened via data, no code change
 
 

@@ -4,7 +4,7 @@
 style = "natural"          # styles.toml profile: look + default concepts + brief
 intensity = 0.8
 decider = "rules"          # "rules" | "llm"
-emit = "baked"             # "baked" | "editable" | "both"
+emit = "baked"             # only "baked" exists (an editable XMP hand-off is not implemented)
 # look/preset/concepts/prompt are unset here — the style supplies look + concepts;
 # override any of them per-run via CLI flags (--look, --preset, --concepts, --prompt).
 # palette/palette_strength are also unset by default; set --palette cool_blue or type a
@@ -14,6 +14,21 @@ emit = "baked"             # "baked" | "editable" | "both"
 backend = "stub"           # "stub" (no GPU, heuristic) | "sam3"
 device = "auto"            # auto -> cuda > mps > cpu
 analysis_long_edge = 1536  # segmentation/stats resolution; apply is full-res
+
+[decode]
+# RAW development (camera RAW only; JPEG/TIFF ignore this block). "none" = the historical libraw
+# render (camera WB, no auto-bright, gamma only) — measured ~1.4–1.8 EV under the camera's own
+# JPEG on real CR2s. Candidates, ranked by `scripts/raw_benchmark.py` (a benchmark never flips
+# this default by itself):
+#   libraw_auto          libraw's 1%-clip histogram stretch
+#   preview_ev           lift the linear demosaic to the embedded camera preview's median
+#   preview_ev_headroom  same, capped so ≤ clip_budget of pixels reach white (recommended shape)
+#   tone_target          ignore the camera; put the median at tone_target_p50, headroom-capped
+raw_mode = "none"
+max_ev = 2.5               # never lift more than this many stops at decode
+clip_budget = 0.005        # headroom cap: fraction of pixels allowed to reach white
+tone_target_p50 = 0.40     # tone_target mode: median luma target (gamma-encoded)
+fallback_ev = 1.4          # preview modes when the RAW carries no preview (corpus median gap)
 
 [output]
 format = "jpeg"            # "jpeg" | "tiff"

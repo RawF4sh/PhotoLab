@@ -64,7 +64,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         try:
             out_rgb, result = pipeline.process_one(path, do_apply=do_apply,
                                                    exposure_bias=bias, batch_group=gid)
-            if do_apply and out_rgb is not None and cfg.emit in ("baked", "both"):
+            if do_apply and out_rgb is not None:
                 emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
             emit.write_sidecar(result, sidecar)
             processed += 1

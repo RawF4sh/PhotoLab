@@ -16,6 +16,9 @@ baseline is the Phase-A gate; beating the camera is the honest pro bar for RAW c
 
 Every gallery also writes `metrics.csv` — the objective tone numbers (tonemetrics) for every
 variant next to the blind picks — so a win can be checked against what actually moved.
+`run.json` records the resolved config, config/source hashes and render settings. Pipeline
+variants retain `photoNNN/slotN.autoedit.json` with mask-aware statistics and review decisions;
+`metrics.csv` continues to compare all variants using the same whole-frame measurements.
 
 The baseline is a deliberately decent region-blind auto-correction — the bar AutoEdit must clear.
 It lives here (eval scaffolding), NOT in the product rules.
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -32,12 +36,13 @@ import random
 import re
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from autoedit import batch, paths, stats, tonemetrics as tm  # noqa: E402
+from autoedit import __version__, batch, emit, paths, stats, tonemetrics as tm  # noqa: E402
 from autoedit.cli import load_run_config  # noqa: E402
 from autoedit.edit.ops import apply_ops  # noqa: E402
 from autoedit.imageio import (camera_preview, downscale_long_edge, load_image, luma,  # noqa: E402
@@ -50,7 +55,7 @@ STRATA = ("dark", "mid", "bright")
 
 
 def make_config(configs_dir=None, backend=None, device=None, style=None, intensity=None,
-                raw_mode=None):
+                raw_mode=None, quality=None):
     """Build a RunConfig via the normal CLI loader, with everything defaulting to None so we only
     override what the harness exposes (the loader broke on the old stub's partial namespace)."""
     ns = argparse.Namespace()
@@ -65,6 +70,7 @@ def make_config(configs_dir=None, backend=None, device=None, style=None, intensi
     ns.style = style
     ns.intensity = intensity
     ns.raw_mode = raw_mode
+    ns.quality = quality
     return load_run_config(ns)
 
 
@@ -127,15 +133,56 @@ def baseline_settings(g) -> dict:
     return s
 
 
+def _file_hash(path: str) -> str:
+    with open(path, "rb") as fh:
+        return hashlib.file_digest(fh, "sha256").hexdigest()
+
+
+def _config_metadata(cfg) -> dict:
+    # RunConfig excludes api_key itself; explicitly exclude it here as well. Do not capture
+    # environment variables or raw argv, which can contain credentials from other callers.
+    public = cfg.model_dump(mode="json", exclude={"api_key"})
+    files = {}
+    for key, value in public.items():
+        if key.endswith("_path") and value:
+            path = os.path.abspath(value)
+            files[key] = {"path": path, "sha256": _file_hash(path) if os.path.isfile(path) else None}
+    return {"config": public, "config_files": files}
+
+
+def _segmenter_metadata(pipe) -> dict:
+    segmenter = pipe.segmenter
+    while hasattr(segmenter, "inner"):
+        segmenter = segmenter.inner
+    result = {key: getattr(segmenter, key) for key in ("name", "device", "model_id")
+              if hasattr(segmenter, key)}
+    # Available after SAM's first inference; this does not load torch or contact Hugging Face.
+    model_config = getattr(getattr(segmenter, "_model", None), "config", None)
+    revision = getattr(model_config, "_commit_hash", None)
+    if revision:
+        result["revision"] = revision
+    return result
+
+
+def _write_run_metadata(out: str, metadata: dict) -> None:
+    path = os.path.join(out, "run.json")
+    with open(path + ".part", "w") as fh:
+        json.dump(metadata, fh, indent=2)
+        fh.write("\n")
+    os.replace(path + ".part", path)
+
+
 def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
-           max_px: int = 1600, quality: int = 88, methods: tuple[str, ...] = METHODS,
+           max_px: int = 1600, quality: int | None = None, methods: tuple[str, ...] = METHODS,
            pipelines: dict | None = None, per_stratum: int | None = None, burst_gap: int = 2,
            metrics: bool = True) -> dict:
     """Render each photo's variants (`methods`), shuffle slots, write JPEGs + manifest.csv +
     index.html (+ metrics.csv). `methods` defaults to the classic three; ("baseline","autoedit")
     isolates regional-vs-global, ("camera","autoedit") is the honest RAW bar, ("rules_a","rules_b")
     with a `pipelines` map is the config-A-vs-B tuning gate. `per_stratum` picks that many photos
-    from each source-brightness tercile instead of the first `limit`. Returns a summary dict."""
+    from each source-brightness tercile instead of the first `limit`. `quality=None` uses the
+    resolved config's JPEG quality. Returns a summary dict."""
+    quality = cfg.quality if quality is None else quality
     images = batch.list_images(corpus)
     if not images:
         raise SystemExit(f"no supported images in {corpus}")
@@ -155,6 +202,24 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
     if "autoedit" in methods and "autoedit" not in pipes:
         pipes["autoedit"] = Pipeline.build(cfg)
 
+    run_metadata = {
+        "schema_version": 1, "status": "running", "started_at": datetime.now(timezone.utc).isoformat(),
+        "engine_version": __version__, "harness_sha256": _file_hash(__file__),
+        **_config_metadata(cfg),
+        "render": {"methods": list(methods), "seed": seed, "limit": limit,
+                   "max_px": max_px, "quality": quality, "format": "jpeg",
+                   "per_stratum": per_stratum, "burst_gap": burst_gap, "metrics": metrics,
+                   "batch_consistency": False, "metrics_scope": "whole_frame_before_jpeg_encoding"},
+        "pipelines": {method: {**_config_metadata(pipe.cfg), "segmenter": _segmenter_metadata(pipe)}
+                      for method, pipe in pipes.items()
+                      if method in methods},
+        "sources": [{"photo": f"photo{i:03d}", "path": os.path.abspath(path),
+                     "sha256": _file_hash(path), "group": groups[path], "stratum": strata.get(path, "")}
+                    for i, path in enumerate(images, start=1)],
+        "sidecars": [],
+    }
+    _write_run_metadata(out, run_metadata)
+
     manifest: list[tuple] = []   # (photo_id, slot_index, method, name, group, stratum)
     photos_json: list[dict] = []
     metric_rows: list[dict] = []
@@ -173,15 +238,15 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
         def variant(method):                             # build only the methods we need
             nonlocal camera_missing
             if method == "unedited":
-                return work.rgb
+                return work.rgb, None
             if method == "baseline":
-                return apply_ops(work.rgb, baseline_settings(g))
+                return apply_ops(work.rgb, baseline_settings(g)), None
             if method == "camera":
                 if cam_rgb is None:                      # JPEG source / no preview → the source itself
                     camera_missing += 1
-                    return work.rgb
-                return cam_rgb
-            return pipes[method].process_one(path, do_apply=True, image=work)[0]
+                    return work.rgb, None
+                return cam_rgb, None
+            return pipes[method].process_one(path, do_apply=True, image=work)
 
         order = list(methods)
         rng.shuffle(order)                                # per-photo blind shuffle
@@ -189,9 +254,14 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
         src_d = tm.describe(work.rgb) if metrics else None
         cam_d = tm.describe(cam_rgb) if (metrics and cam_rgb is not None) else None
         for slot, method in enumerate(order):
-            rgb = variant(method)
+            rgb, result = variant(method)
             fname = f"slot{slot}.jpg"
             save_image(rgb, os.path.join(pdir, fname), "jpeg", quality)
+            if result is not None:
+                sidecar = f"{pid}/slot{slot}.autoedit.json"
+                emit.write_sidecar(result, os.path.join(out, sidecar))
+                run_metadata["sidecars"].append({"photo": pid, "slot": slot, "method": method,
+                                                 "path": sidecar})
             manifest.append((pid, slot, method, os.path.basename(path), groups[path], strata.get(path, "")))
             slots.append(f"{pid}/{fname}")
             if metrics:
@@ -219,12 +289,21 @@ def render(corpus: str, out: str, cfg, seed: int = 7, limit: int | None = None,
               f"'camera' slot is the unedited source.", file=sys.stderr)
 
     _write_html(os.path.join(out, "index.html"), photos_json)
+    summary = {"photos": len(photos_json), "out": out,
+               "groups": len(set(groups[p] for p in images)), "camera_missing": camera_missing}
+    run_metadata.update(status="complete", completed_at=datetime.now(timezone.utc).isoformat(),
+                        summary=summary)
+    for method, pipe in pipes.items():
+        if method in run_metadata["pipelines"]:
+            # Retain the config hashes captured before rendering; only runtime backend metadata
+            # changes when SAM's lazy model load reveals its revision.
+            run_metadata["pipelines"][method]["segmenter"] = _segmenter_metadata(pipe)
+    _write_run_metadata(out, run_metadata)
     print(f"\nWrote {len(photos_json)} photos × {len(methods)} variants ({'+'.join(methods)}) to {out}/"
           f" ({len(set(groups[p] for p in images))} burst groups)")
     print(f"Open {os.path.join(out, 'index.html')} to rank blind, save results.csv, then:")
     print(f"  python3 scripts/blindtest.py --score {os.path.join(out, 'results.csv')}")
-    return {"photos": len(photos_json), "out": out, "groups": len(set(groups[p] for p in images)),
-            "camera_missing": camera_missing}
+    return summary
 
 
 def _binomial_p(wins_a: int, wins_b: int) -> float:
@@ -544,6 +623,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--max-px", dest="max_px", type=int, default=1600)
+    ap.add_argument("--quality", type=int, default=None,
+                    help="JPEG quality for every variant (default: resolved output config, currently 95)")
     ap.add_argument("--two-way", dest="two_way", action="store_true",
                     help="AutoEdit vs baseline only (drop 'unedited') — the sharpest regional-vs-global gate")
     ap.add_argument("--vs-camera", dest="vs_camera", action="store_true",
@@ -576,9 +657,9 @@ def main() -> int:
 
     cfg = make_config(args.configs_dir or paths.configs_dir(), backend=args.backend,
                       device=args.device, style=args.style, intensity=args.intensity,
-                      raw_mode=args.raw_mode)
+                      raw_mode=args.raw_mode, quality=args.quality)
     common = dict(seed=args.seed, limit=args.limit, max_px=args.max_px, per_stratum=args.stratify,
-                  burst_gap=args.burst_gap, metrics=args.metrics)
+                  burst_gap=args.burst_gap, metrics=args.metrics, quality=args.quality)
 
     if args.rules_a or args.configs_a:
         # Config-A-vs-config-B gate: same engine, two rule sets (or two whole configs dirs, which
@@ -588,9 +669,11 @@ def main() -> int:
 
         if args.configs_a:
             cfg_a = make_config(args.configs_a, backend=args.backend, device=args.device,
-                                style=args.style, intensity=args.intensity, raw_mode=args.raw_mode)
+                                style=args.style, intensity=args.intensity, raw_mode=args.raw_mode,
+                                quality=args.quality)
             cfg_b = make_config(args.configs_b, backend=args.backend, device=args.device,
-                                style=args.style, intensity=args.intensity, raw_mode=args.raw_mode)
+                                style=args.style, intensity=args.intensity, raw_mode=args.raw_mode,
+                                quality=args.quality)
         else:
             cfg_a = cfg.model_copy(update={"rules_path": args.rules_a,
                                            **({"looks_path": args.looks_a} if args.looks_a else {})})

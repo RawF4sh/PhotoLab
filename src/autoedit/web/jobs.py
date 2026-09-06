@@ -83,7 +83,8 @@ def _safety(result) -> tuple[str, str]:
 
 
 def start(input_dir, files, out_dir, opts, configs_dir=None) -> Job:
-    srcs = list(files) if files else _list_images(input_dir)
+    # An omitted selection means scan the folder; an explicit [] means no photos selected.
+    srcs = list(files) if files is not None else _list_images(input_dir)
     if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
         raise ValueError("no supported images found to process")
     if not out_dir:

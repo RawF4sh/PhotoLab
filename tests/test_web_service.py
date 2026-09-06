@@ -22,6 +22,102 @@ def test_make_cfg_applies_options():
     assert cfg.concepts == ["sky", "skin"]
     assert cfg.intensity == 0.5
     assert cfg.styles_path.endswith("styles.toml")
+    assert service.make_cfg({"concepts": []}).concepts == []
+    assert service.make_cfg({}).concepts is None
+
+
+def test_preview_and_export_respect_concepts_and_real_mask_footprints(tmp_path):
+    """A named region's overlay matches arbitration; disabling it survives export and re-preview.
+
+    Use a deterministic segmenter to verify geometry without GPU weights or model accuracy.
+    """
+    from unittest.mock import patch
+    from autoedit.pipeline import Pipeline
+    from autoedit.segment.base import RegionMask
+
+    rgb = np.full((80, 120, 3), [90, 110, 130], np.uint8)
+    p = tmp_path / "regions.png"
+    PILImage.fromarray(rgb).save(p)
+    sky = np.zeros((80, 120), bool); sky[:40] = True
+    jacket = np.zeros_like(sky); jacket[20:70, 30:90] = True
+
+    class Segmenter:
+        calls = []
+
+        def segment(self, image, concepts):
+            self.calls.append(list(concepts))
+            masks = {"sky": sky, "jacket": jacket}
+            return [RegionMask(name=name, mask=masks[name], score=0.99,
+                               coverage=float(masks[name].mean()))
+                    for name in concepts if name in masks]
+
+    seg = Segmenter()
+
+    def build(cfg):
+        pipe = Pipeline.build(cfg)
+        pipe.segmenter = seg
+        return pipe
+
+    opts = {"backend": "stub", "concepts": ["sky", "jacket", "ghost"], "compose": False}
+    with patch.object(service, "build_pipeline", build):
+        preview = service.preview(str(p), opts)
+        assert len(seg.calls) == 1  # overlays must reuse this segmentation, not invoke another pass
+        assert [c["name"] for c in preview["result"]["concepts"]] == opts["concepts"]
+        assert not preview["result"]["concepts"][-1]["present"]
+        masks = {}
+        for overlay in preview["mask_overlays"]:
+            data = base64.b64decode(overlay["alpha"].split(",", 1)[1])
+            mask = np.asarray(PILImage.open(io.BytesIO(data)))[..., 3] > 0
+            assert mask.shape == sky.shape
+            assert abs(mask.mean() - overlay["coverage"]) < 1e-8
+            masks[overlay["name"]] = mask
+        assert set(masks) == {"sky", "jacket"}
+        assert not (masks["sky"] & masks["jacket"]).any()
+        assert np.array_equal(masks["sky"] | masks["jacket"], sky | jacket)
+        assert not masks["jacket"][0, 0] and masks["jacket"][60, 60]
+
+        opts["concepts"] = ["sky"]
+        enabled = service.preview(str(p), opts)
+        exported = service.run_one(str(p), str(tmp_path / "out"), opts)
+        assert [c["name"] for c in exported["result"]["concepts"]] == ["sky"]
+        assert [m["name"] for m in enabled["mask_overlays"]] == ["sky"]
+        assert exported["result"]["masks"] == enabled["result"]["masks"]
+
+        opts["concepts"] = []
+        disabled = service.preview(str(p), opts)
+        exported = service.run_one(str(p), str(tmp_path / "disabled"), opts)
+        assert disabled["mask_overlays"] == []
+        for result in (disabled["result"], exported["result"]):
+            assert result["concepts"] == [] and result["masks"] == []
+        assert [] not in seg.calls  # no model inference when every region is disabled
+
+
+def test_raw_preview_and_export_share_development(tmp_path):
+    """Simulate a RAW decoder with distinct modes; compare pixels and decisions across paths."""
+    from unittest.mock import patch
+    from autoedit import pipeline, imageio
+
+    p = tmp_path / "camera.cr2"
+    p.write_bytes(b"fake raw decoded by the test seam")
+    calls = []
+
+    def decode(path, *, decode=None):
+        mode = (decode or {}).get("raw_mode", "none")
+        calls.append(mode)
+        value, ev = (0.5, 1.25) if mode == "preview_ev_headroom" else (0.2, 0.0)
+        return imageio.Image(rgb=np.full((64, 96, 3), value, np.float32),
+                             path=path, decode_ev=ev)
+
+    opts = {"backend": "stub", "raw_mode": "preview_ev_headroom", "concepts": []}
+    written = []
+    with patch.object(service, "load_image", decode), patch.object(pipeline, "load_image", decode), \
+            patch.object(service.emit, "write_image", lambda rgb, *args: written.append(rgb.copy())):
+        preview = service.preview(str(p), opts)
+        exported = service.run_one(str(p), str(tmp_path / "out"), opts)
+    assert calls == ["preview_ev_headroom", "preview_ev_headroom"]
+    assert preview["result"]["decode_ev"] == exported["result"]["decode_ev"] == 1.25
+    assert preview["result"]["global_settings"] == exported["result"]["global_settings"]
+    assert preview["after"] == service._img_b64(written[0], 2560, fmt="webp")
 
 
 def test_list_styles_and_presets():

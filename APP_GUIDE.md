@@ -98,12 +98,18 @@ applied at native resolution with edge-aware (guided-filter) mask feathering.
   `snow` region when present, else bright near-neutral pixels. Corrects blue/overcast casts up to
   a bounded amount; the correction fades to zero as the scene's measured warmth rises, so
   golden-hour light is read as a subject, never neutralized as a cast.
+- **Highlight headroom** — exposure, global contrast and positive whites use the measured
+  near-white tail of each pixel's brightest RGB channel, so luminance cannot hide channel clipping.
+  Contrast fades below one stop of headroom so bright snow, clouds and backgrounds keep detail
+  through the finishing pass. Positive whites use the headroom remaining after the planned
+  exposure lift, including intensity, so both adjustments share one budget. This rule applies
+  to people, landscape and other scenes; negative highlight recovery stays active.
 - **Reference** (§4) and **Learned mode** (§7).
 
 ### Edit ops (frozen order, `edit/ops.py`)
 
-`white balance → exposure → tone → contrast → curve → dehaze → clarity → vibrance/saturation →
-targeted HSL → color grade → sharpen`. An empty settings dict is a strict no-op. Notable:
+`white balance → exposure (+ highlight knee) → tone → contrast → curve → dehaze → clarity →
+vibrance/saturation → targeted HSL → color grade → sharpen`. An empty settings dict is a strict no-op. Notable:
 
 - **Real dehaze** — physical dark-channel prior (He et al.): estimate airlight, recover transmission,
   refine edge-aware with the guided filter, invert the scattering model, blend by amount. Tapers on
@@ -126,10 +132,17 @@ targeted HSL → color grade → sharpen`. An empty settings dict is a strict no
   darker, or it is flagged for review. Never an absolute brightness target (night frames left alone
   pass); a prompt containing a `preserve_terms` word ("moody", "night", …) opts out.
   `scripts/tone_report.py` runs the same check over a whole folder (dark→darker, pushed-into-clipping,
-  distance to the camera render) as an unattended gate.
+  distance to the camera render) as an unattended gate. With `--fail-on-regression`, missing or
+  failed photos make the run fail even when all successfully measured photos pass. Reports also
+  retain RGB clipping deltas, review reasons and expected/completed counts.
 - **Post-edit assessment** — `quality_score`, `needs_review`, `warnings`, measured on the *edited*
   output. Thresholds are data (`rules.toml [quality_gate]`). Drives the review queue and variant
   scoring.
+- **Added-clipping gate** — more than 0.5 percentage points of new highlight clipping triggers
+  review even below the absolute clipping thresholds. It compares source and output luminance
+  clipping and the fraction with any RGB channel clipped, so single-channel damage is visible.
+  The budget and score penalty live in `rules.toml [quality_gate]`; the warning records before,
+  after and increase. Preserving a dark exposure does not disable this check.
 
 ### Shoot consistency (`consistency.py`)
 
@@ -253,13 +266,22 @@ no build step) — a Lightroom/Capture One-shaped editor.
   **Dataset** · Run batch · Settings.
 - **Filmstrip (left):** real thumbnails, RAW+JPEG **pairs collapsed** into one row (edit a single
   chosen source, toggle RAW⇄JPEG), per-photo **checkboxes** to run a subset.
-- **Stage (center):** high-res before/after with a draggable split, **Variants** button, mask overlay.
+- **Stage (center):** high-res before/after with a draggable split, **Variants** button, and a mask
+  overlay from the same segmentation/overlap arbitration used by the preview. Colors match the
+  Concepts list; footprints are shown before full-resolution edge feathering.
   Previews are **full-resolution, lossless WebP** (pixel-exact — no banding, smaller than PNG), on a
   manual "regenerate" flow.
 - **Develop panel (right):** Style · Intensity · **Look intent** (+ chips) · **Palette** (+ strength) ·
-  **Reference** (+ strength) · Concepts · Adjustments · Regions · Why.
+  **Reference** (+ strength) · Concepts · Adjustments · Regions · Why. Add a named concept or toggle
+  its inclusion; these choices persist across photos and are sent to preview and batch. “Not found”
+  means the enabled concept was absent in that photo; “Off” excludes it. Turning every concept off
+  disables region edits while global edits still apply. Changes require a new preview.
 - **Settings:** output format (JPEG / 16-bit TIFF) · batch consistency · **Edit engine** (Rules /
-  Learned) + recipe model.
+  Learned) + recipe model · **RAW development**. Preview, variants, and export use the selected RAW
+  mode; Standard remains the default. A development change invalidates cached segmentation for
+  the changed pixels.
+- **Batch selection:** newly opened photos start checked. **None** clears the selection and disables
+  Run; **All** selects every photo. An explicitly empty API `files` list never falls back to the folder.
 - **Modals:** Run drawer (live batch progress) · **Review** (keep/reject + labels) · **Cull** ·
   **Dataset** · **Variants**.
 
@@ -341,7 +363,7 @@ autoedit doctor | presets | styles
 ## 14. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable —
-**293 tests** across 50 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`). Coverage: each edit op's math, identity no-op, real
+**322 tests** across 51 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`). Coverage: each edit op's math, identity no-op, real
 dehaze, OKLab palette (direction / neutral protection / gamut / auto-grade restraint), banding
 detector + dither + sidecar consistency, segmentation cache, RAW+JPEG grouping, EXIF orientation
 (all 8 values), decode robustness (grayscale/RGBA/CMYK/16-bit), the `veil` atmospheric-haze
@@ -352,6 +374,14 @@ batch consistency (+ toggle), culling, review labels (+ crash recovery), dataset
 re-enforcement), recipe train/predict + learned fallback, LLM merge clamping, variant scoring,
 atomic emit + collision de-dup, security/trust boundary, and the blind-test A/B harness
 (traversal / symlink / DNS-rebinding / secret-leak), config hardening, and the web service.
+
+For visual evaluation, `scripts/blindtest.py --methods baseline,camera,autoedit --stratify 8`
+selects eight images from each source-brightness third and shuffles three versions per photo.
+The gallery uses the configured JPEG quality (95 by default; override with `--quality`), writes
+`run.json` with public config, config/source hashes and actual backend details, and keeps pipeline
+sidecars beside their image slots. `metrics.csv` measures every version over the whole frame for
+comparison; sidecars retain SAM-aware foreground/region stats and RGB review decisions. A gallery
+render at 1600px is a visual comparison, not proof of full-resolution batch/export behavior.
 
 **Definition of done** per change: `tests/run_all.py` green; a stub corpus run
 (`autoedit run ./test-corpus ./out --backend stub`) completes with sidecars + manifest; configs/docs

@@ -68,6 +68,19 @@ def test_distinct_images_do_not_share_cache():
     assert spy.calls == [["sky"], ["sky"]]               # different paths → both segmented
 
 
+def test_changed_development_at_the_same_path_is_resegmented():
+    spy = SpySegmenter()
+    cache = CachingSegmenter(spy)
+    original = _img()
+    developed = _img()
+    developed.rgb[:] = 0.5
+    cache.segment(original, ["sky"])
+    cache.segment(developed, ["sky"])
+    cache.segment(developed, ["sky"])
+    cache.segment(original, ["sky"])
+    assert spy.calls == [["sky"], ["sky"]]
+
+
 def test_pathless_image_bypasses_cache():
     spy = SpySegmenter()
     cache = CachingSegmenter(spy)

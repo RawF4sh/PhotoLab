@@ -43,6 +43,9 @@ def test_concept_resolution_priority():
     # explicit concepts win
     pipe.cfg.concepts = ["foliage"]
     assert pipe.concepts_for(style) == ["foliage"]
+    # Explicitly turning every region off must not restore the style's defaults.
+    pipe.cfg.concepts = []
+    assert pipe.concepts_for(style) == []
     # then preset
     pipe.cfg.concepts = None
     pipe.cfg.preset = "wedding"

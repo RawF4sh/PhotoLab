@@ -29,7 +29,7 @@ class RunConfig(BaseModel):
     style: str = "natural"  # styles.toml profile: look + default concepts + brief
     prompt: str | None = None  # free-text intent, combined with the style brief for the LLM
     preset: str | None = None  # concept-set override (concepts.toml); wins over the style's set
-    concepts: list[str] | None = None  # explicit concept override; wins over preset
+    concepts: list[str] | None = None  # None uses style/preset; [] explicitly disables region editing
     look: str | None = None  # magnitude profile override; defaults to the style's look
     intensity: float = Field(default=0.8, ge=0.0, le=2.0)
     palette: str | None = None  # palettes.toml colour-grade ("cool_blue"…); None → infer from prompt / off
@@ -53,6 +53,15 @@ class RunConfig(BaseModel):
     llm_budget_usd: float = Field(default=0.0, ge=0.0)
     llm_thumb_px: int = Field(default=512, ge=64, le=1024)
 
+    # RAW development (imageio._decode_raw). "none" is today's libraw render and stays the
+    # default; the other modes are benchmark candidates (scripts/raw_benchmark.py) — a benchmark
+    # may recommend one, it never flips this default by itself.
+    raw_mode: Literal["none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"] = "none"
+    raw_max_ev: float = Field(default=2.5, ge=0.0, le=5.0)          # never lift more than this
+    raw_clip_budget: float = Field(default=0.005, ge=0.0, le=0.1)   # fraction allowed to reach white
+    raw_tone_target_p50: float = Field(default=0.40, gt=0.0, lt=1.0)  # tone_target: median (gamma)
+    raw_fallback_ev: float = Field(default=1.4, ge=0.0, le=5.0)     # preview modes w/o a preview
+
     # segmentation
     backend: Literal["stub", "sam3"] = "stub"
     device: str = "auto"
@@ -61,7 +70,7 @@ class RunConfig(BaseModel):
     # output
     out_format: Literal["jpeg", "jpg", "tiff"] = "jpeg"
     quality: int = Field(default=95, ge=1, le=100)  # higher q preserves the anti-banding dither (TIFF stays lossless)
-    emit: Literal["baked", "editable", "both"] = "baked"
+    emit: Literal["baked"] = "baked"  # "editable" (XMP hand-off) was accepted but never implemented; removed until it exists
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
     vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff
     sharpen: bool = True  # output sharpening (unsharp mask); off → no sharpen ops applied
@@ -151,6 +160,14 @@ class GlobalStatsModel(BaseModel):
     wb_temp_correction: float = 0.0
     wb_tint_correction: float = 0.0
     wb_confidence: float = 0.0
+    # Tone-report signals (dark-RAW diagnosis): highlight headroom, darkness coverage, and
+    # spatial bands so a sidecar shows WHERE brightness moved, not just the global mean.
+    lum_p99: float = 0.0
+    headroom_ev: float = 0.0        # stops before p99.5 of per-pixel max(R,G,B) reaches white
+    dark_cov: float = 0.0           # fraction of pixels with luma < 0.10 (dark, not clipped)
+    band_top_p50: float = 0.0       # median luma of the top / middle / bottom thirds
+    band_mid_p50: float = 0.0
+    band_bottom_p50: float = 0.0
     # Histogram-style per-channel exposure stats. These catch color-channel clipping that luma
     # alone can miss, e.g. a red channel pinned in clouds while the overall luminance still looks OK.
     r_shadow_clip: float = 0.0
@@ -195,6 +212,8 @@ class Result(BaseModel):
     notes: list[str] = Field(default_factory=list)
     # ── post-edit safety / explainability (measured on the EDITED output) ──
     post_edit_stats: GlobalStatsModel | None = None  # stats recomputed after apply (not source)
+    post_region_stats: list[RegionStatsModel] = Field(default_factory=list)  # same masks, edited px
+    decode_ev: float = 0.0          # RAW development lift applied at decode (0 for "none"/non-RAW)
     quality_score: float = 1.0      # naturalness 0..1 from the post-edit gate
     needs_review: bool = False      # output tripped a safety threshold → human should look
     review_reason: str = ""         # why it needs review (clipping/oversaturation/…)

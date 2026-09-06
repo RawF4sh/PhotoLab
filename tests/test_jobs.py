@@ -72,6 +72,17 @@ def test_start_on_empty_dir_raises(tmp_path):
         jobs.start(str(d), None, str(tmp_path / "o"), {"backend": "stub"})
 
 
+def test_explicit_empty_selection_does_not_process_the_folder(tmp_path):
+    import pytest
+
+    d = tmp_path / "in"; d.mkdir()
+    _img(d / "a.jpg")
+    out = tmp_path / "out"
+    with pytest.raises(ValueError):
+        jobs.start(str(d), [], str(out), {"backend": "stub"})
+    assert not out.exists()
+
+
 def test_control_is_noop_on_finished_job(tmp_path):
     d = tmp_path / "in"; d.mkdir()
     _img(d / "a.jpg")
