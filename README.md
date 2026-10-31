@@ -13,8 +13,12 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
-<!-- TODO(launch): replace with a real before/after GIF — this is the product page. -->
-<p align="center"><i>[ before / after demo GIF goes here ]</i></p>
+<p align="center"><a href="https://photolab.fridshtand.ai">Photo Lab — demonstrations and editing comparisons</a></p>
+
+Photo Lab presents several editing approaches. This repository contains AutoEdit's local
+rules pipeline and optional Anthropic refinement; the site's Gemini experiments are a
+separate workflow. The public source does not include the comparison photographs, private
+evaluation datasets, API credentials, or model weights.
 
 ---
 
@@ -103,6 +107,12 @@ anywhere. The optional LLM decider (`--decider llm`) is **off unless you opt in*
 provider and bills **your** key per photo — full-resolution pixels never leave your machine.
 Without consent or a key it transparently falls back to the local rules. Run `autoedit doctor`
 to see your current status.
+
+Studio is a local application. Keep its default loopback address; the Photo Lab website
+links to this project and does not expose Studio or your filesystem. Generated images can
+retain source metadata, and sidecars can contain local paths. Review and strip private
+metadata before sharing exports. See [SECURITY.md](SECURITY.md) for reporting and publishing
+guidance.
 
 ## Configure (no code changes)
 

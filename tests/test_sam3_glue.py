@@ -6,6 +6,11 @@ network — it guards the conversion contract, not SAM itself. (The live torch-t
 was verified separately on an MPS box; here we exercise the numpy branch + union/gating.)
 """
 
+from contextlib import nullcontext
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import numpy as np
 
 from autoedit.imageio import Image
@@ -49,8 +54,16 @@ def _img() -> Image:
     return Image(rgb=np.zeros((6, 6, 3), np.float32), source_bits=8, path="x")
 
 
+def _segment(seg, concepts):
+    # The inference wrapper imports torch even with a fake model. Supply only the
+    # surface used by these numpy fixtures so core-only CI never needs torch.
+    fake_torch = SimpleNamespace(no_grad=nullcontext, Tensor=type("FakeTensor", (), {}))
+    with patch.dict(sys.modules, {"torch": fake_torch}):
+        return seg.segment(_img(), concepts)
+
+
 def test_sam3_segment_unions_instances_and_keeps_best_score():
-    regions = _seg().segment(_img(), ["snow"])
+    regions = _segment(_seg(), ["snow"])
     assert len(regions) == 1
     r = regions[0]
     assert r.name == "snow"
@@ -65,4 +78,4 @@ def test_sam3_concept_with_no_matches_yields_no_region():
     s = _seg()
     s._processor.post_process_instance_segmentation = lambda *a, **k: [
         {"masks": np.zeros((0, 6, 6), bool), "scores": np.zeros((0,)), "boxes": np.zeros((0, 4))}]
-    assert s.segment(_img(), ["unicorn"]) == []   # open-vocab: absent concept just drops out
+    assert _segment(s, ["unicorn"]) == []   # open-vocab: absent concept just drops out

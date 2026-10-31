@@ -49,5 +49,9 @@ Edit, run on real photos, and open a PR with before/after examples.
 
 ## PRs
 
+Use a GitHub noreply email for commits. Do not attach private photos, API keys, or
+unreviewed sidecars. Before pushing, run `python3 scripts/check_public_repo.py --history`
+and a redacted Gitleaks scan as described in [SECURITY.md](SECURITY.md).
+
 Keep them focused, include tests for behavior changes, and make sure
 `PYTHONPATH=src python tests/run_all.py` is green.

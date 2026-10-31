@@ -17,6 +17,11 @@ dependencies = [
     "pydantic>=2",
 ]
 
+[project.urls]
+Homepage = "https://photolab.fridshtand.ai"
+Repository = "https://github.com/RawF4sh/AutoEdit"
+Issues = "https://github.com/RawF4sh/AutoEdit/issues"
+
 [project.optional-dependencies]
 # SAM 3 segmentation. Ships inside Transformers (Sam3Model/Sam3Processor, model id
 # facebook/sam3 — gated on HF). Runs on cuda/mps/cpu; device auto-detected at runtime.

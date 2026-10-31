@@ -10,7 +10,7 @@ def test_16bit_tiff_survives_load(tmp_path):
     # a smooth gradient with 1024 distinct levels — impossible to represent in 8-bit (256)
     levels = np.linspace(0, 65535, 1024, dtype=np.uint16)[None, :].repeat(8, axis=0)
     p = tmp_path / "grad16.tif"
-    PILImage.fromarray(levels, mode="I;16").save(str(p))
+    PILImage.fromarray(levels).save(str(p))
 
     img = load_image(str(p))
     assert img.source_bits == 16
@@ -45,7 +45,7 @@ def test_proxy_downscale_keeps_16bit_precision(tmp_path):
 
     levels = np.linspace(0, 65535, 1024, dtype=np.uint16)[None, :].repeat(8, axis=0)
     p = tmp_path / "grad16.tif"
-    PILImage.fromarray(levels, mode="I;16").save(str(p))
+    PILImage.fromarray(levels).save(str(p))
 
     proxy = downscale_long_edge(load_image(str(p)), 512)
     assert proxy.rgb.shape[1] == 512

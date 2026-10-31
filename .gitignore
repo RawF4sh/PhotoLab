@@ -1,4 +1,15 @@
 # Python
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+*service-account*.json
+firebase-debug*.log
+*.log
+
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -16,6 +27,9 @@ testImages/
 # AutoEdit run outputs
 out/
 out-*/
+output/
+outputs/
+eval_3way/
 dist/
 *.autoedit.json
 run.json
@@ -27,6 +41,36 @@ split_before_after_landscapes/
 # Local assistant/editor scratch
 .agents/
 .claude/
+.codex/
+NEW_CHAT_HANDOFF.md
+PROJECT_ASSESSMENT.md
+
+# Private inputs, exports, metadata, model weights, and local archives
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+*.tif
+*.tiff
+*.cr2
+*.cr3
+*.nef
+*.arw
+*.dng
+*.xmp
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.npz
+*.npy
+*.sqlite*
+*.db
+*.zip
+*.tar
+*.gz
+*.bundle
 
 # Model weights (fetched from Hugging Face on first run — never committed; SAM license)
 models/*.pt

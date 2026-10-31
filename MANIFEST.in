@@ -1,0 +1,13 @@
+include LICENSE README.md SECURITY.md
+recursive-include src/autoedit/configs *.toml
+recursive-include src/autoedit/web/static *.html *.css *.js
+prune .tmp
+prune .claude
+prune .codex
+prune .agents
+prune testImages
+prune eval_3way
+prune output
+prune out
+exclude NEW_CHAT_HANDOFF.md PROJECT_ASSESSMENT.md
+global-exclude .env .env.* *.pem *.key *.log *.jpg *.jpeg *.png *.webp *.heic *.tif *.tiff *.cr2 *.cr3 *.nef *.arw *.dng *.xmp *.autoedit.json *.pt *.pth *.safetensors *.onnx *.npz *.npy *.sqlite *.db

@@ -11,3 +11,16 @@ test-corpus/** filter=lfs diff=lfs merge=lfs -text
 *.md     text eol=lf
 *.xmp    text eol=lf
 *.tmpl   text eol=lf
+
+# Exclude local/private artifacts from source archives as a second line of defense.
+.claude/** export-ignore
+.codex/** export-ignore
+.agents/** export-ignore
+.tmp/** export-ignore
+testImages/** export-ignore
+out*/** export-ignore
+eval_3way/** export-ignore
+curated-*/** export-ignore
+.env* export-ignore
+NEW_CHAT_HANDOFF.md export-ignore
+PROJECT_ASSESSMENT.md export-ignore
