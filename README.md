@@ -77,7 +77,7 @@ autoedit curate ./photos ./curated --mode best --count 300         # copy likely
 autoedit train-aesthetic labels.csv ./images ./aesthetic.json       # train a lightweight taste scorer
 autoedit curate ./photos ./curated --mode aesthetic --aesthetic-model ./aesthetic.json
 autoedit run ./raws ./out --raw-mode preview_ev_headroom       # RAW development candidate (default: none)
-autoedit run ./photos ./out --metadata keep                    # keep GPS too (default no_location drops it; none writes no EXIF)
+autoedit run ./photos ./out --metadata keep                    # keep GPS and serial numbers too (default shareable drops both; none writes no EXIF)
 autoedit doctor        # check device + backend availability
 autoedit presets       # list concept presets
 ```

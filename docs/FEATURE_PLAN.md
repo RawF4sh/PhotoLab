@@ -71,11 +71,12 @@ The first feature, chosen small on purpose: it also proves the agent loop end to
 - **Build:** read the source EXIF when the export is written and write it back in `save_image`
   for JPEG and TIFF, with orientation reset to normal (the pixels are already rotated) and the
   embedded thumbnail dropped. Embed an sRGB profile. Add a run setting
-  `metadata = "keep" | "no_location" | "none"`. Spec: [plans/F1-export-metadata.md](plans/F1-export-metadata.md).
-- **Done when:** tests show that capture time and camera survive, orientation is normal, GPS is
-  gone under `no_location`, no tag is written under `none`, and the sRGB profile is present. The
-  stub smoke run passes.
-- **Owner:** the default is `no_location`, decided on 2026-11-10.
+  `metadata = "keep" | "shareable" | "none"`. Spec: [plans/F1-export-metadata.md](plans/F1-export-metadata.md).
+- **Done when:** tests show that capture time and camera survive, orientation is normal, GPS and
+  the serial numbers are gone under `shareable`, no tag is written under `none`, and the sRGB
+  profile is present. The stub smoke run passes.
+- **Owner:** the default `shareable` removes GPS and the camera and lens serial numbers. Decided
+  on 2026-11-10 (location) and 2026-11-11 (serial numbers).
 - **Dropped from the first sketch:** a setting for relative sidecar paths. Sidecars hold the file
   name only; the sketch's claim that they hold absolute paths was wrong.
 
@@ -273,8 +274,7 @@ Three config decisions, each a small change with a gate run once the owner has d
 | Decision | Needed for |
 |---|---|
 | Result of the blind vote on the improvement loop | Everything in phase 3 |
-| Default for `metadata`: decided on 2026-11-10, `no_location` | F1 |
-| Should the default also drop camera and lens serial numbers and the owner name? | F1 follow-up |
+| Default for `metadata`: decided, `shareable` (no GPS, no camera or lens serial numbers) | F1 |
 | RAW development default | F8 |
 | May a moody look opt out of the darkness gate? | F8 |
 | Default backend `sam3` when installed? | F8 |

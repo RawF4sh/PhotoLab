@@ -9,8 +9,9 @@ All notable changes to this project are documented here. Format follows
 - Edited files carry the source photo's EXIF (capture time, camera, lens, exposure settings,
   artist, copyright) and an embedded sRGB ICC profile. Before, an export had neither.
 - Run setting `metadata` (`--metadata`, `[output] metadata` in `defaults.toml`, `metadata` in the
-  Studio API): `keep`, `no_location` (the default: the GPS block is removed) or `none` (no EXIF).
-- Under `keep` and `no_location`, each sidecar's `notes` records what the export did with the
+  Studio API): `keep`, `shareable` (the default: the GPS block and the serial numbers of the camera
+  and the lens are removed) or `none` (no EXIF).
+- Under `keep` and `shareable`, each sidecar's `notes` records what the export did with the
   metadata.
 
 ### Changed
@@ -19,8 +20,8 @@ All notable changes to this project are documented here. Format follows
   copied.
 
 ### Known limits
-- `no_location` removes the GPS block only. Camera and lens serial numbers, and an owner name set
-  in the camera, stay in the file. `none` writes no camera data at all.
+- `shareable` keeps the names the photographer entered: the artist, the copyright and an owner name
+  set in the camera. `none` writes no camera data at all.
 - A 16-bit TIFF carries the profile and the basic tags only (camera, capture time, artist,
   copyright). XMP and IPTC blocks (ratings, keywords, captions) are not copied.
 

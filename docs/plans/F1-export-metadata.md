@@ -14,16 +14,18 @@ A run setting chooses how much is carried:
 
 | `metadata` | EXIF in the export |
 |---|---|
-| `keep` | Everything in the allow-list below, including the GPS block. |
-| `no_location` (default) | The same without the GPS block. |
+| `keep` | Everything in the allow-list below, including the GPS block and the serial numbers. |
+| `shareable` (default) | The same without the GPS block and without the serial numbers of the camera and the lens. |
 | `none` | No EXIF at all. |
 
 The sRGB profile is embedded in every product export, whatever the setting.
 
 ## Owner decision
 
-The default is `no_location`. Decided by the owner on 2026-11-10. The check raised one follow-up
-question, which does not block F1: see the first item under Known limits.
+On 2026-11-10 the owner chose to keep everything but the location. The check then pointed out that
+the serial numbers of the camera and the lens would stay in the file, and on 2026-11-11 the owner
+chose to drop those by default too. The default mode was called `no_location` in the first commit
+and is `shareable` since the second. No decision is open.
 
 ## Measured before the design (2026-11-10)
 
@@ -60,7 +62,9 @@ question, which does not block F1: see the first item under Known limits.
    already upright), the pixel size is the size of the export, the colour space is sRGB, and
    `Software` names AutoEdit. `DateTime` keeps the source value, so the same input always gives
    the same file.
-5. **The GPS block is copied only under `keep`.**
+5. **The GPS block and the serial numbers are copied only under `keep`.** The serial numbers are
+   the Exif tags `0xA431` (camera body), `0xA435` (lens) and `0xFDE9` (written by Adobe Camera
+   Raw). Names the photographer entered (artist, copyright, owner name) stay under `shareable`.
 6. **Metadata is opt-in per call.** `emit.write_image` writes metadata only when it is given
    `source`. Measurement, contact-sheet and gallery exports pass no `source` and stay
    byte-identical to today.
@@ -87,7 +91,7 @@ Add `import functools` and `import struct`. Add below `_read_exif`:
 
 ```python
 # ── export metadata (F1, docs/plans/F1-export-metadata.md) ─────────────────────
-METADATA_MODES = ("keep", "no_location", "none")
+METADATA_MODES = ("keep", "shareable", "none")
 _EXIF_IFD, _GPS_IFD = 0x8769, 0x8825
 # First-directory tags that describe the photograph: ImageDescription, Make, Model, X/Y
 # resolution and its unit, DateTime, Artist, Copyright. Every other tag there describes how the
@@ -98,6 +102,10 @@ _EXIF_KEEP_IFD0 = (0x010E, 0x010F, 0x0110, 0x011A, 0x011B, 0x0128, 0x0132, 0x013
 # block moves, and at 68 KB in a CR2 it exceeds what a JPEG can hold) and the interoperability
 # pointer (it names the source's colour space; an export is always sRGB).
 _EXIF_DROP = (0x927C, 0xA005)
+# Dropped as well under "shareable", together with the GPS block: the tags that identify the
+# physical camera and lens (BodySerialNumber, LensSerialNumber, and the SerialNumber tag Adobe
+# Camera Raw writes). Names the photographer entered (artist, copyright, owner name) stay.
+_EXIF_SERIALS = (0xA431, 0xA435, 0xFDE9)
 _EXIF_MAX_BYTES = 65_000  # a JPEG APP1 segment holds at most 65,533 bytes
 
 
@@ -129,7 +137,8 @@ def export_exif(source: str | None, mode: str, size: tuple[int, int],
         with PILImage.open(source) as pil:
             src = pil.getexif()
             base = {t: src[t] for t in _EXIF_KEEP_IFD0 if t in src}
-            sub = {t: v for t, v in src.get_ifd(_EXIF_IFD).items() if t not in _EXIF_DROP}
+            drop = _EXIF_DROP if mode == "keep" else _EXIF_DROP + _EXIF_SERIALS
+            sub = {t: v for t, v in src.get_ifd(_EXIF_IFD).items() if t not in drop}
             gps = dict(src.get_ifd(_GPS_IFD)) if mode == "keep" else {}
         if not (base or sub or gps):
             return None
@@ -228,12 +237,12 @@ No other caller of `emit.write_image` or `save_image` changes (`quality_runner.p
 ### The setting
 
 - `contract.py`, in the output group after `quality`:
-  `metadata: Literal["keep", "no_location", "none"] = "no_location"` with a one-line comment.
-- `configs/defaults.toml`, in `[output]`: `metadata = "no_location"` with a comment naming the
+  `metadata: Literal["keep", "shareable", "none"] = "shareable"` with a one-line comment.
+- `configs/defaults.toml`, in `[output]`: `metadata = "shareable"` with a comment naming the
   three values.
 - `cli.py`: `_flatten` reads `metadata` from `[output]`; `load_run_config` adds
   `"metadata": getattr(args, "metadata", None)` to the overrides; `_add_run_flags` adds
-  `--metadata` with `choices=["keep", "no_location", "none"]` and a help line.
+  `--metadata` with `choices=["keep", "shareable", "none"]` and a help line.
 - `web/service.py`: add `"metadata"` to `_ALLOWED`.
 
 ### Tests
@@ -246,13 +255,14 @@ fixtures are synthetic and built with Pillow in the test; no test reads a photo 
 Fixture: a small JPEG whose EXIF has make, model, orientation 6, `DateTime`, artist and copyright
 in the first directory, plus one tag outside the allow-list (for example `0x02BC` with bytes); an
 Exif sub-directory with `DateTimeOriginal` (a different value from `DateTime`), ISO, an f-number
-as `IFDRational(28, 10)`, an exposure bias of `IFDRational(-1, 3)`, a maker note and pixel
-dimensions; and a GPS block with latitude and longitude.
+as `IFDRational(28, 10)`, an exposure bias of `IFDRational(-1, 3)`, a maker note, pixel
+dimensions, an owner name and the body and lens serial numbers; and a GPS block with latitude and
+longitude.
 
 | Test | Asserts |
 |---|---|
-| `test_keep_copies_camera_data_and_gps` | Under `keep`: make, model, capture time, ISO, f-number 2.8 and bias −1/3 equal the source; GPS latitude present; orientation 1; pixel dimensions equal the `size` passed; colour space 1; `Software` equals the value passed; no maker note; the non-allow-listed tag is absent. |
-| `test_no_location_drops_only_gps` | Under `no_location`: the GPS block is empty, capture time and camera are still there. |
+| `test_keep_copies_camera_data_and_gps` | Under `keep`: make, model, capture time, ISO, f-number 2.8 and bias −1/3 equal the source; GPS latitude and both serial numbers present; orientation 1; pixel dimensions equal the `size` passed; colour space 1; `Software` equals the value passed; no maker note; the non-allow-listed tag is absent. |
+| `test_shareable_drops_gps_and_serial_numbers` | Under `shareable`: the GPS block is empty and both serial numbers are gone; capture time, make, model, artist, copyright and owner name are still there. |
 | `test_none_and_missing_sources_write_nothing` | `export_exif` returns None for mode `none`, for `source=None`, for a JPEG without EXIF, for a missing file and for a text file. |
 | `test_unknown_mode_raises` | `ValueError`. |
 | `test_oversized_exif_is_dropped` | A TIFF source with a 70,000-byte `UserComment` (`0x9286`) gives None; the same source without it gives a block (control). |
@@ -261,9 +271,9 @@ dimensions; and a GPS block with latitude and longitude.
 | `test_srgb_profile_is_stable` | Two calls return the same bytes; bytes 24..36 are the fixed date; `ImageCms` can open it. Returns early when `srgb_profile()` is None. |
 | `test_tagged_export_reloads_identically` | `load_image` returns exactly the same array for the tagged and the untagged JPEG. This pins the measured fact that sRGB to sRGB through LittleCMS is the identity. |
 | `test_tiff_export_keeps_basic_tags` | `save_image(..., "tiff", exif=..., icc_profile=...)`: Pillow reads make and model back, the capture time is in tag 306 or in the Exif sub-directory, and the ICC profile is present. Must pass with and without `tifffile` installed. |
-| `test_write_image_product_export` | With `source` and `no_location`: the note names `no_location`, the file has the profile, the capture time and no GPS, and `Software` starts with `AutoEdit `. Without `source`: the note is `""` and the file has no metadata. With `metadata="none"`: note `""`, profile present, EXIF empty. A TIFF export's note names the 16-bit limit. |
-| `test_batch_run_carries_metadata` | A stub `batch.run` over a folder holding the fixture (orientation 6): the output's size is the transposed size, its orientation tag is 1, its pixel dimensions match the output, capture time is kept, GPS is gone, and the sidecar's notes contain the export note. |
-| `test_metadata_setting_flows` | `RunConfig().metadata == "no_location"`; the packaged `defaults.toml` flattens to the same value; `load_run_config` with `metadata="none"` gives `none` (follow `tests/test_cli.py`); `service.make_cfg({"metadata": "keep"}).metadata == "keep"`. |
+| `test_write_image_product_export` | With `source` and `shareable`: the note names `shareable`, the file has the profile, the capture time and no GPS, and `Software` starts with `AutoEdit `. Without `source`: the note is `""` and the file has no metadata. With `metadata="none"`: note `""`, profile present, EXIF empty. A TIFF export's note names the 16-bit limit. |
+| `test_batch_run_carries_metadata` | A stub `batch.run` over a folder holding the fixture (orientation 6): the output's size is the transposed size, its orientation tag is 1, its pixel dimensions match the output, capture time is kept, GPS and the serial numbers are gone, and the sidecar's notes contain the export note. |
+| `test_metadata_setting_flows` | `RunConfig().metadata == "shareable"`; the packaged `defaults.toml` flattens to the same value; `load_run_config` with `metadata="none"` gives `none` (follow `tests/test_cli.py`); `service.make_cfg({"metadata": "keep"}).metadata == "keep"`. |
 
 Where an existing test in `tests/test_jobs.py` or `tests/test_web_service.py` already runs a stub
 job or `run_one` to completion, add one assertion there that the output file has an ICC profile.
@@ -313,15 +323,20 @@ strings are in the task brief. No code.
 - Check: pass with six minor findings, all resolved. The TIFF note names its limit, the oversize
   test has a control, three doc sentences were corrected, and the question about serial numbers
   went to the owner.
+- Follow-up on 2026-11-11, after the owner's second decision: the default mode is `shareable` and
+  also drops the serial numbers. 464 tests pass with and without `tifffile`. The same four photos
+  are still pixel-identical to the renders from before F1. The three with source EXIF now carry 34
+  Exif tags instead of 36, because both serial numbers are gone; under `keep` both are present.
+  The session verified this follow-up with the tests and the real photos. It did not go through a
+  second Checker pass.
 
 ## Known limits
 
-- `no_location` removes the GPS block only. Body and lens serial numbers, an owner name set in the
-  camera, the artist and the copyright stay in the file. Whether the default should also drop the
-  serial numbers and the owner name is a question for the owner; the check raised it.
+- `shareable` keeps the names the photographer entered: the artist, the copyright and an owner name
+  set in the camera. `none` removes them.
 - XMP and IPTC blocks (ratings, keywords, captions) are not copied.
-- The maker note is not copied, so vendor-only fields are lost. Lens model, serial numbers and the
-  standard exposure fields live in the Exif sub-directory and are kept.
+- The maker note is not copied, so vendor-only fields are lost. Lens model and the standard
+  exposure fields live in the Exif sub-directory and are kept.
 - A 16-bit TIFF carries the profile and the basic tags only.
 - RAW formats that Pillow cannot open as TIFF (for example CR3 and RAF) export without EXIF; the
   sidecar note says so.

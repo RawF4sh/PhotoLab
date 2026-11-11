@@ -420,7 +420,7 @@ def _read_exif(pil: PILImage.Image) -> dict:
 
 
 # ── export metadata (F1, docs/plans/F1-export-metadata.md) ─────────────────────
-METADATA_MODES = ("keep", "no_location", "none")
+METADATA_MODES = ("keep", "shareable", "none")
 _EXIF_IFD, _GPS_IFD = 0x8769, 0x8825
 # First-directory tags that describe the photograph: ImageDescription, Make, Model, X/Y
 # resolution and its unit, DateTime, Artist, Copyright. Every other tag there describes how the
@@ -431,6 +431,10 @@ _EXIF_KEEP_IFD0 = (0x010E, 0x010F, 0x0110, 0x011A, 0x011B, 0x0128, 0x0132, 0x013
 # block moves, and at 68 KB in a CR2 it exceeds what a JPEG can hold) and the interoperability
 # pointer (it names the source's colour space; an export is always sRGB).
 _EXIF_DROP = (0x927C, 0xA005)
+# Dropped as well under "shareable", together with the GPS block: the tags that identify the
+# physical camera and lens (BodySerialNumber, LensSerialNumber, and the SerialNumber tag Adobe
+# Camera Raw writes). Names the photographer entered (artist, copyright, owner name) stay.
+_EXIF_SERIALS = (0xA431, 0xA435, 0xFDE9)
 _EXIF_MAX_BYTES = 65_000  # a JPEG APP1 segment holds at most 65,533 bytes
 
 
@@ -462,7 +466,8 @@ def export_exif(source: str | None, mode: str, size: tuple[int, int],
         with PILImage.open(source) as pil:
             src = pil.getexif()
             base = {t: src[t] for t in _EXIF_KEEP_IFD0 if t in src}
-            sub = {t: v for t, v in src.get_ifd(_EXIF_IFD).items() if t not in _EXIF_DROP}
+            drop = _EXIF_DROP if mode == "keep" else _EXIF_DROP + _EXIF_SERIALS
+            sub = {t: v for t, v in src.get_ifd(_EXIF_IFD).items() if t not in drop}
             gps = dict(src.get_ifd(_GPS_IFD)) if mode == "keep" else {}
         if not (base or sub or gps):
             return None

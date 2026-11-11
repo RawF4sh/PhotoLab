@@ -302,7 +302,7 @@ localhost-origin-checked; `serve` refuses non-loopback hosts without `--unsafe-n
 autoedit run <in> <out> [--style … --prompt … --palette … --intensity … --reference IMG
                          --decider rules|llm|learned --recipe-model m.json
                          --backend stub|sam3 --format jpeg|tiff --resume --dry-run
-                         --metadata keep|no_location|none
+                         --metadata keep|shareable|none
                          --no-consistent --no-compose --no-vignette --no-sharpen …]
 autoedit ui [--host --port --no-open]                 # launch Studio
 
@@ -361,10 +361,10 @@ autoedit doctor | presets | styles
   key, and sends only a thumbnail + stats. It degrades to rules otherwise.
 - Culling and dataset building are **copy-only**; identity edits are strict no-ops.
 - Edited files keep the source photo's camera data (capture time, camera, lens, exposure, artist,
-  copyright) and get an sRGB colour profile. GPS location is removed by default; choose with
-  `--metadata keep|no_location|none` (`[output] metadata` in `defaults.toml`). `no_location`
-  removes the GPS block only: camera and lens serial numbers, and an owner name set in the camera,
-  stay in the file. `none` writes no camera data at all.
+  copyright) and get an sRGB colour profile. GPS location and the serial numbers of the camera and
+  the lens are removed by default; choose with `--metadata keep|shareable|none` (`[output] metadata`
+  in `defaults.toml`). `keep` keeps both, `none` writes no camera data at all. An owner name set in
+  the camera stays under `shareable`, like the artist and the copyright.
 - All learned models predict **bounded sliders only** and pass through the same oversaturation /
   banding / skin-guard / clipping gates as rule-based edits.
 

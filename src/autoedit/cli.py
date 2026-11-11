@@ -137,8 +137,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                         "preview_ev_headroom | tone_target | linear_srgb (see scripts/raw_benchmark.py)")
     p.add_argument("--format", choices=["jpeg", "tiff"])
     p.add_argument("--quality", type=int)
-    p.add_argument("--metadata", choices=["keep", "no_location", "none"],
-                   help="EXIF carried into exports: keep (all, with GPS) | no_location (default) | none")
+    p.add_argument("--metadata", choices=["keep", "shareable", "none"],
+                   help="EXIF carried into exports: keep (all, with GPS and serial numbers) | "
+                        "shareable (default: without them) | none")
     p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int)
     p.add_argument("--emit", choices=["baked"], help="output kind (only baked pixels exist today; an XMP hand-off is not implemented)")
     p.add_argument("--no-compose", dest="compose", action="store_false", default=None,

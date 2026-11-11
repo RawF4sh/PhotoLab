@@ -30,6 +30,7 @@ def _fixture(path, size=(64, 48), orientation=6, gps=True, extra_exif=None):
     ex[0x02BC] = b"<xmp/>"
     ex[_EXIF] = {0x9003: "2020:01:01 10:00:00", 0x8827: 400, 0x829D: IFDRational(28, 10),
                  0x9204: IFDRational(-1, 3), 0x927C: b"M" * 200, 0xA002: 1, 0xA003: 1,
+                 0xA430: "An Owner", 0xA431: "BODY123", 0xA435: "LENS456",
                  **(extra_exif or {})}
     if gps:
         ex[_GPS] = {1: "N", 2: (IFDRational(46), IFDRational(0), IFDRational(0)),
@@ -55,6 +56,7 @@ def test_keep_copies_camera_data_and_gps(tmp_path):
     assert sub[0x9003] == "2020:01:01 10:00:00" and sub[0x8827] == 400
     assert float(sub[0x829D]) == 2.8 and abs(float(sub[0x9204]) + 1 / 3) < 1e-3
     assert 2 in gps
+    assert sub[0xA431] == "BODY123" and sub[0xA435] == "LENS456"
     assert e[0x0112] == 1
     assert (sub[0xA002], sub[0xA003]) == (30, 20)
     assert sub[0xA001] == 1
@@ -63,14 +65,17 @@ def test_keep_copies_camera_data_and_gps(tmp_path):
     assert 0x02BC not in e
 
 
-def test_no_location_drops_only_gps(tmp_path):
+def test_shareable_drops_gps_and_serial_numbers(tmp_path):
     src = _fixture(tmp_path / "s.jpg")
     out = tmp_path / "o.jpg"
     save_image(np.full((20, 30, 3), 0.5, np.float32), str(out),
-               exif=export_exif(src, "no_location", (30, 20)))
+               exif=export_exif(src, "shareable", (30, 20)))
     e, sub, gps = _exif_of(str(out))
     assert not gps
-    assert sub[0x9003] == "2020:01:01 10:00:00" and e[0x0110] == "TestModel"
+    assert 0xA431 not in sub and 0xA435 not in sub
+    assert sub[0x9003] == "2020:01:01 10:00:00"
+    assert e[0x010F] == "TestMake" and e[0x0110] == "TestModel"
+    assert e[0x013B] == "An Artist" and e[0x8298] == "(c) Someone" and sub[0xA430] == "An Owner"
 
 
 def test_none_and_missing_sources_write_nothing(tmp_path):
@@ -158,8 +163,8 @@ def test_write_image_product_export(tmp_path):
     src = _fixture(tmp_path / "s.jpg")
     rgb = np.full((20, 30, 3), 0.5, np.float32)
     p = tmp_path / "o.jpg"
-    note = emit.write_image(rgb, str(p), "jpeg", 90, source=src, metadata="no_location")
-    assert "no_location" in note
+    note = emit.write_image(rgb, str(p), "jpeg", 90, source=src, metadata="shareable")
+    assert "shareable" in note
     pil = PILImage.open(str(p))
     e, sub, gps = _exif_of(str(p))
     assert pil.info.get("icc_profile") == srgb_profile()
@@ -191,15 +196,16 @@ def test_batch_run_carries_metadata(tmp_path):
     assert e[0x0112] == 1
     assert (sub[0xA002], sub[0xA003]) == pil.size
     assert sub[0x9003] == "2020:01:01 10:00:00" and not gps
+    assert 0xA431 not in sub and 0xA435 not in sub
     side = json.load(open(out / "a.autoedit.json"))
     assert any(n.startswith("export: EXIF kept") for n in side["notes"])
 
 
 def test_metadata_setting_flows():
-    assert RunConfig().metadata == "no_location"
+    assert RunConfig().metadata == "shareable"
     from autoedit import paths
     flat = _flatten(_read_toml(os.path.join(paths.configs_dir(), "defaults.toml")))
-    assert flat["metadata"] == "no_location"
+    assert flat["metadata"] == "shareable"
     base = dict(configs_dir=None, config=None, metadata="none")
     assert load_run_config(SimpleNamespace(**base)).metadata == "none"
     assert service.make_cfg({"metadata": "keep"}).metadata == "keep"
