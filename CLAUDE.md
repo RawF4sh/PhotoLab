@@ -50,3 +50,12 @@ auto-mask fixed regions).
 - Config/docs updated if behavior changed.
 - Any exposure/tone/decode change: `PYTHONPATH=src python scripts/tone_report.py <raw-folder> --render --fail-on-regression` reports 0 dark→darker and 0 pushed-into-clipping (use the in-repo
   `curated-dolomites-summer-2026/selected_raw` corpus when present; it never runs in CI).
+
+## Planning and delegation
+
+- Planned engine features, their order and their status: `docs/FEATURE_PLAN.md`. Feature specs
+  live in `docs/plans/`.
+- Before delegating work to a sub-agent, read `docs/AGENT_ROUTING.md` and set the sub-agent's
+  `model` and `effort` exactly as it specifies for that kind of work: planning on Fable at `max`
+  effort, checks on Opus at `high`, building from a spec on Sonnet at `medium`, mechanical edits
+  and searches on Haiku at `low`. That file is authoritative if this summary and it ever differ.
