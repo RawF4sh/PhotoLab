@@ -36,6 +36,7 @@ def test_job_runs_to_done_and_writes_outputs(tmp_path):
     assert snap["done"] + snap["review"] == 2
     for it in snap["items"]:                         # outputs written + recorded
         assert it["out"] and os.path.exists(it["out"])
+        assert PILImage.open(it["out"]).info.get("icc_profile")      # F1: sRGB profile embedded
     assert os.path.isdir(str(out))
 
 

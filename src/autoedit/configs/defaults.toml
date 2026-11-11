@@ -34,6 +34,7 @@ fallback_ev = 0.0          # unavailable/incompatible preview: no camera-indepen
 [output]
 format = "jpeg"            # "jpeg" | "tiff"
 quality = 95               # 95 preserves the anti-banding dither in flat skies (matches the web UI)
+metadata = "no_location"   # EXIF in exports: "keep" (all, with GPS) | "no_location" (no GPS) | "none"
 
 [llm]
 mode = "refine"            # "refine" (bounded deltas) | "propose"

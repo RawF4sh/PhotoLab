@@ -65,7 +65,10 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
             out_rgb, result = pipeline.process_one(path, do_apply=do_apply,
                                                    exposure_bias=bias, batch_group=gid)
             if do_apply and out_rgb is not None:
-                emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
+                note = emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
+                                        source=path, metadata=cfg.metadata)
+                if note:
+                    result.notes.append(note)
             emit.write_sidecar(result, sidecar)
             processed += 1
             scene_mix[result.scene] += 1

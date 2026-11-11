@@ -27,7 +27,7 @@ from ..styles import load_styles
 _ALLOWED = (
     "style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
-    "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality",
+    "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
     "emit", "compose", "vignette", "sharpen", "raw_mode",
 )
 
@@ -441,7 +441,10 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
         out_rgb, result = pipe.process_one(image_path, do_apply=True)
     os.makedirs(out_dir, exist_ok=True)
     image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format)
-    emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
+    note = emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
+                            source=image_path, metadata=cfg.metadata)
+    if note:
+        result.notes.append(note)
     emit.write_sidecar(result, sidecar)
     return {"image_out": image_out, "sidecar": sidecar, "result": result.model_dump()}
 

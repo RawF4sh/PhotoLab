@@ -3,6 +3,27 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Export keeps camera data (F1)
+
+### Added
+- Edited files carry the source photo's EXIF (capture time, camera, lens, exposure settings,
+  artist, copyright) and an embedded sRGB ICC profile. Before, an export had neither.
+- Run setting `metadata` (`--metadata`, `[output] metadata` in `defaults.toml`, `metadata` in the
+  Studio API): `keep`, `no_location` (the default: the GPS block is removed) or `none` (no EXIF).
+- Under `keep` and `no_location`, each sidecar's `notes` records what the export did with the
+  metadata.
+
+### Changed
+- In the copied EXIF, orientation is reset to upright, pixel size and colour space describe the
+  exported file, and `Software` names AutoEdit. The maker note and the embedded thumbnail are not
+  copied.
+
+### Known limits
+- `no_location` removes the GPS block only. Camera and lens serial numbers, and an owner name set
+  in the camera, stay in the file. `none` writes no camera data at all.
+- A 16-bit TIFF carries the profile and the basic tags only (camera, capture time, artist,
+  copyright). XMP and IPTC blocks (ratings, keywords, captions) are not copied.
+
 ## [Unreleased] — Screenshot loop: depth without haze, neutral colour
 
 Eight changes, each judged blind on a frozen 16-photo panel through the real pipeline with the

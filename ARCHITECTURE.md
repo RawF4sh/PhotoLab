@@ -429,6 +429,14 @@ guard/gate actions, intent terms, batch normalization). The reported settings ar
 what the sidecar shows. The batch also writes a `run.json` manifest (scene mix, concept hits,
 failures, duration).
 
+A product export (batch, Studio job, single edit) also carries the source photo's EXIF, filtered by
+the `metadata` run setting (`keep`, `no_location` — the default, which drops the GPS block — or
+`none`), and an embedded sRGB ICC profile. `imageio.export_exif` builds the block from the
+descriptive tags of the first directory (an allow-list) and the whole Exif sub-directory except the
+maker note, with orientation reset to upright and pixel size and colour space corrected. A
+16-bit TIFF carries the profile and the basic tags only. Measurement and contact-sheet exports pass
+no `source` and stay untagged. Spec: `docs/plans/F1-export-metadata.md`.
+
 Same-stem sources (a camera's `IMG_001.dng` + `IMG_001.jpg`, or same-named files across folders)
 **never overwrite each other**: `output_paths` takes a per-batch `taken` set and disambiguates with
 a `-2`/`-3` suffix, sidecar included. Both image and sidecar writes are atomic (`os.replace`), so

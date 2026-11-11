@@ -70,6 +70,7 @@ class RunConfig(BaseModel):
     # output
     out_format: Literal["jpeg", "jpg", "tiff"] = "jpeg"
     quality: int = Field(default=95, ge=1, le=100)  # higher q preserves the anti-banding dither (TIFF stays lossless)
+    metadata: Literal["keep", "no_location", "none"] = "no_location"  # EXIF carried into exports (F1); sRGB profile always embedded
     emit: Literal["baked"] = "baked"  # "editable" (XMP hand-off) was accepted but never implemented; removed until it exists
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
     vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff

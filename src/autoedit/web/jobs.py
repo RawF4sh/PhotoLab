@@ -146,7 +146,10 @@ def _run(job: Job, configs_dir) -> None:
                     out_rgb, result = pipe.process_one(item.src, do_apply=True,
                                                        exposure_bias=bias, batch_group=gid)
                 image_out, sidecar = emit.output_paths(job.out_dir, item.src, cfg.out_format, taken)
-                emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality)
+                note = emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
+                                        source=item.src, metadata=cfg.metadata)
+                if note:
+                    result.notes.append(note)
                 emit.write_sidecar(result, sidecar)
                 item.out, item.scene = image_out, result.scene
                 item.status, item.warn = _safety(result)

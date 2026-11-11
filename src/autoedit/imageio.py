@@ -13,7 +13,9 @@ conversion. Embedded ICC profiles are converted to sRGB so the working space is 
 
 from __future__ import annotations
 
+import functools
 import os
+import struct
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -417,6 +419,70 @@ def _read_exif(pil: PILImage.Image) -> dict:
     return out
 
 
+# ── export metadata (F1, docs/plans/F1-export-metadata.md) ─────────────────────
+METADATA_MODES = ("keep", "no_location", "none")
+_EXIF_IFD, _GPS_IFD = 0x8769, 0x8825
+# First-directory tags that describe the photograph: ImageDescription, Make, Model, X/Y
+# resolution and its unit, DateTime, Artist, Copyright. Every other tag there describes how the
+# SOURCE file stores its pixels (strip offsets, compression, preview pointers, XMP, DNG/CR2
+# private tags) and would be wrong in a re-encoded file, so this is an allow-list.
+_EXIF_KEEP_IFD0 = (0x010E, 0x010F, 0x0110, 0x011A, 0x011B, 0x0128, 0x0132, 0x013B, 0x8298)
+# Never copied from the Exif sub-directory: the maker note (its internal offsets break when the
+# block moves, and at 68 KB in a CR2 it exceeds what a JPEG can hold) and the interoperability
+# pointer (it names the source's colour space; an export is always sRGB).
+_EXIF_DROP = (0x927C, 0xA005)
+_EXIF_MAX_BYTES = 65_000  # a JPEG APP1 segment holds at most 65,533 bytes
+
+
+@functools.lru_cache(maxsize=1)
+def srgb_profile() -> bytes | None:
+    """The sRGB ICC profile embedded in exports (588 bytes, built by LittleCMS), or None when
+    this Pillow build has no LittleCMS. The creation date in the header is fixed, so the same
+    pixels always produce the same file."""
+    try:
+        from PIL import ImageCms
+
+        icc = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    except Exception:
+        return None
+    icc[24:36] = struct.pack(">6H", 2026, 1, 1, 0, 0, 0)  # header dateTimeNumber
+    return bytes(icc)
+
+
+def export_exif(source: str | None, mode: str, size: tuple[int, int],
+                software: str | None = None) -> bytes | None:
+    """The EXIF block for an export of `source` at `size` (width, height), or None when nothing
+    is to be written: mode "none", no source, a source without EXIF, an unreadable source, or a
+    block too large for a JPEG. Never raises for a bad source: metadata must not fail a photo."""
+    if mode not in METADATA_MODES:
+        raise ValueError(f"unknown metadata mode {mode!r}; choose one of {METADATA_MODES}")
+    if mode == "none" or not source:
+        return None
+    try:
+        with PILImage.open(source) as pil:
+            src = pil.getexif()
+            base = {t: src[t] for t in _EXIF_KEEP_IFD0 if t in src}
+            sub = {t: v for t, v in src.get_ifd(_EXIF_IFD).items() if t not in _EXIF_DROP}
+            gps = dict(src.get_ifd(_GPS_IFD)) if mode == "keep" else {}
+        if not (base or sub or gps):
+            return None
+        out = PILImage.Exif()
+        for t, v in base.items():
+            out[t] = v
+        out[0x0112] = 1                      # Orientation: the pixels are already upright
+        if software:
+            out[0x0131] = software
+        sub[0xA001] = 1                      # ColorSpace: sRGB
+        sub[0xA002], sub[0xA003] = int(size[0]), int(size[1])   # PixelX/YDimension
+        out[_EXIF_IFD] = sub
+        if gps:
+            out[_GPS_IFD] = gps
+        data = out.tobytes()
+    except Exception:
+        return None
+    return data if len(data) <= _EXIF_MAX_BYTES else None
+
+
 def downscale_long_edge(img: Image, long_edge: int) -> Image:
     """Return a proxy with the long edge clamped to `long_edge` (no upscaling).
 
@@ -441,7 +507,8 @@ def downscale_long_edge(img: Image, long_edge: int) -> Image:
                  decode_ev=img.decode_ev, decode_info=dict(img.decode_info))
 
 
-def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:
+def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
+               exif: bytes | None = None, icc_profile: bytes | None = None) -> None:
     """Write the working RGB (float, sRGB gamma, [0,1]) to disk.
 
     Atomic: encode to a sibling temp file (same extension, so PIL/tifffile infer the format
@@ -450,15 +517,16 @@ def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92)
     rgb = np.clip(rgb, 0.0, 1.0)
     tmp = f"{path}.part{os.path.splitext(path)[1]}"      # e.g. out.jpg.part.jpg
     if fmt == "tiff":
-        if _save_tiff16(rgb, tmp):
+        if _save_tiff16(rgb, tmp, exif, icc_profile):
             os.replace(tmp, path)
             return
         # fall through to 8-bit if tifffile is unavailable
     pil = PILImage.fromarray(_to_u8(rgb), mode="RGB")
+    extra = {k: v for k, v in (("exif", exif), ("icc_profile", icc_profile)) if v is not None}
     if fmt in ("jpg", "jpeg"):
-        pil.save(tmp, quality=quality, subsampling=0)
+        pil.save(tmp, quality=quality, subsampling=0, **extra)
     else:
-        pil.save(tmp)
+        pil.save(tmp, **extra)
     os.replace(tmp, path)
 
 
@@ -506,12 +574,28 @@ def _to_u8(rgb01: np.ndarray, dither: bool = True) -> np.ndarray:
     return np.clip(np.floor(x + 0.5), 0, 255).astype(np.uint8)
 
 
-def _save_tiff16(rgb01: np.ndarray, path: str) -> bool:
+def _save_tiff16(rgb01: np.ndarray, path: str, exif: bytes | None = None,
+                 icc_profile: bytes | None = None) -> bool:
     try:
         import tifffile  # optional (extras: accel)
     except Exception:
         return False
     data = np.clip(rgb01, 0.0, 1.0)
     data = np.clip(np.floor(data * 65535.0 + 0.5), 0, 65535).astype(np.uint16)
-    tifffile.imwrite(path, data, photometric="rgb")
+    kw: dict = {}
+    tags = [(34675, 7, len(icc_profile), icc_profile, True)] if icc_profile else []
+    if exif:
+        # ponytail: tifffile cannot write the Exif/GPS sub-directories (it filters tags 34665 and
+        # 34853), so a 16-bit TIFF carries the first directory's text tags only. Exposure, lens
+        # and GPS would need a hand-written sub-directory appender; add it when a TIFF user asks.
+        src = PILImage.Exif()
+        src.load(exif)
+        text = {t: src.get(t) for t in (0x010F, 0x0110, 0x0132, 0x013B, 0x8298)}
+        text[0x0132] = src.get_ifd(_EXIF_IFD).get(0x9003) or text[0x0132]  # capture time wins
+        tags += [(t, 2, 0, v, True) for t, v in text.items() if isinstance(v, str) and v]
+        if isinstance(src.get(0x0131), str):
+            kw["software"] = src[0x0131]
+    if tags:
+        kw["extratags"] = tags
+    tifffile.imwrite(path, data, photometric="rgb", **kw)
     return True

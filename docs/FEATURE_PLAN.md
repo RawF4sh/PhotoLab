@@ -12,7 +12,7 @@ status column here whenever a feature moves.
 
 | ID | Feature | Size | Status |
 |---|---|---|---|
-| F1 | Export keeps metadata and colour profile | S | planned |
+| F1 | Export keeps metadata and colour profile | S | done |
 | F2 | Region instructions | L | planned |
 | F3 | Per-photo adjustments | M | planned |
 | F4 | Throughput | M | planned |
@@ -38,7 +38,8 @@ subsystem. Status values: planned, spec, building, checking, done.
 These are the owner's steps, not agent work.
 
 1. Cast the blind vote on the improvement loop (`out-loop/blind/index.html`) and score it.
-2. Commit the improvement-loop change set, so features start from a clean tree.
+2. Commit the improvement-loop change set, so features start from a clean tree. Done on
+   2026-11-10.
 3. Answer the open decisions at the end of this file when their feature comes up.
 
 ## Where the engine stands
@@ -53,7 +54,7 @@ Checked against the code on 2026-11-10.
 | Colour | Region-aware auto white balance, OKLab palettes, targeted HSL, split-tone | White balance is not aligned across a shoot |
 | Noise | Nothing | No denoise op; the shadow lift raises noise with the shadows (not yet measured) |
 | Batch | Resume, per-photo failure isolation, brightness-only consistency (±0.15 EV) | One photo at a time, 22 s for a 22 MP photo |
-| Output | JPEG, 16-bit TIFF, sidecar JSON with reasons | All EXIF is dropped, including capture time; no ICC profile; no resize; sidecars hold absolute paths |
+| Output | JPEG, 16-bit TIFF, sidecar JSON with reasons; since F1 the source's EXIF and an sRGB profile | No resize; XMP and IPTC are not copied; a 16-bit TIFF carries the basic tags only |
 | Per-photo control | Nothing | One photo cannot be adjusted without changing the run settings for all |
 | Personal style | Reference matching, review labels, dataset builder, recipe predictor, variants, aesthetic critic | A custom look means copying a whole config file or folder; votes do not feed back into a look |
 | Inputs | JPEG, PNG, TIFF, WebP, BMP, camera RAW; ICC converted to sRGB | No HEIC or AVIF; no lens corrections |
@@ -67,15 +68,16 @@ The first feature, chosen small on purpose: it also proves the agent loop end to
 
 - **Why:** an edited JPEG carries no EXIF at all, so capture time, camera, lens and copyright are
   lost and edited photos stop sorting by time in other tools. It also carries no ICC profile.
-- **Build:** carry the source EXIF through decode (`imageio.Image`) and write it back in
-  `save_image` for JPEG and TIFF, with orientation reset to normal (the pixels are already
-  rotated) and the embedded thumbnail dropped. Embed an sRGB profile. Add a run setting
-  `metadata = "keep" | "no_location" | "none"`. Add a setting that writes sidecar paths relative
-  to the output folder.
+- **Build:** read the source EXIF when the export is written and write it back in `save_image`
+  for JPEG and TIFF, with orientation reset to normal (the pixels are already rotated) and the
+  embedded thumbnail dropped. Embed an sRGB profile. Add a run setting
+  `metadata = "keep" | "no_location" | "none"`. Spec: [plans/F1-export-metadata.md](plans/F1-export-metadata.md).
 - **Done when:** tests show that capture time and camera survive, orientation is normal, GPS is
   gone under `no_location`, no tag is written under `none`, and the sRGB profile is present. The
   stub smoke run passes.
-- **Owner:** the default. Recommended: `no_location`.
+- **Owner:** the default is `no_location`, decided on 2026-11-10.
+- **Dropped from the first sketch:** a setting for relative sidecar paths. Sidecars hold the file
+  name only; the sketch's claim that they hold absolute paths was wrong.
 
 ### F2. Region instructions (L)
 
@@ -271,7 +273,8 @@ Three config decisions, each a small change with a gate run once the owner has d
 | Decision | Needed for |
 |---|---|
 | Result of the blind vote on the improvement loop | Everything in phase 3 |
-| Default for `metadata` (recommended: `no_location`) | F1 |
+| Default for `metadata`: decided on 2026-11-10, `no_location` | F1 |
+| Should the default also drop camera and lens serial numbers and the owner name? | F1 follow-up |
 | RAW development default | F8 |
 | May a moody look opt out of the darkness gate? | F8 |
 | Default backend `sam3` when installed? | F8 |

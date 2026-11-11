@@ -40,6 +40,8 @@ def _flatten(d: dict) -> dict:
         kw["out_format"] = out["format"]
     if "quality" in out:
         kw["quality"] = out["quality"]
+    if "metadata" in out:
+        kw["metadata"] = out["metadata"]
     _llm_map = {"mode": "llm_mode", "model": "llm_model", "temperature": "llm_temperature",
                 "max_calls": "llm_max_calls", "budget_usd": "llm_budget_usd", "thumb_px": "llm_thumb_px"}
     for src, dst in _llm_map.items():
@@ -89,6 +91,7 @@ def load_run_config(args) -> RunConfig:
         "raw_mode": getattr(args, "raw_mode", None),
         "out_format": getattr(args, "format", None),
         "quality": getattr(args, "quality", None),
+        "metadata": getattr(args, "metadata", None),
         "analysis_long_edge": getattr(args, "analysis_long_edge", None),
         "emit": getattr(args, "emit", None),
         "compose": getattr(args, "compose", None),
@@ -134,6 +137,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                         "preview_ev_headroom | tone_target | linear_srgb (see scripts/raw_benchmark.py)")
     p.add_argument("--format", choices=["jpeg", "tiff"])
     p.add_argument("--quality", type=int)
+    p.add_argument("--metadata", choices=["keep", "no_location", "none"],
+                   help="EXIF carried into exports: keep (all, with GPS) | no_location (default) | none")
     p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int)
     p.add_argument("--emit", choices=["baked"], help="output kind (only baked pixels exist today; an XMP hand-off is not implemented)")
     p.add_argument("--no-compose", dest="compose", action="store_false", default=None,

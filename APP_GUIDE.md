@@ -302,6 +302,7 @@ localhost-origin-checked; `serve` refuses non-loopback hosts without `--unsafe-n
 autoedit run <in> <out> [--style … --prompt … --palette … --intensity … --reference IMG
                          --decider rules|llm|learned --recipe-model m.json
                          --backend stub|sam3 --format jpeg|tiff --resume --dry-run
+                         --metadata keep|no_location|none
                          --no-consistent --no-compose --no-vignette --no-sharpen …]
 autoedit ui [--host --port --no-open]                 # launch Studio
 
@@ -349,7 +350,7 @@ autoedit doctor | presets | styles
 | `intents.toml` | Free-text look vocabulary → bounded nudges. |
 | `concepts.toml` | Per-concept priority, gating, feather, guards, region policies. |
 | `compose.toml` | Compositional moves (vignette, sky graduate). |
-| `defaults.toml` | Default run config. |
+| `defaults.toml` | Default run config, including `[output] metadata` (which camera data an export keeps). |
 
 ---
 
@@ -359,6 +360,11 @@ autoedit doctor | presets | styles
 - The **LLM decider** is the only network path — off by default, requires explicit consent + a BYO API
   key, and sends only a thumbnail + stats. It degrades to rules otherwise.
 - Culling and dataset building are **copy-only**; identity edits are strict no-ops.
+- Edited files keep the source photo's camera data (capture time, camera, lens, exposure, artist,
+  copyright) and get an sRGB colour profile. GPS location is removed by default; choose with
+  `--metadata keep|no_location|none` (`[output] metadata` in `defaults.toml`). `no_location`
+  removes the GPS block only: camera and lens serial numbers, and an owner name set in the camera,
+  stay in the file. `none` writes no camera data at all.
 - All learned models predict **bounded sliders only** and pass through the same oversaturation /
   banding / skin-guard / clipping gates as rule-based edits.
 

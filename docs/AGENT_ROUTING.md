@@ -82,6 +82,11 @@ For these, the Planner writes the spec and the Checker reviews, without exceptio
   the background.
 - Small changes. A change that takes one or two tool calls in a file already open is made inline,
   because spawning costs a brief and a verification.
+- Edits it has already written out word for word. Measured on F1 (2026-11-10): a Tweaker used
+  110,000 tokens to apply six insertions whose exact text was in its brief, and the review fixes
+  after it were cheaper as one inline batch. A Tweaker pays off when the brief can state a rule or
+  a table instead of every string: a rename across many files, a list of config values, a count
+  sync.
 
 ## Changes to default pixels
 

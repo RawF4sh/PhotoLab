@@ -111,7 +111,7 @@ def test_raw_preview_and_export_share_development(tmp_path):
     opts = {"backend": "stub", "raw_mode": "preview_ev_headroom", "concepts": []}
     written = []
     with patch.object(service, "load_image", decode), patch.object(pipeline, "load_image", decode), \
-            patch.object(service.emit, "write_image", lambda rgb, *args: written.append(rgb.copy())):
+            patch.object(service.emit, "write_image", lambda rgb, *args, **kw: written.append(rgb.copy())):
         preview = service.preview(str(p), opts)
         exported = service.run_one(str(p), str(tmp_path / "out"), opts)
     assert calls == ["preview_ev_headroom", "preview_ev_headroom"]
@@ -180,6 +180,7 @@ def test_run_one_writes_outputs(tmp_path):
     res = service.run_one(str(p), str(out_dir), {"style": "natural", "backend": "stub"})
     assert os.path.exists(res["image_out"]) and os.path.exists(res["sidecar"])
     assert res["result"]["image"] == "one.jpg"
+    assert PILImage.open(res["image_out"]).info.get("icc_profile")   # F1: sRGB profile embedded
 
 
 def test_curate_folder_writes_copy_only_outputs(tmp_path):

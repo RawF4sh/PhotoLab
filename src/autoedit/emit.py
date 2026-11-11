@@ -8,7 +8,7 @@ import numpy as np
 
 from . import __version__
 from .contract import DetectedConcept, GlobalStatsModel, MaskOps, RegionStatsModel, Result, Settings
-from .imageio import save_image
+from .imageio import export_exif, save_image, srgb_profile
 
 
 def build_result(
@@ -75,8 +75,27 @@ def write_sidecar(result: Result, path: str) -> None:
     os.replace(tmp, path)
 
 
-def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:
-    save_image(rgb, path, fmt=fmt, quality=quality)
+def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
+                source: str | None = None, metadata: str = "none") -> str:
+    """Write the baked image and return a one-line note for the sidecar ("" when there is
+    nothing to say).
+
+    With `source` (the photo this export was made from) the file is a product export: it gets
+    the sRGB profile and, as `metadata` says, the source's EXIF. Without `source` the bytes are
+    what they were before F1; measurement and contact-sheet exports rely on that."""
+    if source is None:
+        save_image(rgb, path, fmt=fmt, quality=quality)
+        return ""
+    exif = export_exif(source, metadata, (rgb.shape[1], rgb.shape[0]),
+                       software=f"AutoEdit {__version__}")
+    save_image(rgb, path, fmt=fmt, quality=quality, exif=exif, icc_profile=srgb_profile())
+    if metadata == "none":
+        return ""
+    if exif:
+        limit = "; a 16-bit TIFF holds the basic tags only" if fmt == "tiff" else ""
+        return f"export: EXIF kept{limit} (metadata = {metadata})"
+    return (f"export: no EXIF written, the source has none or it could not be read "
+            f"(metadata = {metadata})")
 
 
 def output_paths(out_dir: str, image_name: str, fmt: str,
