@@ -121,9 +121,12 @@ class Pipeline:
                     image: Image | None = None, exposure_bias: float = 0.0,
                     batch_group: str = "",
                     on_resolved: Callable[[ResolvedRegions], None] | None = None,
+                    on_stage=None,
                     ) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
+        stage_timings = {}
+        stage_started = time.perf_counter()
 
         style = style_for(cfg.style, self.styles)
         look = cfg.look or style.look
@@ -132,20 +135,31 @@ class Pipeline:
         # `image` lets callers (e.g. the UI preview) pass a pre-downscaled proxy so the full-res
         # apply stays fast; the batch/export path passes nothing → full resolution.
         img: Image = image if image is not None else load_image(path, decode=raw_opts_from(cfg))
+        if on_stage is not None:
+            on_stage("candidate_decode", img.rgb)
         proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
+        stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
+        stage_started = time.perf_counter()
         raw = self.segmenter.segment(proxy, concepts) if concepts else []
+        stage_timings["segment"] = (time.perf_counter() - stage_started) * 1000
+        stage_started = time.perf_counter()
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
+        stage_timings["resolve"] = (time.perf_counter() - stage_started) * 1000
         # Optional read-only observer for diagnostics such as preview mask overlays. Reuse the
         # exact arbitration used by apply; arrays stay out of the serializable sidecar.
         if on_resolved is not None:
             on_resolved(resolved)
 
         resolved_coverages = {r.name: float(r.coverage) for r in resolved.regions}
+        stage_started = time.perf_counter()
         gstats, region_stats = stats_mod.compute(proxy, resolved.union, resolved_coverages)
+        stage_timings["stats"] = (time.perf_counter() - stage_started) * 1000
         present = set(region_stats.keys())
+        stage_started = time.perf_counter()
         sc = scene_mod.classify(gstats, present, region_stats)
+        stage_timings["scene"] = (time.perf_counter() - stage_started) * 1000
         region_rule = {name: meta_for(name, self.meta).region() for name in present}
 
         thumb = None
@@ -164,7 +178,9 @@ class Pipeline:
             brief=brief,
             thumb=thumb,
         )
+        stage_started = time.perf_counter()
         global_settings, region_settings = self.decider.decide(ctx)
+        stage_timings["decide"] = (time.perf_counter() - stage_started) * 1000
 
         if not cfg.sharpen:  # strip the sharpen op when output sharpening is disabled
             global_settings.pop("sharpen", None)
@@ -356,6 +372,7 @@ class Pipeline:
         band_pre_score = 0.0
         band_reduce_factor = None
         residual_banding: tuple[float, str, bool] | None = None
+        stage_started = time.perf_counter()
         if do_apply:
             guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
@@ -401,6 +418,7 @@ class Pipeline:
                 chroma_neutral_allowance=chroma_neutral_allowance,
                 protect_chroma=guard_mask,
                 palette=palette_arg, report=gate_report,
+                on_stage=on_stage,
             )
             if guard_mask is not None:
                 guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
@@ -437,6 +455,7 @@ class Pipeline:
                         chroma_neutral_allowance=chroma_neutral_allowance,
                         protect_chroma=guard_mask,
                         palette=palette_arg, report={},
+                        on_stage=on_stage,
                     )
                     # The sidecar must report the settings that actually rendered the pixels —
                     # swap in the damped values so the JSON matches the output, not the plan.
@@ -540,6 +559,10 @@ class Pipeline:
             if final_action != "pass":
                 residual_banding = (final_score, final_action, band_remediated)
 
+        stage_timings["apply_finish"] = (time.perf_counter() - stage_started) * 1000
+        if on_stage is not None and out_rgb is not None:
+            on_stage("final_float", out_rgb)
+        stage_started = time.perf_counter()
         # Post-edit safety assessment — measured on the EDITED output, not the source. Drives
         # the review queue + quality score (Codex review: review gate must read edited output).
         post_stats = None
@@ -626,6 +649,11 @@ class Pipeline:
             model=cfg.llm_model if cfg.decider == "llm" else None,
             timing_ms=(time.perf_counter() - t0) * 1000.0,
         )
+        stage_timings["assess_result"] = (time.perf_counter() - stage_started) * 1000
+        result.stage_timings_ms.update(stage_timings)
+        result.audit.update(decode_info=getattr(img, "decode_info", {}),
+                            source_format=os.path.splitext(path)[1].lower().lstrip("."),
+                            decode_injected=image is not None)
         return out_rgb, result
 
     def _get_ref_proxy(self) -> Image | None:

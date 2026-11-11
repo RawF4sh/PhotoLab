@@ -3,7 +3,38 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
-## [Unreleased] — Shared highlight budget and reproducible evaluation
+## [Unreleased] — Auditable autonomous quality workflow
+
+### Added
+- Recursive capture selection, immutable source/artifact provenance, isolated errors,
+  bounded safety fallback, native export assessment, and strict resume in
+  `scripts/quality_workflow.py`.
+- Shared source-relative RGB/luminance clipping, texture, color, gradient, edge and
+  finite-pixel assessment. Missing measurements remain unavailable. Observational
+  intermediate-stage audits expose damage hidden by later tone operations.
+- Separate development-first and bounded-optimization experiments, six RAW controls,
+  fixed-mask component comparisons, frozen tuning/holdout protocols, and shard merging.
+- Two-arm blind galleries with candidate-specific decode, opaque identities,
+  independent random streams, explicit photo ties, strict vote validation and exact binomial scoring.
+
+### Changed
+- Preview-derived experimental RAW development falls back to zero lift with an
+  explicit reason; RGB channels determine available headroom. JPEG/TIFF decoding
+  and production rendering order are preserved.
+- Strict tone reports now fail on added RGB or shadow clipping, invalid exports,
+  incomplete sidecars, and source/artifact hash failures.
+
+### Fixed
+- Preserve accepted resume provenance across setup failures, interruptions and transient verification errors without weakening artifact hash checks.
+- Reject malformed/nonfinite safety configuration instead of allowing invalid budgets.
+- Snapshot per-image options and preserve fixed-mask safety separately from resegmented checks.
+- Record actual backend, optional runtime dependencies, and encoding-only remediation reasons.
+
+See [the workflow guide](docs/QUALITY_WORKFLOW.md) for commands, migration and rollback.
+The current production default remains in place; numerical gains are not evidence
+of aesthetic superiority.
+
+## Prior unreleased validation — Shared highlight budget
 
 ### Fixed
 - White-point lifts now use highlight headroom remaining after the planned exposure adjustment,

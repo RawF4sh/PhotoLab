@@ -71,7 +71,7 @@ def test_run_config_defaults_to_none_and_exposes_raw_opts():
     assert cfg.raw_mode == "none"
     opts = raw_opts_from(cfg)
     assert opts["raw_mode"] == "none" and set(opts) >= {"raw_max_ev", "raw_clip_budget", "raw_fallback_ev"}
-    assert set(RAW_MODES) == {"none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"}
+    assert set(RAW_MODES) == {"none", "linear_srgb", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"}
 
 
 def test_jpeg_ignores_decode_options(tmp_path):

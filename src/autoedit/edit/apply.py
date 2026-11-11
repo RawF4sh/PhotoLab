@@ -27,6 +27,7 @@ def apply_image(
     protect_chroma: np.ndarray | None = None,
     palette: tuple | None = None,
     report: dict | None = None,
+    on_stage=None,
 ) -> np.ndarray:
     """full_rgb: float HxWx3 gamma [0,1].
     regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited.
@@ -52,12 +53,18 @@ def apply_image(
         out = out * (1.0 - a3) + edited * a3
         claimed = np.clip(claimed + a_eff, 0.0, 1.0)
 
+    if on_stage is not None:
+        on_stage("after_regions", out)
+
     for alpha, settings in compositional or []:
         if not settings or float(alpha.max()) <= 1e-4:
             continue
         edited = ops.apply_ops(out, settings)
         a3 = alpha[..., None]
         out = out * (1.0 - a3) + edited * a3
+
+    if on_stage is not None:
+        on_stage("after_composition", out)
 
     if global_settings:
         if guard_mask is not None and guard_ops:
@@ -73,12 +80,18 @@ def apply_image(
         else:
             out = ops.apply_ops(out, global_settings)
 
+    if on_stage is not None:
+        on_stage("after_global", out)
+
     # Regional palette grade (OKLab split-tone) as colour finishing — luminance-preserving, with the
     # skin-safe guard mask held neutral. Runs BEFORE the chroma gate so the gate still backstops it.
     if palette is not None:
         pal, pstrength = palette
         if pal is not None and pstrength > 0.0:
             out = palette_grade(out, pal, pstrength, protect=guard_mask)
+
+    if on_stage is not None:
+        on_stage("after_palette", out)
 
     out = np.clip(out, 0.0, 1.0)
 
@@ -93,4 +106,6 @@ def apply_image(
         if report is not None:
             report["chroma_limited"] = limited
 
+    if on_stage is not None:
+        on_stage("after_chroma_guard", out)
     return out

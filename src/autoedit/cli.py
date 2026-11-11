@@ -129,9 +129,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=["stub", "sam3"])
     p.add_argument("--device")
     p.add_argument("--raw-mode", dest="raw_mode",
-                   choices=["none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"],
+                   choices=["none", "linear_srgb", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"],
                    help="RAW development: none (default libraw render) | libraw_auto | preview_ev | "
-                        "preview_ev_headroom | tone_target (see scripts/raw_benchmark.py)")
+                        "preview_ev_headroom | tone_target | linear_srgb (see scripts/raw_benchmark.py)")
     p.add_argument("--format", choices=["jpeg", "tiff"])
     p.add_argument("--quality", type=int)
     p.add_argument("--analysis-long-edge", dest="analysis_long_edge", type=int)

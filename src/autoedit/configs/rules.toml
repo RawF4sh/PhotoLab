@@ -95,6 +95,9 @@ min_coverage = 0.03
 # Added clipping is a hard review trigger, even below the absolute warning thresholds. Uses
 # the tone report's 0.5% budget; also checks the fraction clipping any RGB channel.
 clip_budget = 0.005
+# Source-relative luminance/RGB shadow clipping uses the same existing 0.5% budget.
+# Explicitly record the current gate default; this does not change its behavior.
+shadow_clip_budget = 0.005
 clip_penalty = 0.25
 # Darkness regression (source-relative): a source whose foreground / bottom-band median is below
 # `dark_source` must not come out more than `dark_regress` darker → warning + review. Never an

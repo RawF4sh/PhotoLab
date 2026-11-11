@@ -126,12 +126,22 @@ local `./configs` dir or `--configs-dir`):
 
 ## Develop
 
+For unattended recursive RAW/JPEG selection, verified exports and source-relative
+safety, use `PYTHONPATH=src python3 scripts/quality_workflow.py PHOTOS EXPORTS --backend stub`.
+The default wraps the current editor; `--workflow global-first` and `--workflow optimized`
+are experimental alternatives. The [completed evaluation](docs/QUALITY_EVALUATION_2026-09-29.md) retains the current default and documents measured tradeoffs. See [the quality workflow guide](docs/QUALITY_WORKFLOW.md)
+for frozen tuning/holdout experiments, sidecar provenance, limitations and two-arm blind review.
+
 ```bash
-PYTHONPATH=src python tests/run_all.py    # zero-dependency test runner (or: python -m pytest)
-PYTHONPATH=src python scripts/tone_report.py ./raws --render --backend stub   # objective tone gate (dark→darker, clipping, vs camera)
-PYTHONPATH=src python scripts/raw_benchmark.py ./raws                          # rank RAW development candidates vs the camera render
-PYTHONPATH=src python scripts/blindtest.py ./raws ./out-blind --backend sam3 --raw-mode none --methods baseline,camera,autoedit --stratify 8
+PYTHONPATH=src python3 tests/run_all.py    # zero-dependency test runner (or: python3 -m pytest)
+python3 scripts/make_smoke_corpus.py ./test-corpus  # once, in an empty fixture directory
+PYTHONPATH=src python3 -m autoedit.cli run ./test-corpus ./out-smoke-new --backend stub
+PYTHONPATH=src python3 scripts/tone_report.py ./raws --render --backend stub --fail-on-regression
 ```
+
+The deterministic smoke generator refuses to overwrite existing fixtures. Use a new
+output directory for each smoke run. The quality guide documents separate two-arm
+global-baseline and camera-reference galleries from accepted exports.
 
 Use `tone_report.py --fail-on-regression` for an unattended gate; incomplete reports fail too.
 Blind galleries retain the run configuration and file hashes in `run.json`, plus pipeline sidecars

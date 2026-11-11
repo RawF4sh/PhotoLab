@@ -1,0 +1,108 @@
+# Experimental workflows. Production `current` delegates to Pipeline unchanged.
+# These values are frozen experiment inputs, not claims of aesthetic superiority.
+[workflow]
+raw_mode = "linear_srgb"
+stats_space = "linear"
+format_policy = "separate"
+segmentation = false
+regional = false
+segment_order = "after_global"
+order = "global_first"
+scene_order = "after_global"
+contrast_mode = "adaptive"
+tone_mapping = "shoulder"
+composition = false
+vignette = false
+sky_gradient = false
+palette = false
+consistency = false
+consistency_bias = 0.0
+preserve_exposure = false
+preserve_terms = ["moody", "dark", "night", "low key", "low-key", "silhouette", "preserve exposure", "keep exposure"]
+
+[global]
+dark_source = 0.30
+raw_target = 0.40
+jpeg_target = 0.36
+exposure_fraction = 0.60
+max_exposure = 1.0
+headroom_margin_ev = 0.15
+headroom_percentile = 99.5
+highlight_level = 0.98
+shadow_gain = 60.0
+max_shadows = 18.0
+target_spread = 0.65
+contrast_gain = 20.0
+max_contrast = 8.0
+contrast_pivot_min = 0.08
+contrast_pivot_max = 0.80
+rolloff = 20.0
+curve = 3.0
+reinhard_strength = 0.50
+reinhard_white_point = 2.0
+wb_fraction = 0.35
+warmth_preserve = 0.035
+temp_min = -4.0
+temp_max = 8.0
+tint_min = -4.0
+tint_max = 4.0
+vibrance = 2.0
+chroma_max_increase = 0.30
+consistency_max_ev = 0.15
+
+[regional]
+target = 0.35
+dark_source = 0.28
+exposure_fraction = 0.35
+max_exposure = 0.35
+headroom_margin_ev = 0.03
+highlight_level = 0.98
+shadow_gain = 40.0
+max_shadows = 10.0
+min_coverage = 0.005
+
+[search]
+proxy_edge = 512
+max_passes = 6
+max_evaluations = 144
+max_seconds = 30.0
+step_decay = 0.5
+improvement_epsilon = 0.000001
+exposure_step = 0.20
+shadows_step = 4.0
+highlights_step = 4.0
+whites_step = 2.0
+blacks_step = 2.0
+contrast_step = 2.0
+temp_step = 2.0
+tint_step = 2.0
+vibrance_step = 2.0
+dehaze_step = 2.0
+exposure_min = 0.0
+exposure_max = 1.25
+shadows_min = 0.0
+shadows_max = 24.0
+highlights_min = -16.0
+highlights_max = 0.0
+whites_min = -8.0
+whites_max = 4.0
+blacks_min = -3.0
+blacks_max = 0.0
+contrast_min = 0.0
+contrast_max = 10.0
+temp_min = -4.0
+temp_max = 8.0
+tint_min = -4.0
+tint_max = 4.0
+vibrance_min = 0.0
+vibrance_max = 6.0
+dehaze_min = 0.0
+dehaze_max = 4.0
+
+[objective]
+foreground_weight = 2.0
+spread_weight = 0.25
+dark_coverage_weight = 0.25
+highlight_change_weight = 0.40
+color_change_weight = 0.50
+parameter_weight = 0.01

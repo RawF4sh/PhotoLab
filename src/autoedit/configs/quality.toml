@@ -1,0 +1,29 @@
+# Source-relative safety limits; no universal target brightness. Fractions are 0..1.
+# Freeze these before a tuning/holdout experiment and record this file's digest.
+schema_version = 1
+max_metric_edge = 1024
+chunk_rows = 128
+shadow_level = 0.02
+highlight_level = 0.98
+clip_budget = 0.005
+shadow_clip_budget = 0.005
+dark_source = 0.30
+dark_regress = 0.01
+sat_delta = 0.10
+chroma_delta = 0.10
+banding_fail = 0.35
+texture_high_min = 0.80
+texture_high_max = 0.98
+texture_min_pairs = 16
+texture_max_step_codes = 12
+texture_min_retention = 0.10
+texture_max_new_plateau = 0.60
+artifact_patch_size = 128
+artifact_grid = 4
+halo_delta = 0.25
+halo_percentile = 99.0
+neutral_chroma_max = 0.05
+neutral_luma_min = 0.20
+neutral_luma_max = 0.95
+remediation_factors = [0.75, 0.5, 0.25, 0.125, 0.0]
+finite_tolerance = 0.000001

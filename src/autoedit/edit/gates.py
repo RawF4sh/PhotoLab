@@ -34,6 +34,7 @@ GATE_DEFAULTS = {
     "review_highlight": 0.05,  # hard review triggers regardless of score
     "review_shadow": 0.12,
     "clip_budget": 0.005,    # added clipped fraction vs source; a hard review trigger
+    "shadow_clip_budget": 0.005,
     "clip_penalty": 0.25,
     # Source-relative darkness regression: a source whose (sky-excluded) foreground median or
     # bottom band sits below `dark_source` must not come out more than `dark_regress` darker.
@@ -61,10 +62,13 @@ def assess(pre, post, chroma_limited: float = 0.0,
     # independently of score, including single-channel clipping that luminance can hide.
     introduced_clipping = False
     for label, key in (("highlight", "highlight_clip"),
-                       ("RGB highlight", "rgb_highlight_clip_any")):
+                       ("RGB highlight", "rgb_highlight_clip_any"),
+                       ("shadow", "shadow_clip"),
+                       ("RGB shadow", "rgb_shadow_clip_any")):
         before = float(getattr(pre, key, 0.0))
         after = float(getattr(post, key, 0.0))
-        if after - before > t["clip_budget"]:
+        budget = t["shadow_clip_budget"] if "shadow" in label else t["clip_budget"]
+        if after - before > budget:
             introduced_clipping = True
             warnings.append(f"{label} clipping increased +{(after - before) * 100:.2f}% "
                             f"({before * 100:.2f}% → {after * 100:.2f}%)")

@@ -56,11 +56,11 @@ class RunConfig(BaseModel):
     # RAW development (imageio._decode_raw). "none" is today's libraw render and stays the
     # default; the other modes are benchmark candidates (scripts/raw_benchmark.py) — a benchmark
     # may recommend one, it never flips this default by itself.
-    raw_mode: Literal["none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"] = "none"
+    raw_mode: Literal["none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target", "linear_srgb"] = "none"
     raw_max_ev: float = Field(default=2.5, ge=0.0, le=5.0)          # never lift more than this
     raw_clip_budget: float = Field(default=0.005, ge=0.0, le=0.1)   # fraction allowed to reach white
     raw_tone_target_p50: float = Field(default=0.40, gt=0.0, lt=1.0)  # tone_target: median (gamma)
-    raw_fallback_ev: float = Field(default=1.4, ge=0.0, le=5.0)     # preview modes w/o a preview
+    raw_fallback_ev: float = Field(default=0.0, ge=0.0, le=5.0)     # no universal lift without a preview
 
     # segmentation
     backend: Literal["stub", "sam3"] = "stub"
@@ -223,3 +223,5 @@ class Result(BaseModel):
     model: str | None = None
     engine_version: str = ""
     timing_ms: float = 0.0
+    audit: dict = Field(default_factory=dict)
+    stage_timings_ms: dict[str, float] = Field(default_factory=dict)

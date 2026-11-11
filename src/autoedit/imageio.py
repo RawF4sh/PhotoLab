@@ -14,7 +14,7 @@ conversion. Embedded ICC profiles are converted to sRGB so the working space is 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image as PILImage
@@ -41,6 +41,7 @@ class Image:
     path: str | None = None
     exif: dict | None = None  # small normalized metadata dict (iso, exposure_ev) — {} if none
     decode_ev: float = 0.0    # RAW development lift applied at decode (see RAW_MODES)
+    decode_info: dict = field(default_factory=dict)  # decoder/mode/fallback provenance
 
     @property
     def height(self) -> int:
@@ -75,7 +76,8 @@ def load_image(path: str, decode: dict | None = None) -> Image:
     collapses high-bit-depth data to 8-bit), and convert ICC → sRGB for 8-bit inputs so the
     working space is defined rather than assumed."""
     # 0) Camera RAW (.dng/.cr2/.nef/.arw/…) → demosaic at 16-bit via rawpy/libraw.
-    raw = _decode_raw(path, decode)
+    decode_info: dict = {}
+    raw = _decode_raw(path, decode, report=decode_info)
     if raw is not None:
         rgb, bits, ev = raw
         # RAW is the preferred edit source, so EXIF priors (ISO → restrained sharpening)
@@ -86,7 +88,7 @@ def load_image(path: str, decode: dict | None = None) -> Image:
         except Exception:
             exif = {}
         return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif,
-                     decode_ev=ev)
+                     decode_ev=ev, decode_info=decode_info)
 
     pil = PILImage.open(path)
     exif = _read_exif(pil)
@@ -126,9 +128,9 @@ def load_image(path: str, decode: dict | None = None) -> Image:
 # median 1.4–1.8 EV under the camera's OWN embedded JPEG, so the other modes are candidates that
 # lift the LINEAR demosaic before gamma; scripts/raw_benchmark.py ranks them, nothing flips the
 # default automatically.
-RAW_MODES = ("none", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target")
+RAW_MODES = ("none", "linear_srgb", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target")
 _RAW_DEFAULTS = {"raw_mode": "none", "raw_max_ev": 2.5, "raw_clip_budget": 0.005,
-                 "raw_tone_target_p50": 0.40, "raw_fallback_ev": 1.4}
+                 "raw_tone_target_p50": 0.40, "raw_fallback_ev": 0.0}
 # Headroom-capped modes stop this many stops short of the clip level, so the pipeline's own
 # whites/shadows/sharpen (which run AFTER decode) don't push the top percentile into white.
 # Mirrors the `headroom_ev - 0.15` margin the exposure rules use (configs/rules.toml).
@@ -152,6 +154,7 @@ def develop_ev(lin_rgb: np.ndarray, camera_rgb: np.ndarray | None, opts: dict | 
                           residual foreground deficit is left to the shadows / region rules.
     tone_target           ignore the camera: put the median at `raw_tone_target_p50` (gamma),
                           headroom-capped.
+    linear_srgb           0 — linear demosaic encoded with the exact sRGB transfer function.
     none / libraw_auto    0 — libraw's own render, with or without its 1%-clip auto-bright.
     Never negative (a mode never darkens), never above raw_max_ev."""
     o = {**_RAW_DEFAULTS, **(opts or {})}
@@ -164,7 +167,10 @@ def develop_ev(lin_rgb: np.ndarray, camera_rgb: np.ndarray | None, opts: dict | 
     raw_p50 = max(float(np.percentile(lum_lin, 50)), 1e-5)
     clip_q = 100.0 * (1.0 - float(o["raw_clip_budget"]))
     white = float(srgb_to_linear(np.float32(0.98)))
-    headroom = max(0.0, float(np.log2(white / max(float(np.percentile(lum_lin, clip_q)), 1e-5)))
+    # A luminance percentile misses saturated red/blue highlights. The budget applies to
+    # pixels clipping ANY channel, consistently with stats.compute's headroom definition.
+    brightest = np.max(lin_rgb, axis=-1)
+    headroom = max(0.0, float(np.log2(white / max(float(np.percentile(brightest, clip_q)), 1e-5)))
                    - _HEADROOM_MARGIN_EV)
     if mode == "tone_target":
         target = float(srgb_to_linear(np.float32(o["raw_tone_target_p50"])))
@@ -190,8 +196,17 @@ def _preview_rgb(raw, max_px: int = 1024) -> np.ndarray | None:
         t = raw.extract_thumb()
         if t.format == rawpy.ThumbFormat.JPEG:
             pil = PILImage.open(io.BytesIO(t.data)).convert("RGB")
+        elif t.format == rawpy.ThumbFormat.BITMAP:
+            bitmap = np.asarray(t.data)
+            if bitmap.dtype == np.uint16:
+                bitmap = np.rint(bitmap.astype(np.float32) / 257.0).astype(np.uint8)
+            if bitmap.ndim not in (2, 3):
+                return None
+            pil = PILImage.fromarray(bitmap).convert("RGB")
         else:
-            pil = PILImage.fromarray(np.asarray(t.data)).convert("RGB")
+            return None
+        if min(pil.size) < 8:
+            return None
         pil.thumbnail((max_px, max_px))
         return np.asarray(pil).astype(np.float32) / 255.0
     except Exception:
@@ -218,12 +233,35 @@ def camera_preview(path: str, max_px: int = 1600, like: np.ndarray | None = None
         rgb = _apply_exif_orientation(rgb, _orientation_of(PILImage.open(path)))
     except Exception:
         pass
-    if like is not None and (like.shape[0] > like.shape[1]) != (rgb.shape[0] > rgb.shape[1]):
-        rgb = np.rot90(rgb)
+    if like is not None and not _compatible_preview(rgb, like, orientation_sensitive=True):
+        # Do not guess a 90-degree direction or stretch a differently cropped thumbnail.
+        # Histogram-only development may still use a compatible stored-orientation preview.
+        return None
     return np.ascontiguousarray(rgb)
 
 
-def _decode_raw(path: str, opts: dict | None = None):
+def _compatible_preview(preview: np.ndarray | None, rgb: np.ndarray,
+                        orientation_sensitive: bool = False) -> bool:
+    """Reject absent/invalid or differently cropped previews; allow resize rounding only.
+
+    Development compares histograms, so stored rotation is immaterial. Spatial consumers
+    require the same orientation and aspect after metadata orientation has been applied.
+    No assumption is made that matching aspect proves pixel registration.
+    """
+    if preview is None or preview.ndim != 3 or preview.shape[-1] != 3:
+        return False
+    if min(preview.shape[:2]) < 8 or not np.isfinite(preview).all():
+        return False
+    ph, pw = preview.shape[:2]
+    rh, rw = rgb.shape[:2]
+    if not orientation_sensitive:
+        ph, pw = sorted((ph, pw))
+        rh, rw = sorted((rh, rw))
+    expected = ph * rw / max(rh, 1)
+    return abs(pw - expected) <= 2.0
+
+
+def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None):
     """Demosaic a camera RAW to 16-bit via rawpy/libraw. Returns (rgb[0,1], 16, decode_ev) or
     None when the path isn't a RAW. Camera white balance always. `opts` = RunConfig raw_* fields
     (see RAW_MODES); an extra `half_size` key is a benchmark speed knob (quarter-res demosaic).
@@ -242,6 +280,10 @@ def _decode_raw(path: str, opts: dict | None = None):
     mode = o["raw_mode"]
     if mode not in RAW_MODES:
         raise ValueError(f"unknown raw_mode {mode!r}; choose one of {RAW_MODES}")
+    info = report if report is not None else {}
+    info.update(decoder="rawpy/libraw", mode=mode, source_format=os.path.splitext(path)[1].lower(),
+                transfer="libraw-2.222-4.5" if mode in ("none", "libraw_auto") else "srgb",
+                preview_used=False, fallback_reason=None)
     common = dict(output_bps=16, use_camera_wb=True, half_size=bool(o.get("half_size", False)))
     with rawpy.imread(path) as raw:
         if mode in ("none", "libraw_auto"):
@@ -254,7 +296,14 @@ def _decode_raw(path: str, opts: dict | None = None):
         lin = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
         lin = lin.astype(np.float32) / 65535.0
         cam = _preview_rgb(raw) if mode.startswith("preview") else None
+        if mode.startswith("preview") and not _compatible_preview(cam, lin):
+            cam = None
+            info["fallback_reason"] = "missing, invalid, or differently cropped camera preview; no inferred lift"
+        info["preview_used"] = cam is not None
     ev = develop_ev(lin, cam, o)
+    info["decode_ev"] = ev
+    if mode.startswith("preview") and cam is None and ev:
+        info["fallback_reason"] = "explicit configured fallback exposure (not inferred from another camera)"
     if ev:
         lin = lin * np.float32(2.0 ** ev)
     return linear_to_srgb(np.clip(lin, 0.0, 1.0)), 16, ev
@@ -389,7 +438,7 @@ def downscale_long_edge(img: Image, long_edge: int) -> Image:
     ]
     rgb = np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
     return Image(rgb=rgb, source_bits=img.source_bits, path=img.path, exif=img.exif,
-                 decode_ev=img.decode_ev)
+                 decode_ev=img.decode_ev, decode_info=dict(img.decode_info))
 
 
 def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92) -> None:

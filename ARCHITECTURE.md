@@ -18,6 +18,15 @@ and it masks and edits that. The edits themselves are classic, explainable photo
 
 ## 1. The pipeline (one fixed order)
 
+The production order below remains unchanged. The opt-in
+[`quality_workflow.py`](scripts/quality_workflow.py) command wraps it with recursive
+capture selection, source hashes, shared safety assessment, bounded source blending,
+and verification of decoded exports. Experimental B/C orchestration lives separately
+in `workflows.py`; the frozen benchmark runs the original control from a saved source
+snapshot. See [the workflow guide](docs/QUALITY_WORKFLOW.md) for locking, measurements,
+format controls, source selection, and blind evaluation. These experiments do not
+change the Studio or existing CLI defaults.
+
 Everything flows through one pipeline, defined in [`pipeline.py`](src/autoedit/pipeline.py)
 (`Pipeline.process_one`). The stages are swappable but never fused or reordered:
 
