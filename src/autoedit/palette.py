@@ -38,8 +38,10 @@ PaletteSet = dict[str, Palette]
 AUTO_DEFAULTS: dict[str, dict[str, float]] = {
     "cool_blue": {
         # Hard veto: skip entirely at/above this measured warmth (blind-test losses were
-        # +0.015/+0.023 warm scenes that got a wrongly-cool grade).
-        "warmth_veto": 0.008,
+        # +0.015/+0.023 warm scenes that got a wrongly-cool grade). -1.0 is below any measurable
+        # warmth, so the unrequested cool grade is OFF by default: it made overcast frames bluer
+        # than their originals. Re-enable per configs dir with `[auto.cool_blue] warmth_veto = 0.008`.
+        "warmth_veto": -1.0,
         "cool_bonus_threshold": -0.006,   # extra score credit only when GENUINELY cool, not merely neutral
         "haze_threshold": 0.38,
         "chroma_threshold": 0.035,

@@ -2,7 +2,7 @@
 
 Operate on a gamma-encoded working RGB array (float32, HxWx3, ~[0,1]); light-like ops
 (exposure, white balance) linearize internally. `apply_ops` runs the FROZEN order:
-WB → exposure → tone → contrast → dehaze → clarity → vibrance/saturation.
+WB → exposure → shadow lift → tone → contrast → dehaze → clarity → vibrance/saturation.
 
 Units: exposure in stops; everything else ~[-100,100]; temp/tint in the same range.
 An empty/all-zero settings dict is a strict no-op (the identity test depends on this).
@@ -19,8 +19,8 @@ from .filters import box_min, gaussian_blur, guided_filter
 _EPS = 1e-6
 
 OP_NAMES = (
-    "exposure", "highlight_rolloff", "contrast", "highlights", "shadows", "whites", "blacks",
-    "curve", "clarity", "vibrance", "saturation", "dehaze", "temp", "tint",
+    "exposure", "highlight_rolloff", "shadows_ev", "contrast", "highlights", "shadows", "whites",
+    "blacks", "curve", "clarity", "vibrance", "saturation", "dehaze", "temp", "tint",
     # color grading (split-tone) — tint shadows/highlights independently
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
     # targeted HSL — adjust specific hue bands
@@ -32,6 +32,7 @@ OP_NAMES = (
 OP_BOUNDS = {
     "exposure": (-3.0, 3.0),
     "highlight_rolloff": (0.0, 100.0),
+    "shadows_ev": (-2.5, 2.5),  # stops at black; the lift stays monotonic below 2.88
     "contrast": (-100.0, 100.0),
     "highlights": (-100.0, 100.0),
     "shadows": (-100.0, 100.0),
@@ -149,6 +150,19 @@ def white_balance(rgb: np.ndarray, temp: float, tint: float) -> np.ndarray:
 def _scale_luma(rgb: np.ndarray, new_l: np.ndarray, l: np.ndarray) -> np.ndarray:
     ratio = (new_l + _EPS) / (l + _EPS)
     return rgb * ratio[..., None]
+
+
+def shadow_lift(rgb: np.ndarray, ev: float) -> np.ndarray:
+    """Open the shadows by up to `ev` stops with BLACK PINNED: a luminance gain 2**(ev·w) with
+    w = (1 − l/0.5)², 1 at black fading smoothly to 0 at mid-grey. The additive `shadows` slider
+    in `tone` adds its whole lift to pure black, so a strong setting raises the black floor into a
+    grey veil and multiplies near-black pixels without limit (speckle). A gain keeps 0 at 0, keeps
+    local contrast in the deep shadows, is bounded by 2**ev, and leaves everything at or above
+    mid-grey untouched. Monotonic for |ev| < 2.88 (OP_BOUNDS keeps it inside); 0 is the identity."""
+    if ev == 0.0:
+        return rgb
+    w = np.clip(1.0 - luma(rgb) / 0.5, 0.0, 1.0)
+    return rgb * np.exp2(ev * w * w)[..., None].astype(np.float32)
 
 
 def tone(rgb, highlights=0.0, shadows=0.0, whites=0.0, blacks=0.0) -> np.ndarray:
@@ -338,6 +352,8 @@ def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
     ev, rolloff = settings.get("exposure", 0.0), settings.get("highlight_rolloff", 0.0)
     if temp or tint or ev or rolloff:  # WB → exposure → knee, one linear pass (frozen order kept)
         out = light(out, temp, tint, ev, rolloff)
+    if settings.get("shadows_ev", 0.0):  # black-pinned lift, before the additive tone sliders
+        out = shadow_lift(out, settings["shadows_ev"])
     if any(settings.get(k, 0.0) for k in ("highlights", "shadows", "whites", "blacks")):
         out = tone(out, settings.get("highlights", 0.0), settings.get("shadows", 0.0),
                    settings.get("whites", 0.0), settings.get("blacks", 0.0))

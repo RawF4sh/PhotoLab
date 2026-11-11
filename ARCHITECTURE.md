@@ -228,6 +228,15 @@ point, contrast that adapts to the measured tonal spread, and region-aware auto 
 (§4) all fire by default. Still restrained relative to the assertive looks — `punchy`/`dramatic`
 are the opt-in for a stronger commitment.
 
+**Lift without haze** (2026-11 screenshot loop; each rule has a golden test and a comment in
+`rules.toml`): the additive `shadows` lift is paired with an equal negative `blacks` so black stays
+black; a dark foreground the highlight headroom keeps `exposure` from reaching is opened by the
+black-pinned `shadows_ev` instead; the filmic `curve` grows with the exposure actually spent, so
+a lifted frame gets its depth back; negative `highlights`/`whites` are capped at a gentle shoulder
+(a hard pull turns white snow and sky into a grey plateau); regional lifts are a nudge, never a
+second exposure (a mask often ends where the picture has no edge); output sharpening is light
+and applied once.
+
 ### looks.toml (`looks.py`) — magnitude shaping
 
 A look never adds new decisions; it scales/offsets existing ones, then everything is scaled by
@@ -239,9 +248,18 @@ final = clamp(base * look_mul + look_add) * intensity
 
 Fields: `contrast_mul`, `vibrance_add`, **`saturation_add`** (uniform global lift — vibrance protects
 already-saturated pixels, this doesn't; global-only so the skin guard can hold it off faces),
-`clarity_mul`, `dehaze_mul`, and global-only finishing `curve_add` (filmic S-curve) +
-`grade_{shadows,highlights}_{temp,tint}` (split-tone). `dramatic` is tuned to genuinely commit
-(contrast 1.6×, vibrance +14, saturation +12, clarity 1.7×, dehaze 1.8×, deep teal-orange grade).
+`clarity_mul`, `dehaze_mul`, `curve_mul`, `exposure_mul`, and global-only finishing `curve_add`
+(filmic S-curve) + `grade_{shadows,highlights}_{temp,tint}` (split-tone). `dramatic` is tuned to
+genuinely commit (contrast 1.6×, vibrance +14, saturation +12, clarity 1.7×, dehaze 1.8×, deep
+teal-orange grade).
+
+Prefer the **multipliers** for a look's tonal mood: `contrast_mul` and `curve_mul` scale rule values
+that already carry the safety fades (highlight headroom, dark sources), and `exposure_mul` (< 1)
+only holds back a lift, so a strong look cannot push a dark photo darker or a bright one into
+clipping. `curve_add` is unconditional — on a dark, headroom-limited photo more than a few points
+of it trips the darkness gate. `cinematic_preserved` is built this way: neutral colour, depth from
+`curve_mul`. It therefore differs from `natural` only on photos the rules lift; a mood darker than
+the source needs the darkness gate's opt-out, which today only a prompt word ("moody") grants.
 
 ### styles.toml (`styles.py`)
 
@@ -285,15 +303,21 @@ place a lift can compress into white instead of clipping, which is what the came
 curve does and a bare multiply cannot:
 
 ```
-white balance → exposure (+ highlight knee) → tone(highlights/shadows/whites/blacks) → contrast → curve
-  → dehaze → clarity → vibrance/saturation → targeted HSL → color grade → sharpen
+white balance → exposure (+ highlight knee) → shadow lift → tone(highlights/shadows/whites/blacks)
+  → contrast → curve → dehaze → clarity → vibrance/saturation → targeted HSL → color grade → sharpen
 ```
 
 Notable ops:
 
 - **exposure** — multiply in linear light (`2^EV`).
 - **white_balance** — per-channel gain in linear (temp = R↑/B↓, tint = G).
-- **tone** — luminance-weighted lifts for highlights/shadows/whites/blacks.
+- **shadow lift** (`shadows_ev`, stops) — a black-pinned luminance gain `2^(ev·w)`, `w = (1 − l/0.5)²`:
+  full strength at black, zero from mid-grey up. It opens a dark foreground the highlight headroom
+  kept the global exposure from reaching, without raising the black floor (which the additive
+  `shadows` slider does) and with a bounded gain, so near-black noise is not blown up.
+- **tone** — luminance-weighted lifts for highlights/shadows/whites/blacks. `shadows` is additive
+  and lifts pure black too, so the shipped rules pair it with an equal negative `blacks` (the
+  "black anchor"): together they open the shadows and keep black at black.
 - **contrast / curve** — linear pivot at 0.5 / filmic smootherstep S-curve on luma.
 - **dehaze** — **real dark-channel-prior** (see below).
 - **clarity** — local-contrast (luma minus large-radius Gaussian), highlight/shadow protected.

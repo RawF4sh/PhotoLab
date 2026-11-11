@@ -91,9 +91,10 @@ applied at native resolution with edge-aware (guided-filter) mask feathering.
   Palettes: `cool_blue`, `teal_orange`, `warm_gold`, `forest_olive`, `muted_film`. "Auto" infers from
   the intent text or, failing that, from image stats (`auto_palette_for_image`). An explicit pick
   (typed cue or the Palette dropdown) applies at full configured strength; an *inferred* grade is
-  deliberately restrained — capped at 40% (cool_blue) / 55% (others) and vetoed entirely for
-  cool_blue on a scene with positive measured warmth, so an automatic grade never fights the
-  scene's actual light (a blind-test-driven fix — see `PLAN.md`).
+  deliberately restrained — capped at 55%. `cool_blue` is **never inferred** by default: an
+  unrequested cool grade made overcast scenes bluer than their originals, so it now needs an
+  explicit pick or a cue such as "cool blue" / "blue hour" (re-enable the inference per configs
+  dir with `[auto.cool_blue] warmth_veto = 0.008` in `palettes.toml`).
 - **Auto white balance** (region-aware) — measures the colour cast on a natural gray card: SAM's
   `snow` region when present, else bright near-neutral pixels. Corrects blue/overcast casts up to
   a bounded amount; the correction fades to zero as the scene's measured warmth rises, so
@@ -108,8 +109,11 @@ applied at native resolution with edge-aware (guided-filter) mask feathering.
 
 ### Edit ops (frozen order, `edit/ops.py`)
 
-`white balance → exposure (+ highlight knee) → tone → contrast → curve → dehaze → clarity →
-vibrance/saturation → targeted HSL → color grade → sharpen`. An empty settings dict is a strict no-op. Notable:
+`white balance → exposure (+ highlight knee) → shadow lift → tone → contrast → curve → dehaze →
+clarity → vibrance/saturation → targeted HSL → color grade → sharpen`. An empty settings dict is a strict no-op. Notable:
+
+- **Shadow lift** (`shadows_ev`) — opens dark foregrounds by up to N stops with black pinned
+  (a bounded gain that fades to nothing at mid-grey), so a dark scene is lifted without a grey veil.
 
 - **Real dehaze** — physical dark-channel prior (He et al.): estimate airlight, recover transmission,
   refine edge-aware with the guided filter, invert the scattering model, blend by amount. Tapers on
@@ -339,7 +343,7 @@ autoedit doctor | presets | styles
 | File | Role |
 |---|---|
 | `rules.toml` | Per-`[scene.region]` op = expression (sandboxed AST). The rule baseline + `[guard]` (guarded ops, chroma cap) + `[banding]` + optional `[quality_gate]`. |
-| `looks.toml` | Magnitude profiles (contrast_mul, vibrance_add, saturation_add, curve/grade finishing). |
+| `looks.toml` | Magnitude profiles (contrast_mul, curve_mul, exposure_mul, vibrance_add, saturation_add, curve/grade finishing). |
 | `styles.toml` | User-facing styles = look + concepts + brief. |
 | `palettes.toml` | OKLab regional palettes (shadow/mid/highlight hue+chroma, neutral protection). |
 | `intents.toml` | Free-text look vocabulary → bounded nudges. |

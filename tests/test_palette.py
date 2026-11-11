@@ -103,7 +103,9 @@ def test_auto_palette_config_is_tunable_from_toml(tmp_path):
     change the auto-palette policy WITHOUT touching palette.py."""
     src = open(os.path.join(configs_dir(), "palettes.toml")).read()
     custom = tmp_path / "palettes.toml"
-    custom.write_text(src.replace("strength_cap = 0.40", "strength_cap = 0.05"))
+    assert "warmth_veto = -1.0" in src and "strength_cap = 0.40" in src
+    custom.write_text(src.replace("strength_cap = 0.40", "strength_cap = 0.05")
+                      .replace("warmth_veto = -1.0", "warmth_veto = 0.008"))   # turn the pick back on
 
     pals = load_palettes(str(custom))
     auto_cfg = load_auto_palette_config(str(custom))
@@ -118,7 +120,7 @@ def test_auto_palette_config_is_tunable_from_toml(tmp_path):
 
     # a partial override touches only the named key — the rest of that palette's policy, and
     # every other palette's policy, still falls back to AUTO_DEFAULTS
-    assert auto_cfg["cool_blue"]["warmth_veto"] == AUTO_DEFAULTS["cool_blue"]["warmth_veto"]
+    assert auto_cfg["cool_blue"]["haze_threshold"] == AUTO_DEFAULTS["cool_blue"]["haze_threshold"]
 
 
 def test_load_auto_palette_config_degrades_safely_without_a_file():
@@ -130,11 +132,28 @@ def test_load_palettes_does_not_treat_auto_table_as_a_palette():
     assert "auto" not in pals
 
 
+# The picker's cool_blue branch with its original blind-test-tuned veto, for the logic tests below.
+_COOL_ON = {**AUTO_DEFAULTS, "cool_blue": {**AUTO_DEFAULTS["cool_blue"], "warmth_veto": 0.008}}
+
+
+def test_auto_cool_blue_is_off_by_default():
+    """Golden (improvement loop iter-04): an unrequested cool grade fired on 8 of 9 overcast frames
+    and made each bluer than its original, so neither the code default nor the shipped TOML ever
+    infers cool_blue. A configs dir can turn it back on; explicit picks are unaffected."""
+    pals = _palettes()
+    stats = SimpleNamespace(mean_lum=0.55, mean_sat=0.06, haze=0.52, warmth=-0.012,
+                            mean_chroma=0.018, sky_lum=0.75)
+    shipped = load_auto_palette_config(os.path.join(configs_dir(), "palettes.toml"))
+    for cfg in (None, shipped):
+        assert auto_palette_for_image("landscape", stats, {"sky", "water", "snow"}, pals, cfg)[0] is None
+    assert auto_palette_for_image("landscape", stats, {"sky", "water", "snow"}, pals, _COOL_ON)[0] == "cool_blue"
+
+
 def test_auto_palette_selects_cool_winter_landscape():
     pals = _palettes()
     stats = SimpleNamespace(mean_lum=0.55, mean_sat=0.06, haze=0.52, warmth=0.0,
                             mean_chroma=0.018, sky_lum=0.75)
-    name, strength, reason = auto_palette_for_image("landscape", stats, {"sky", "water"}, pals)
+    name, strength, reason = auto_palette_for_image("landscape", stats, {"sky", "water"}, pals, _COOL_ON)
     assert name == "cool_blue"
     assert 0.20 <= strength <= 0.40                       # unrequested grades whisper (capped)
     assert "cool" in reason
@@ -147,7 +166,7 @@ def test_auto_palette_never_cools_a_warm_scene():
     for w in (0.015, 0.023, 0.008):
         stats = SimpleNamespace(mean_lum=0.55, mean_sat=0.15, haze=0.60, warmth=w,
                                 mean_chroma=0.023, sky_lum=0.70)
-        name, _s, _r = auto_palette_for_image("landscape", stats, {"sky", "mountain", "snow"}, pals)
+        name, _s, _r = auto_palette_for_image("landscape", stats, {"sky", "mountain", "snow"}, pals, _COOL_ON)
         assert name != "cool_blue", f"cool grade fired on warm scene (warmth={w})"
 
 

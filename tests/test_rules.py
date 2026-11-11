@@ -1,5 +1,6 @@
 """Rules evaluator: helpers, the sandbox, and apply()."""
 
+import math
 import numpy as np
 import pytest
 
@@ -131,7 +132,7 @@ def test_shipped_pro_tone_rules_adapt_to_percentiles():
     )
     gset, _ = apply(rules, "landscape", crisp, {}, {}, intensity=1.0)
     assert gset["contrast"] == 0.0                        # near-white tail → no extra contrast
-    assert gset["blacks"] == 0.0                          # blacks already deep → never crush more
+    assert gset["blacks"] == -gset["shadows"]             # blacks already deep → anchor only, nothing crushed
     assert gset["clarity"] == 3.0                         # already detailed → minimum clarity
 
     legacy = GlobalStatsModel(                            # zero-filled percentiles → old behavior
@@ -185,7 +186,8 @@ def test_shipped_exposure_targets_foreground_not_sky():
     dark = skyheavy.model_copy(update={"fg_p50": 0.17, "dark_cov": 0.25})
     dset, _ = apply(rules, "landscape", dark, {}, {}, intensity=1.0)
     assert dset["exposure"] == 1.0                          # 60% of a 3.1 EV deficit, capped at +1.0
-    assert dset["shadows"] >= 30 and dset["contrast"] == 0.0 and dset["blacks"] == 0.0
+    # contrast fades on a dark source; blacks carries only the anchor that pins black under the lift
+    assert dset["shadows"] >= 30 and dset["contrast"] == 0.0 and dset["blacks"] == -dset["shadows"]
 
 
 def test_snow_dominant_scene_gets_extra_shadow_lift():
@@ -286,16 +288,178 @@ def test_region_channel_clip_is_available_to_rules():
 
 
 def test_landscape_and_other_share_the_documented_sync_keys():
-    """rules.toml's schema has no block-inheritance, so [landscape.global]/[other.global] share 7
+    """rules.toml's schema has no block-inheritance, so [landscape.global]/[other.global] share 6
     keys by hand copy-paste (see the SYNC NOTE comments atop each block). Pin them byte-identical
-    so a future edit to only one side is caught here instead of silently drifting."""
+    so a future edit to only one side is caught here instead of silently drifting. (`blacks` left
+    the list on purpose: its anchor mirrors each block's own `shadows` rule — see
+    test_black_anchor_pins_black_under_the_shadow_lift.)"""
     rules = load_rules(config_path("rules.toml"))
     landscape = rules["landscape"]["global"]
     other = rules["other"]["global"]
-    synced_keys = ("blacks", "vibrance", "dehaze", "clarity", "sharpen", "temp", "tint")
+    synced_keys = ("vibrance", "dehaze", "clarity", "sharpen", "temp", "tint")
     for key in synced_keys:
         assert landscape[key] == other[key], (
             f"[landscape.global].{key} and [other.global].{key} have drifted apart — "
             "update both (see the SYNC NOTE comment in rules.toml) or remove the key from "
             "this test's synced_keys list if the divergence is now intentional."
         )
+
+
+def test_black_anchor_pins_black_under_the_shadow_lift():
+    """Golden (improvement loop iter-02). The `shadows` op adds its lift at full weight on pure
+    black, which raised the black floor and read as a grey veil on dark frames. `blacks` now
+    subtracts the same amount, so the pair opens the shadows, pins black and darkens no tone.
+    The older "deepen washed blacks" term only acts when the frame has no dark tail — with real
+    blacks present it pushed them into clipping."""
+    rules = load_rules(config_path("rules.toml"))
+    dark = GlobalStatsModel(
+        mean_lum=0.20, mean_sat=0.15, shadow_clip=0.025, highlight_clip=0.0, haze=0.21,
+        pro_stats_valid=1.0, lum_p10=0.035, lum_p50=0.13, lum_p90=0.61, fg_p50=0.13,
+        dark_cov=0.41, headroom_ev=0.56,
+    )
+    for scene in ("landscape", "other", "people"):
+        gset, _ = apply(rules, scene, dark, {}, {}, intensity=1.0)
+        assert gset["shadows"] >= 30, scene
+        assert gset["blacks"] == -gset["shadows"], scene      # anchor only: exactly cancels at black
+
+    washed = GlobalStatsModel(
+        mean_lum=0.50, mean_sat=0.10, shadow_clip=0.0, highlight_clip=0.0, haze=0.20,
+        pro_stats_valid=1.0, lum_p10=0.13, lum_p50=0.45, lum_p90=0.70, fg_p50=0.45,
+        dark_cov=0.0, headroom_ev=1.0,
+    )
+    tailed = washed.model_copy(update={"dark_cov": 0.02})
+    for scene in ("landscape", "other"):
+        clean, _ = apply(rules, scene, washed, {}, {}, intensity=1.0)
+        kept, _ = apply(rules, scene, tailed, {}, {}, intensity=1.0)
+        assert clean["blacks"] < -clean["shadows"] - 10, scene    # no dark tail → deliberate black point
+        assert kept["blacks"] == -kept["shadows"], scene          # real blacks present → never deepened
+
+
+def test_highlight_pull_down_is_capped_at_a_gentle_shoulder():
+    """Golden (improvement loop iter-03). Negative highlights/whites only darken — a clipped JPEG
+    area has no detail to bring back — and the old pulls (global -42/-18 stacked with the snow
+    region's -52/-28) turned white snow and overcast sky into a flat grey plateau and smeared the
+    snow/sky mask edge. The knee (`highlight_rolloff`) already keeps lifted highlights unclipped."""
+    rules = load_rules(config_path("rules.toml"))
+    blown = GlobalStatsModel(
+        mean_lum=0.80, mean_sat=0.08, shadow_clip=0.0, highlight_clip=0.40, haze=0.5,
+        channel_highlight_clip=0.50, pro_stats_valid=1.0, lum_p10=0.30, lum_p50=0.80,
+        lum_p90=0.99, fg_p50=0.60, headroom_ev=0.0,
+    )
+    for scene in ("landscape", "other", "people"):
+        gset, _ = apply(rules, scene, blown, {}, {}, intensity=1.0)
+        assert gset["highlights"] == -10.0 and gset["whites"] == -4.0, scene
+
+    snow = RegionStatsModel(name="snow", lum=0.90, sat=0.04, clip_low=0.0, clip_high=0.60,
+                            coverage=0.30, channel_highlight_clip=0.80)
+    _, rset = apply(rules, "landscape", blown, {"snow": snow}, {"snow": "snow"}, intensity=1.0)
+    assert rset["snow"]["highlights"] == -10.0 and rset["snow"]["whites"] == -4.0
+    unclipped = snow.model_copy(update={"clip_high": 0.0, "channel_highlight_clip": 0.0})
+    _, rset = apply(rules, "landscape", blown, {"snow": unclipped}, {"snow": "snow"}, intensity=1.0)
+    assert rset["snow"]["highlights"] == -4.0 and rset["snow"]["whites"] == 0.0
+
+
+def test_shadow_lift_rule_spends_the_exposure_the_headroom_denied():
+    """Golden (improvement loop iter-05). A dark foreground under a bright sky gets almost no global
+    exposure (the highlight headroom caps it), and with black pinned the additive shadows slider
+    cannot open it either. `shadows_ev` (black-pinned gain, edit/ops.py shadow_lift) takes half of
+    the exposure ask the headroom denied, up to 1.5 stops; with enough headroom it is zero and the
+    key is omitted, so the settings dict keeps its old shape."""
+    rules = load_rules(config_path("rules.toml"))
+    capped = GlobalStatsModel(
+        mean_lum=0.45, mean_sat=0.2, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
+        pro_stats_valid=1.0, lum_p10=0.04, lum_p50=0.30, lum_p90=0.95, fg_p50=0.10,
+        dark_cov=0.35, headroom_ev=0.0,
+    )
+    ask = 0.6 * 2.2 * math.log2(0.45 / 0.10)                       # 2.86 EV wanted for the foreground
+    for scene in ("landscape", "other", "people"):
+        gset, _ = apply(rules, scene, capped, {}, {}, intensity=1.0)
+        assert abs(gset["exposure"] - 0.30) < 1e-9, scene          # all the knee can absorb
+        assert abs(gset["shadows_ev"] - 0.5 * (ask - 0.30)) < 1e-9, scene
+    # the lift reads the exposure actually planned at this intensity, not the unscaled rule
+    half, _ = apply(rules, "landscape", capped, {}, {}, intensity=0.5)
+    assert abs(half["shadows_ev"] - 0.5 * (ask - 0.15)) < 1e-9
+    deep = capped.model_copy(update={"fg_p50": 0.02})
+    assert apply(rules, "landscape", deep, {}, {}, intensity=1.0)[0]["shadows_ev"] == 1.5   # capped
+
+    roomy = capped.model_copy(update={"fg_p50": 0.30, "headroom_ev": 2.0})
+    legacy = capped.model_copy(update={"pro_stats_valid": 0.0})
+    for stats in (roomy, legacy):
+        for scene in ("landscape", "other", "people"):
+            assert "shadows_ev" not in apply(rules, scene, stats, {}, {}, intensity=1.0)[0], scene
+
+    # wildlife: the subject, not the sky-excluded foreground, sets the ask (as for exposure)
+    subject = capped.model_copy(update={"fg_p50": 0.40, "subj_cov": 0.2, "subj_lum": 0.10})
+    assert abs(apply(rules, "other", subject, {}, {}, 1.0)[0]["shadows_ev"] - 0.5 * (ask - 0.30)) < 1e-9
+
+
+def test_regional_rules_cannot_turn_a_dark_region_into_a_patch():
+    """Golden (improvement loop iter-07). A region edit stops at the mask edge, and a mask often
+    ends where the picture has no edge. On a dusk hillside the old mountain rules (additive shadows
+    up to 30, +0.5 EV, mid-pivot contrast and dehaze) produced a flat grey blob or a black cut-out.
+    Regional lifts are now a nudge (the frame-wide `shadows_ev` opens darkness), the additive lift
+    is gone, dehaze fades out on a dark region and local contrast comes from the end-pinned curve."""
+    rules = load_rules(config_path("rules.toml"))
+    g = GlobalStatsModel(
+        mean_lum=0.20, mean_sat=0.2, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
+        pro_stats_valid=1.0, lum_p10=0.03, lum_p50=0.20, lum_p90=0.60, fg_p50=0.25, headroom_ev=1.0,
+    )
+    dark = RegionStatsModel(name="x", lum=0.05, sat=0.2, clip_low=0.0, clip_high=0.0, coverage=0.3)
+    for concept, block in (("mountain", "mountain"), ("grass", "grass"), ("trees", "foliage")):
+        _, rset = apply(rules, "landscape", g, {concept: dark}, {concept: block}, intensity=1.0)
+        assert rset[concept]["exposure"] == 0.15, concept          # 2.5 EV below the foreground → nudge only
+        assert "shadows" not in rset[concept], concept             # nothing additive raises the region's blacks
+    _, rset = apply(rules, "landscape", g, {"mountain": dark}, {"mountain": "mountain"}, intensity=1.0)
+    assert rset["mountain"]["dehaze"] == 0.0 and "contrast" not in rset["mountain"]
+    assert rset["mountain"]["curve"] == 7.0                        # local contrast, both ends pinned
+    lit = dark.model_copy(update={"lum": 0.50})
+    _, rset = apply(rules, "landscape", g, {"mountain": lit}, {"mountain": "mountain"}, intensity=1.0)
+    assert rset["mountain"]["dehaze"] == 8.0                       # a lit ridge keeps its definition
+
+
+def test_output_sharpening_is_restrained_and_applied_once():
+    """Golden (improvement loop iter-08). "Sharpness added" is a named user dislike, and the unsharp
+    mask's over/undershoot at snow/rock edges was what the safety assessment rejected as mask-edge
+    artifacts (panel: 11 → 15 of 16 proposals safe as rendered). Global sharpening is halved and no
+    region sharpens again on top of it."""
+    rules = load_rules(config_path("rules.toml"))
+    base = dict(mean_lum=0.5, mean_sat=0.1, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
+                pro_stats_valid=1.0, fg_p50=0.5, headroom_ev=1.0)
+    for scene, amount in (("landscape", 7.0), ("other", 7.0), ("people", 6.0)):
+        assert apply(rules, scene, GlobalStatsModel(**base), {}, {}, 1.0)[0]["sharpen"] == amount
+        noisy = GlobalStatsModel(**base, iso=6400)
+        assert apply(rules, scene, noisy, {}, {}, 1.0)[0]["sharpen"] == amount / 2     # still eases with ISO
+        for name, block in rules[scene].items():
+            assert name == "global" or "sharpen" not in block, (scene, name)
+
+
+def test_depth_curve_follows_the_lift_and_spares_dark_frames():
+    """Golden (improvement loop iter-10). An exposure lift is a multiply: it raises the black point
+    with the foreground, and `contrast` is faded to zero on dark sources, so a lifted frame went
+    flat. The end-pinned filmic curve now scales with the exposure actually spent beyond a small
+    lift — and only where the source has no deep shadows of its own, so a dark frame with real
+    blacks keeps all of its opened shadows (the guard in test_tone_stack.py)."""
+    rules = load_rules(config_path("rules.toml"))
+    washed = GlobalStatsModel(
+        mean_lum=0.40, mean_sat=0.2, shadow_clip=0.0, highlight_clip=0.0, haze=0.2,
+        pro_stats_valid=1.0, lum_p10=0.12, lum_p50=0.40, lum_p90=0.55, fg_p50=0.15,
+        dark_cov=0.05, headroom_ev=2.0,
+    )
+    for scene in ("landscape", "other", "people"):
+        full, _ = apply(rules, scene, washed, {}, {}, intensity=1.0)
+        lift = full["exposure"]                                    # 1.0 landscape/other, 0.8 people
+        assert full["curve"] == min(30.0, 60 * (lift - 0.25)), scene
+        # the curve reads the exposure planned at this intensity
+        soft, _ = apply(rules, scene, washed, {}, {}, intensity=0.5)
+        assert abs(soft["curve"] - 60 * (0.5 * lift - 0.25)) < 1e-9, scene
+        # ramps in with the source's 10th-percentile luma: nothing at 0.07, half at 0.095
+        half, _ = apply(rules, scene, washed.model_copy(update={"lum_p10": 0.095}), {}, {}, intensity=0.5)
+        assert abs(half["curve"] - 0.5 * 60 * (0.5 * lift - 0.25)) < 1e-9, scene
+        deep, _ = apply(rules, scene, washed.model_copy(update={"lum_p10": 0.07}), {}, {}, intensity=1.0)
+        assert deep["curve"] == 0.0, scene
+        # a small lift earns no extra curve, and legacy stats keep the old behaviour
+        small, _ = apply(rules, scene, washed.model_copy(update={"fg_p50": 0.40}), {}, {}, intensity=1.0)
+        assert small["exposure"] < 0.25 and small["curve"] == 0.0, scene
+        legacy, _ = apply(rules, scene, washed.model_copy(update={"pro_stats_valid": 0.0}), {}, {}, intensity=1.0)
+        assert legacy["curve"] == 0.0, scene
+

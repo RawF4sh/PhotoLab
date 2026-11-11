@@ -2,6 +2,11 @@
 
 A look never adds new decisions; it scales/offsets existing ones, then the whole settings
 block is scaled by `intensity`. Final = clamp(base * look_mul + look_add) * intensity.
+
+A look's tonal mood should come from the multipliers (`contrast_mul`, `curve_mul`,
+`exposure_mul`): they act on rule values that already carry the safety fades (highlight
+headroom, dark sources), so a strong look cannot push a dark photo darker or a bright one into
+clipping. `curve_add` is unconditional; keep it small.
 """
 
 from __future__ import annotations
@@ -19,6 +24,8 @@ class Look:
     saturation_add: float = 0.0  # uniform global saturation lift (vibrance protects already-saturated px; this doesn't)
     clarity_mul: float = 1.0
     dehaze_mul: float = 1.0
+    exposure_mul: float = 1.0  # < 1 holds back the rules' exposure LIFT (keeps a scene's own mood); never scales a cut
+    curve_mul: float = 1.0     # scales the rules' own curve (depth that follows the lift) before curve_add
     # global-only finishing the style injects (split-tone + filmic curve)
     curve_add: float = 0.0
     grade_shadows_temp: float = 0.0
@@ -44,6 +51,8 @@ def load(path: str) -> LookSet:
             saturation_add=float(body.get("saturation_add", 0.0)),
             clarity_mul=float(body.get("clarity_mul", 1.0)),
             dehaze_mul=float(body.get("dehaze_mul", 1.0)),
+            exposure_mul=float(body.get("exposure_mul", 1.0)),
+            curve_mul=float(body.get("curve_mul", 1.0)),
             curve_add=float(body.get("curve_add", 0.0)),
             grade_shadows_temp=float(body.get("grade_shadows_temp", 0.0)),
             grade_shadows_tint=float(body.get("grade_shadows_tint", 0.0)),
@@ -65,6 +74,10 @@ def shape(settings: Settings, look: Look, intensity: float, is_global: bool = Fa
         settings["clarity"] *= look.clarity_mul
     if "dehaze" in settings:
         settings["dehaze"] *= look.dehaze_mul
+    if settings.get("exposure", 0.0) > 0.0:   # only the lift: a rule that darkens keeps its value
+        settings["exposure"] *= look.exposure_mul
+    if "curve" in settings:
+        settings["curve"] *= look.curve_mul
     if look.vibrance_add:
         settings["vibrance"] = settings.get("vibrance", 0.0) + look.vibrance_add
     if is_global:

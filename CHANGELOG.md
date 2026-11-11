@@ -3,6 +3,47 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Screenshot loop: depth without haze, neutral colour
+
+Eight changes, each judged blind on a frozen 16-photo panel through the real pipeline with the
+SAM 3 backend (three more were tried and rejected). Every rule has a comment in the TOML and a
+golden test. The tone report on the 110-RAW Dolomites corpus stays at 0 dark→darker, 0 pushed
+into clipping.
+
+### Added
+- `shadows_ev` edit op (`edit/ops.py::shadow_lift`): a black-pinned shadow lift in stops, a
+  bounded gain that fades to zero at mid-grey. Inert unless a rules file sets it.
+- Look fields `curve_mul` and `exposure_mul` (default 1.0): a look's tonal mood can now scale
+  rule values that already carry the safety fades.
+- `scripts/contact_sheet.py --panel`: blind A/B contact sheets of two configs dirs (Original |
+  A | B | Reference, random side per row, key in a separate JSON), 100% crop sheets, blind-safe
+  `facts.txt`, and `--tally` to score written verdicts.
+
+### Changed
+- **Black anchor.** The additive `shadows` lift is paired with an equal negative `blacks`, so
+  opening the shadows no longer raises the black floor into a grey veil. The older "deepen
+  washed blacks" term only acts on frames without a dark tail.
+- **Dark foregrounds** the highlight headroom keeps `exposure` from reaching are opened by
+  `shadows_ev` (half of the denied exposure, up to 1.5 stops).
+- **Depth follows the lift.** A `curve` rule scales the filmic curve with the exposure actually
+  spent, on frames that have no deep shadows of their own.
+- **Highlight pull-downs capped** (global highlights ≥ −10, whites ≥ −4; snow region −4…−10 /
+  −4…0): white snow and overcast sky are no longer flattened to grey.
+- **No unrequested cool grade.** The auto palette no longer infers `cool_blue`
+  (`[auto.cool_blue] warmth_veto = -1.0`); `--palette cool_blue` and prompt cues still work.
+- **Regions cannot become patches.** Regional exposure lifts are capped at +0.15 EV, the
+  mountain region's additive shadow lift is gone, its dehaze fades on dark regions and its local
+  contrast uses the end-pinned curve.
+- **Output sharpening halved** and no longer repeated per region.
+- **`cinematic_preserved`** is colour-neutral (no cool shadow grade, no saturation push, no extra
+  dehaze) and takes its depth from `curve_mul`.
+
+### Known limits
+- Within the darkness gate, `cinematic_preserved` differs visibly from `natural` only on photos
+  the rules lift. A mood darker than the source needs the gate's opt-out.
+- Washed, headroom-limited frames still lack a true black point; that needs a tone-curve op.
+- RAW output still sits about 1.3 EV under the camera's own render (`raw_mode = "none"`).
+
 ## [Unreleased] — Auditable autonomous quality workflow
 
 ### Added

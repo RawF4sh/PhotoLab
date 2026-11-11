@@ -57,7 +57,7 @@
 # Compatibility: omit zero-only automatic WB keys so a legacy/zero-filled stats model produces
 # the same settings dictionary and sidecar shape as the pre-retune rules.
 [compat]
-omit_zero_global_ops = ["temp", "tint"]
+omit_zero_global_ops = ["temp", "tint", "shadows_ev"]
 
 # ─────────────────────────── skin-safe guard ───────────────────────────
 # Global finishing ops that must NOT hit skin/face at full strength (pros reject over-clarified,
@@ -107,6 +107,12 @@ dark_source = 0.30
 dark_regress = 0.01
 preserve_terms = ["moody", "dark", "night", "low key", "low-key", "silhouette", "preserve exposure", "keep exposure"]
 
+# HIGHLIGHT PULL-DOWN CAP (loop iter-03). Negative `highlights`/`whites` only darken: on a JPEG a
+# clipped area has no detail to bring back, so a strong pull turns white snow and overcast sky
+# into a flat grey plateau (p99 1.00 -> 0.82 on a glacier frame) — and, stacked with the snow
+# region's own pull, smears the snow/sky mask boundary. The knee (`highlight_rolloff`) already
+# keeps lifted highlights under the clip level, so the global pulls are capped at a gentle
+# shoulder (highlights >= -10, whites >= -4) and the snow region at highlights -4..-10, whites >= -4.
 # ─────────────────────────── people ───────────────────────────
 [people.global]
 # EV-correct lift toward a 0.45 foreground median (60% of the deficit), never past the highlight
@@ -117,16 +123,38 @@ exposure   = "if(pro_stats_valid > 0, clamp(0.6 * 2.2 * log2(0.45 / max(fg_p50, 
 # multiply lacks (RAW benchmark: matching the camera median by exposure alone clipped 70% of
 # files). Strength rises as headroom vanishes; 0 on frames with ≥ 0.9 EV of room.
 highlight_rolloff = "if(pro_stats_valid > 0, clamp((0.9 - headroom_ev) * 45, 0, 40), 0)"
+# Black-pinned shadow lift (edit/ops.py shadow_lift; stops at black, fading to 0 at mid-grey):
+# the part of the foreground exposure ask that the highlight headroom denied the global
+# `exposure`. A gain, not an offset, so a dark foreground under a bright sky opens up while
+# black stays black and the highlights are untouched.
+shadows_ev = "if(pro_stats_valid > 0, clamp(0.5 * (0.6 * 2.2 * log2(0.45 / max(fg_p50, 0.02)) - planned_exposure), 0, 1.5), 0)"
+# Depth follows the lift (loop iter-10). An exposure lift is a multiply: it raises the black point
+# along with the foreground (p2 0.09 -> 0.17 on a +0.8 EV dusk meadow) and the frame goes flat,
+# while `contrast` is faded to zero on dark sources. The filmic curve is pinned at both ends, so
+# it restores depth without clipping. Strength grows with the exposure actually spent beyond a
+# small lift, and only where the source has no deep shadows of its own (p10 above 0.07, full
+# strength from 0.12): a dark frame with real blacks keeps every bit of its opened shadows — the
+# dark-frame guard in tests/test_tone_stack.py pins that. The look's curve_add is added on top.
+curve      = "if(pro_stats_valid > 0, clamp(60 * (planned_exposure - 0.25) * clamp((lum_p10 - 0.07) / 0.05, 0, 1), 0, 30), 0)"
 contrast   = "if(pro_stats_valid > 0, 8 * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 8)"
-highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 85, -40, 0)" # recover blown/channel-clipped background
+highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 85, -10, 0)" # recover blown/channel-clipped background
 # open shadows for DARKNESS (foreground median, dark coverage), not only for clipped pixels
 shadows    = "clamp(shadow_clip * 65 + 5 + if(pro_stats_valid > 0, max(0, 0.35 - fg_p50) * 80 + dark_cov * 30, 0), 5, 40)"
 # Both white-point lifts share the headroom left after exposure; negative recovery stays.
-whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 40, 0, 8), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
-blacks     = "if(pro_stats_valid > 0, -3 * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1), -3)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 40, 0, 8), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+# Black anchor (loop iter-02): the shadows op adds its lift at full weight on pure black, which
+# raised the black floor (p10 0.035 -> 0.20 on a dark waterfall) and read as grey haze. Subtract
+# the same amount from blacks so the pair opens the shadows but pins black; the net change is
+# never negative at any luma. The older "deepen" term now only applies when the frame has no
+# dark tail (dark_cov < 1%): it used to be cancelled by the shadow lift, and on frames with real
+# blacks it would now push them into clipping.
+blacks     = "if(pro_stats_valid > 0, -3 * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(1 - dark_cov / 0.01, 0, 1) - clamp(shadow_clip * 65 + 5 + (max(0, 0.35 - fg_p50) * 80 + dark_cov * 30), 5, 40), -3)"
 vibrance   = "4"
 clarity    = "4"
-sharpen    = "12 * (1 - min(iso, 6400) / 12800)"   # ease output sharpening as ISO (noise) rises
+# Output sharpening halved (loop iter-08) and no longer repeated per region (mountain/subject were
+# sharpened in their own pass and again by this global one). "Sharpness added" is a named dislike,
+# and the unsharp mask's over/undershoot at snow/rock edges read as mask-edge artifacts.
+sharpen    = "6 * (1 - min(iso, 6400) / 12800)"   # ease output sharpening as ISO (noise) rises
 
 # protect skin: lift if underexposed, soften texture, a touch of warmth
 [people.skin]
@@ -141,14 +169,14 @@ vibrance   = "4"
 exposure   = "clamp(0.5 * max(0, bg_lum - subj_lum) + 0.05, 0, 0.5)"
 clarity    = "6"
 contrast   = "4"
-sharpen    = "16 * (1 - min(iso, 6400) / 12800)"
 
 # ────────────────────────── landscape ─────────────────────────
-# SYNC NOTE: `blacks`, `vibrance`, `dehaze`, `clarity`, `sharpen`, `temp`, `tint` are copy-pasted
+# SYNC NOTE: `vibrance`, `dehaze`, `clarity`, `sharpen`, `temp`, `tint` are copy-pasted
 # byte-for-byte with [other.global] below (this TOML schema has no block-inheritance mechanism —
 # `rules.py::apply()`'s scene fallback is whole-table, not per-key, so partial sharing isn't
-# currently expressible). A change to any of those 7 keys here almost certainly belongs in
-# [other.global] too — check both before assuming you're done.
+# currently expressible). A change to any of those 6 keys here almost certainly belongs in
+# [other.global] too — check both before assuming you're done. (`blacks` is NOT synced: its
+# anchor term mirrors each block's own `shadows` rule, and those differ.)
 [landscape.global]
 # PRO TONE (v0.4, "visibly finished"): expose for the LAND, not the sky-skewed mean; set a
 # deliberate black point on washed files; adapt contrast/clarity to the measured spread/softness.
@@ -165,13 +193,17 @@ exposure   = "if(pro_stats_valid > 0, clamp(0.6 * 2.2 * log2(0.45 / max(fg_p50, 
 # multiply lacks (RAW benchmark: matching the camera median by exposure alone clipped 70% of
 # files). Strength rises as headroom vanishes; 0 on frames with ≥ 0.9 EV of room.
 highlight_rolloff = "if(pro_stats_valid > 0, clamp((0.9 - headroom_ev) * 45, 0, 40), 0)"
+# black-pinned shadow lift: see [people.global]
+shadows_ev = "if(pro_stats_valid > 0, clamp(0.5 * (0.6 * 2.2 * log2(0.45 / max(fg_p50, 0.02)) - planned_exposure), 0, 1.5), 0)"
+# depth follows the lift: see [people.global]
+curve      = "if(pro_stats_valid > 0, clamp(60 * (planned_exposure - 0.25) * clamp((lum_p10 - 0.07) / 0.05, 0, 1), 0, 30), 0)"
 # Adaptive contrast from the tonal spread: flat frames (p90-p10 ~0.25) get decisive contrast,
 # already-contrasty alpine frames (~0.87) start at a gentle 3. Faded to 0 on dark sources
 # (contrast pivots at 0.5), and scaled by highlight headroom to preserve snow/cloud detail.
 contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 5)"
 # recover highlights for real clipping AND hold them back on already-bright frames, so a clean
 # bright sky is never pushed INTO clipping. Never positive.
-highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -42, 0)"
+highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -10, 0)"
 # open shadows so it never feels dark; a snow-dominant frame (snow_cov>0.2) gets a touch more lift
 # — alpine shadow detail (rock/texture under snow) reads flatter than a typical landscape shadow.
 # Sub-scene branching via a stat, not a new scene class — no rule-table duplication.
@@ -184,10 +216,10 @@ shadows    = "clamp(shadow_clip * 70 + 8 + if(pro_stats_valid > 0, if(snow_cov >
 # fades out as highlight headroom vanishes, including the positive base term. Negative recovery
 # remains intact. Deduct planned exposure: a modest p90 does not mean the near-white RGB tail
 # still has room after the earlier lift. Negative exposure is not credited as extra white lift.
-whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -18, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -18, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
 # black point: deepen washed files toward a true black (never lifts — shadows does the lifting).
 # The haze factor backs off when dehaze is already working (dehaze deepens blacks too).
-blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1), 0)"
+blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(1 - dark_cov / 0.01, 0, 1) - clamp(shadow_clip * 70 + 8 + (if(snow_cov > 0.2, 3, 0) + max(0, 0.35 - fg_p50) * 90 + dark_cov * 40), 8, 45), 0)"
 vibrance   = "4"
 # Adaptive clarity: soft frames (low measured detail) get more local contrast, already-crisp
 # frames get less (they were previously over-clarified at a constant 6).
@@ -198,7 +230,7 @@ clarity    = "if(pro_stats_valid > 0, clamp(4 + (0.035 - detail_rms) * 250, 3, 1
 # veiling glare that veil can't see without also firing on snow; the in-op fragile-region taper
 # + banding/chroma gates protect the smooth bright areas.)
 dehaze     = "clamp((haze - 0.32) * 70, 0, 18)"
-sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
+sharpen    = "7 * (1 - min(iso, 6400) / 12800)"
 # Region-aware auto white balance: partial correction of the cast measured on a natural gray
 # card (SAM snow region, else bright neutrals), scaled by confidence. ASYMMETRIC and
 # warmth-preserving: blue/overcast casts are neutralized assertively (up to +12 warm), but a
@@ -224,29 +256,37 @@ hsl_blue_sat = "3"
 
 # dehaze + local contrast to define ridgelines — restrained so rock doesn't go gritty
 [landscape.mountain]
+# REGIONS MUST NOT BECOME PATCHES (loop iter-07). A region edit ends at the mask edge, and a SAM
+# mask often ends where the picture has no edge (a dark slope fading into a dark valley). Three
+# rules here turned dark regions into visible shapes: an additive `shadows` lift (up to 30) and a
+# +0.5 EV exposure lift made a dusk hillside a flat grey blob and patchy grass masks a blotchy
+# field, while `contrast`/`dehaze`, which pivot at mid-grey, crushed the same hillside to black
+# once the lift was gone. Darkness is now opened for the whole frame by the global `shadows_ev`,
+# so: regional exposure lifts are capped at +0.15 EV (mountain, foliage, grass), the mountain's
+# additive shadows lift is removed, its dehaze fades out below region_lum 0.35, and its local
+# contrast comes from the filmic `curve` (both ends pinned) instead of linear `contrast`, which
+# pushed the region's darkest rock under the clip level.
 # lift a mountain that sits below the foreground median (EV-correct, RELATIVE to fg_p50 so it
 # composes with the global lift instead of double-counting the same deficit)
-exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.05, 0.5), 0)"
-dehaze     = "8"
+exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.05, 0.15), 0)"
+dehaze     = "8 * clamp((region_lum - 0.20) / 0.15, 0, 1)"
 clarity    = "12"
-contrast   = "6"
-shadows    = "clamp(6 + if(pro_stats_valid > 0, max(0, 0.30 - region_lum) * 80, 0), 6, 30)"
+curve      = "7"                                        # same mid-tone slope as contrast 6, both ends pinned
 vibrance   = "5"
-sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
 
 # recover snow texture (never flat white) — clean and neutral, low clarity so it isn't grainy.
 # The skin-safe guard also holds the global vibrance/grade off snow (see [guard] + concepts.toml).
 [landscape.snow]
 exposure   = "clamp((0.74 - region_lum) * 0.35, -0.06, 0.14)"
-highlights = "clamp(-max(region_clip_high, region_channel_highlight_clip) * 55 - 12, -52, -8)" # hold snow highlights, keep texture
-whites     = "clamp(-max(region_clip_high, region_channel_highlight_clip) * 45 - 4, -28, 4)"
+highlights = "clamp(-max(region_clip_high, region_channel_highlight_clip) * 55 - 4, -10, -4)" # gentle shoulder only: a hard pull flattens snow texture
+whites     = "clamp(-max(region_clip_high, region_channel_highlight_clip) * 45, -4, 0)"
 clarity    = "8"
 contrast   = "6"
 temp       = "0"                                            # snow stays neutral white — no cast
 
 # trees / bushes: healthy green, not neon
 [landscape.foliage]
-exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.05, 0.5), clamp((mean_lum - region_lum) * 0.3, -0.05, 0.16))"
+exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.05, 0.15), clamp((mean_lum - region_lum) * 0.3, -0.05, 0.16))"
 vibrance   = "5"
 saturation = "clamp((0.5 - region_sat) * 12, -4, 6)"
 clarity    = "6"
@@ -255,7 +295,7 @@ hsl_green_lum = "3"
 
 # foreground grass: lifted out of the shadows, true green (no golden cast)
 [landscape.grass]
-exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.04, 0.5), clamp((mean_lum - region_lum) * 0.35, -0.04, 0.2))"
+exposure   = "if(pro_stats_valid > 0, clamp(0.5 * 2.2 * log2(max(fg_p50, 0.02) / max(region_lum, 0.02)), -0.04, 0.15), clamp((mean_lum - region_lum) * 0.35, -0.04, 0.2))"
 vibrance   = "5"
 saturation = "4"
 clarity    = "6"
@@ -275,9 +315,9 @@ hsl_blue_sat = "3"
 # ─────────────────────────── other ────────────────────────────
 [other.global]
 # mirrors landscape's pro-tone policy (same availability guard); see comments there.
-# SYNC NOTE: `blacks`, `vibrance`, `dehaze`, `clarity`, `sharpen`, `temp`, `tint` below are
+# SYNC NOTE: `vibrance`, `dehaze`, `clarity`, `sharpen`, `temp`, `tint` below are
 # byte-for-byte copies of [landscape.global] — see that block's sync note before changing any of
-# these 7 keys in only one place.
+# these 6 keys in only one place.
 # Exposure priority: expose for the SUBJECT first (wildlife — a dark eagle against a bright sky
 # must not be judged by the sky), else the sky-excluded foreground, else the legacy mean.
 exposure   = "if(pro_stats_valid > 0, if(subj_cov > 0, clamp(0.6 * 2.2 * log2(0.45 / max(subj_lum, 0.02)), -0.15, min(1.0, max(0, headroom_ev - 0.15) + 0.3 * clamp((0.9 - headroom_ev) / 0.9, 0, 1))), clamp(0.6 * 2.2 * log2(0.45 / max(fg_p50, 0.02)), -0.06, min(1.0, max(0, headroom_ev - 0.15) + 0.3 * clamp((0.9 - headroom_ev) / 0.9, 0, 1)))), clamp(-(mean_lum - 0.55) * 0.8, -0.04, 0.30))"
@@ -286,15 +326,19 @@ exposure   = "if(pro_stats_valid > 0, if(subj_cov > 0, clamp(0.6 * 2.2 * log2(0.
 # multiply lacks (RAW benchmark: matching the camera median by exposure alone clipped 70% of
 # files). Strength rises as headroom vanishes; 0 on frames with ≥ 0.9 EV of room.
 highlight_rolloff = "if(pro_stats_valid > 0, clamp((0.9 - headroom_ev) * 45, 0, 40), 0)"
+# black-pinned shadow lift: see [people.global]
+shadows_ev = "if(pro_stats_valid > 0, clamp(0.5 * (0.6 * 2.2 * log2(0.45 / max(if(subj_cov > 0, subj_lum, fg_p50), 0.02)) - planned_exposure), 0, 1.5), 0)"
+# depth follows the lift: see [people.global]
+curve      = "if(pro_stats_valid > 0, clamp(60 * (planned_exposure - 0.25) * clamp((lum_p10 - 0.07) / 0.05, 0, 1), 0, 30), 0)"
 contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 6)"
-highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -40, 0)"
+highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -10, 0)"
 shadows    = "clamp(shadow_clip * 65 + 8 + if(pro_stats_valid > 0, max(0, 0.35 - fg_p50) * 90 + dark_cov * 40, 0), 8, 45)"
-whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -16, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
-blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1), 0)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(1 - dark_cov / 0.01, 0, 1) - clamp(shadow_clip * 65 + 8 + (max(0, 0.35 - fg_p50) * 90 + dark_cov * 40), 8, 45), 0)"
 vibrance   = "4"
 clarity    = "if(pro_stats_valid > 0, clamp(4 + (0.035 - detail_rms) * 250, 3, 12), 6)"
 dehaze     = "clamp((haze - 0.32) * 70, 0, 18)"
-sharpen    = "14 * (1 - min(iso, 6400) / 12800)"
+sharpen    = "7 * (1 - min(iso, 6400) / 12800)"
 temp       = "if(pro_stats_valid > 0, clamp(wb_temp_correction * 0.45 * wb_confidence * clamp(1 - max(0, warmth) / 0.035, 0, 1), -5 / max(1, intensity), 12 / max(1, intensity)), 0)"
 tint       = "if(pro_stats_valid > 0, clamp(wb_tint_correction * 0.4 * wb_confidence, -6 / max(1, intensity), 6 / max(1, intensity)), 0)"
 
@@ -304,4 +348,3 @@ exposure   = "clamp(0.4 * max(0, mean_lum - region_lum) + 0.04, 0, 0.4)"
 clarity    = "8"
 contrast   = "5"
 shadows    = "6"
-sharpen    = "16 * (1 - min(iso, 6400) / 12800)"

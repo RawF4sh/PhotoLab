@@ -33,7 +33,7 @@ def test_pipeline_smoke(tmp_path):
     assert result.global_stats is not None
 
 
-def test_pipeline_auto_palette_note_for_cool_landscape(tmp_path):
+def test_pipeline_cool_landscape_gets_no_unrequested_cool_palette(tmp_path):
     img_path = tmp_path / "winter.jpg"
     a = np.full((128, 128, 3), 210, np.uint8)
     a[:72] = [220, 224, 226]     # bright low-chroma sky
@@ -42,8 +42,11 @@ def test_pipeline_auto_palette_note_for_cool_landscape(tmp_path):
 
     cfg = RunConfig(backend="stub", style="natural", concepts=["sky", "water"])
     result = Pipeline.build(cfg).process_one(str(img_path), do_apply=True)[1]
+    assert not any("cool_blue" in n for n in result.notes)      # never inferred ("too blue")
 
-    assert any("palette: auto cool_blue" in n for n in result.notes)
+    asked = cfg.model_copy(update={"palette": "cool_blue"})
+    result = Pipeline.build(asked).process_one(str(img_path), do_apply=True)[1]
+    assert any(n.startswith("palette: cool_blue") for n in result.notes)   # an explicit pick still grades
 
 
 def test_pipeline_reference_feedback_updates_settings_and_notes(tmp_path):

@@ -41,14 +41,19 @@ def test_dark_frame_rules_lift_and_do_not_fight():
     assert s["exposure"] <= 1.3 * 0.8 + 1e-9        # never past headroom (×intensity)
     assert s["shadows"] >= 20                       # darkness, not just clipped pixels, opens shadows
     assert s.get("contrast", 0.0) == 0.0            # mid-pivot ops fade out on a dark source
-    assert s.get("blacks", 0.0) == 0.0
+    assert s["blacks"] == -s["shadows"]             # only the anchor: it pins black, it cannot fight
+    ramp = np.repeat(np.linspace(0.0, 1.0, 256, dtype=np.float32)[None, :, None], 3, axis=2)
+    toned = ops.tone(ramp, shadows=s["shadows"], blacks=s["blacks"])
+    assert abs(float(toned[0, 0, 0])) < 1e-6        # black stays black (no grey veil)...
+    assert (toned >= ramp - 1e-6).all()             # ...no tone gets darker...
+    assert float(toned[0, 64, 0]) > float(ramp[0, 64, 0]) + 0.02   # ...and the shadows still open
 
 
 def test_people_and_other_scenes_share_the_dark_policy():
     for scene in ("people", "other"):
         s = _settings(scene)
         assert s["exposure"] >= 0.5, scene
-        assert s.get("contrast", 0.0) == 0.0 and s.get("blacks", 0.0) == 0.0, scene
+        assert s.get("contrast", 0.0) == 0.0 and s["blacks"] == -s["shadows"], scene
         assert s["shadows"] >= 15, scene
 
 
@@ -120,8 +125,9 @@ def test_whites_headroom_preserves_recovery_and_legacy():
     base = GlobalStatsModel(mean_lum=0.55, mean_sat=0.1, shadow_clip=0.0,
                             highlight_clip=0.0, haze=0.2, pro_stats_valid=1.0,
                             fg_p50=0.5, lum_p90=0.70, headroom_ev=0.30)
-    for scene, lifted, recovered in (("people", 3.9, -8.0), ("landscape", 4.5, -9.0),
-                                    ("other", 4.5, -8.0)):
+    # recovery is not scaled by headroom; since loop iter-03 it is capped at a gentle -4
+    for scene, lifted, recovered in (("people", 3.9, -4.0), ("landscape", 4.5, -4.0),
+                                    ("other", 4.5, -4.0)):
         assert abs(rules_apply(rules, scene, base, {}, {}, 1.0)[0]["whites"] - lifted) < 1e-9
         clipped = base.model_copy(update={"channel_highlight_clip": 0.2, "headroom_ev": 0.0})
         assert rules_apply(rules, scene, clipped, {}, {}, 1.0)[0]["whites"] == recovered

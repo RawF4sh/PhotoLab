@@ -69,7 +69,11 @@ protected = ["skin", "snow"]
 # this block is optional; edit only what you want to retune. Blind-test-tuned: cool_blue's
 # warmth_veto/cool_bonus_threshold exist because an earlier version cooled genuinely-warm scenes.
 [auto.cool_blue]
-warmth_veto = 0.008              # skip the whole palette at/above this measured warmth
+# Loop iter-04: the unrequested cool grade is OFF (veto below any measurable warmth). It fired on
+# 8 of 9 overcast Alaska frames at 20-26% and made each bluer than its original, while the WB
+# rule was warming the same frames to neutralize a cast. "Too blue" is the most frequent user
+# complaint. `--palette cool_blue` and prompt cues ("cool blue", "blue hour") still select it.
+warmth_veto = -1.0               # skip the whole palette at/above this measured warmth
 cool_bonus_threshold = -0.006    # extra score credit only when genuinely cool (not merely neutral)
 haze_threshold = 0.38
 chroma_threshold = 0.035

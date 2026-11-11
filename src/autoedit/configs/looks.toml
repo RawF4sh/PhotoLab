@@ -55,16 +55,22 @@ grade_shadows_tint = 4.0      # nudge shadows toward teal
 grade_highlights_temp = 11.0  # warmer, more golden highlights
 grade_highlights_tint = 2.0   # a touch of gold in the highlights
 
-# calibrated from eval_3way: old Gemini's mood without its heavy teal/cyan cast or
-# generated-looking saturation. This is meant to be paired with strict preservation.
+# Old-cinematic depth with strict preservation, tuned to the owner's notes on eval_3way (loop
+# iter-11): neutral colour (no cool shadow grade: "too blue"), no saturation push ("too
+# saturated"), no extra dehaze. Its depth comes from `curve_mul`, which deepens the rules' own
+# lift-scaled curve, so the look cannot make a dark photo darker than its source: the previous
+# unconditional curve/dehaze tripped the darkness gate on 2 of 16 panel photos. On photos the
+# rules do not lift it therefore stays close to `natural`; a darker mood there needs the darkness
+# gate's opt-out (a product decision, see CHANGELOG).
 [cinematic_preserved]
 contrast_mul = 1.35
-vibrance_add = 11.0
-saturation_add = 4.0
-clarity_mul  = 1.45
-dehaze_mul   = 1.45
-curve_add    = 11.0
-grade_shadows_temp = -3.0
-grade_shadows_tint = 1.0
-grade_highlights_temp = 4.0
-grade_highlights_tint = 1.0
+curve_mul    = 1.8           # deepen the lift-scaled curve from rules.toml
+curve_add    = 5.0           # same unconditional whisper as natural
+clarity_mul  = 1.6
+dehaze_mul   = 1.0
+vibrance_add = 3.0
+saturation_add = 0.0
+grade_shadows_temp = 0.0
+grade_shadows_tint = 0.0
+grade_highlights_temp = 3.0  # a little warmth in the highlights only
+grade_highlights_tint = 0.0
