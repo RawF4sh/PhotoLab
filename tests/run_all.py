@@ -68,6 +68,7 @@ def _install_pytest_shim():
 
 def main() -> int:
     os.environ["AUTOEDIT_PROFILE"] = ""   # a developer's own profile must not change results
+    os.environ["AUTOEDIT_NO_LOCAL_MODEL"] = "1"   # no test may reach a real model on the developer's machine
     root = pathlib.Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root / "src"))
     _install_pytest_shim()

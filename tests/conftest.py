@@ -3,3 +3,4 @@
 import os
 
 os.environ["AUTOEDIT_PROFILE"] = ""
+os.environ["AUTOEDIT_NO_LOCAL_MODEL"] = "1"   # no test may reach a real model on the developer's machine

@@ -59,6 +59,12 @@ class RunConfig(BaseModel):
     llm_input_usd_per_mtok: float = Field(default=0.10, ge=0.0)
     llm_output_usd_per_mtok: float = Field(default=0.50, ge=0.0)
     llm_translate_instructions: bool = True
+    # F20: a small model on this machine (Ollama) reads instruction clauses the word list did not
+    # understand. "auto": used when Ollama answers with the model installed, else nothing happens.
+    translator: Literal["auto", "local", "off"] = "auto"
+    local_model: str = Field(default="qwen3.5:9b", max_length=100)
+    local_url: str = Field(default="http://127.0.0.1:11434", max_length=200)
+    local_timeout_s: float = Field(default=60.0, gt=0.0, le=600.0)
     llm_thumb_px: int = Field(default=512, ge=64, le=1024)
 
     # RAW development (imageio._decode_raw). "none" is today's libraw render and stays the
@@ -261,6 +267,8 @@ class Adjustment(BaseModel):
     source: str = ""                 # the instruction clause it came from; "" for a direct adjustment
     scope: Literal["run", "photo"] = "run"   # "run": from the run's --edit; "photo": from `autoedit adjust`
     status: Literal["", "applied", "clamped", "blocked", "not_found"] = ""   # filled in per photo
+    size: float = Field(default=1.0, ge=0.25, le=4.0)  # F20: scales a place's extent ("a bigger gradient"); 1 = as in instructions.toml
+    via: Literal["", "local", "cloud"] = ""   # F20: "" = the word list understood it; else which model translated it
 
 
 class Result(BaseModel):

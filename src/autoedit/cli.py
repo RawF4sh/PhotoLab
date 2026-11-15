@@ -33,7 +33,8 @@ def _flatten(d: dict) -> dict:
         if src in dec:
             kw[dst] = dec[src]
     for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
-              "decider", "emit", "consistency", "levels", "denoise", "highlight_hold", "light_shaping"):
+              "decider", "emit", "consistency", "levels", "denoise", "highlight_hold", "light_shaping",
+              "translator"):
         if k in run:
             kw[k] = run[k]
     for k in ("backend", "device", "analysis_long_edge", "mask_cache"):
@@ -132,6 +133,7 @@ def load_run_config(args) -> RunConfig:
         "denoise": getattr(args, "denoise", None),
         "highlight_hold": getattr(args, "highlight_hold", None),
         "light_shaping": getattr(args, "light_shaping", None),
+        "translator": getattr(args, "translator", None),
     }
     for k, v in overrides.items():
         if v is not None:
@@ -148,6 +150,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--style", help="style profile from styles.toml (look + concepts + brief)")
     p.add_argument("--prompt", help='free-text intent, layered on the style brief (e.g. "moody, warm, lift shadows")')
     p.add_argument("--edit", help='plain-language region instructions, e.g. "brighten the jacket, darken the sky slightly"')
+    p.add_argument("--translator", choices=["auto", "local", "off"],
+                   help="a small model on this computer (Ollama) reads --edit text the word list misses: "
+                        "auto (when it is running) | local (also when --decider llm is on) | off")
     p.add_argument("--preset", help="concept-set override from concepts.toml")
     p.add_argument("--concepts", help='comma-separated, overrides --preset (e.g. "sky,skin,dress")')
     p.add_argument("--look", help="magnitude profile override (defaults to the style's look)")

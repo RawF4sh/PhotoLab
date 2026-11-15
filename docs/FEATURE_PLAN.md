@@ -31,6 +31,7 @@ status column here whenever a feature moves.
 | F17 | LLM path refresh | S | done as code; one real call with the owner's key is open |
 | F18 | Shaped light: gradients, ovals, a sun glow | M | done; the automatic glow is off by default |
 | F19 | Follow-up edits | M | done |
+| F20 | Free-text instructions (more words, a local model) | M | done |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -272,6 +273,16 @@ Three config decisions, each a small change with a gate run once the owner has d
 - **Build:** a follow-up bar in Studio, a run-wide instruction field, per-photo follow-ups
   carried into the batch as photo-scope adjustments. Spec: [F19](plans/F19-follow-up-edits.md).
 - **Done when:** the Studio walkthrough in the spec's acceptance checks passes in a browser.
+
+### F20. Free-text instructions (M)
+
+- **Why:** "make the sky have a bigger gradient for pink" was not understood: the instruction
+  reader is a word list with no colours beyond warm and cool and no sizes.
+- **Build:** colour and size words in `instructions.toml`; a small model on this computer
+  (Ollama, `qwen3.5:9b`) that reads what the list misses into the same bounded form, for the
+  run-wide text and for "Edit this version". Spec: [F20](plans/F20-free-text-instructions.md).
+- **Done when:** 80 % of a set of 40 written phrasings come back right, no negation becomes an
+  edit, and the owner's sentence works in Studio.
 
 ## Later, or not planned
 

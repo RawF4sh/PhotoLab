@@ -9,6 +9,7 @@
 #               (the same, a vignette) | glow (radius_scale, min_radius: a round light on the
 #               light the finder located). A place is one target per clause, never mixed with an
 #               object; it is blended on its own, like a vignette, and no region policy applies.
+# [sizes]       words that scale the extent of the place of their clause (a place only).
 # [amounts]     words that scale the deltas of their clause.
 # [limits]      ceiling (absolute value) for the SUM of instruction deltas on one target, per op.
 # [target]      gating for an instructed concept that has no [concept.X] entry in concepts.toml,
@@ -66,6 +67,36 @@ words = ["vignette", "add a vignette"]
 place = "edges"
 exposure = -0.25
 
+# Colour verbs. tint is positive toward GREEN (edit/ops.py), so pink and purple are negative.
+# Amount 1.0 moves the strongest channel by about 6 to 10 levels of 255 on a blue sky and a grey.
+[verbs.pink]
+words = ["pink", "pinker", "rosy", "rosier", "magenta", "more pink"]
+tint = -100
+temp = 8
+
+[verbs.purple]
+words = ["purple", "purpler", "violet", "more purple"]
+tint = -90
+temp = -10
+
+[verbs.golden]
+words = ["golden", "gold", "more golden"]
+temp = 50
+tint = 6
+
+[verbs.teal]
+words = ["teal", "cyan", "more teal"]
+temp = -20
+tint = 100
+
+[verbs.green]
+words = ["greener", "more green"]
+tint = 100
+
+[verbs.blue]
+words = ["bluer", "more blue"]
+temp = -50
+
 [places.top]
 words = ["top", "upper part", "upper half", "sky side"]
 shape = "gradient"
@@ -118,6 +149,20 @@ shape = "glow"
 radius_scale = 4.0
 min_radius = 0.08
 
+[sizes]
+# Scale a place's extent (a gradient's reach, an oval's radii, a glow's radius). One per clause.
+"bigger" = 1.5
+"larger" = 1.5
+"wider" = 1.5
+"longer" = 1.5
+"taller" = 1.5
+"huge" = 2.0
+"smaller" = 0.67
+"narrower" = 0.67
+"shorter" = 0.67
+"tighter" = 0.67
+"tiny" = 0.5
+
 [amounts]
 "slightly" = 0.5
 "subtly" = 0.5
@@ -134,7 +179,8 @@ min_radius = 0.08
 
 [limits]
 exposure = 0.75
-temp = 20
+temp = 50
+tint = 100
 saturation = 25
 clarity = 20
 contrast = 15
@@ -186,10 +232,12 @@ joiners = ["and", "&", "+"]
 # Words that announce a target. A clause that has one but no target is not understood.
 determiners = ["the", "a", "an", "my", "our", "his", "her", "their", "this", "that", "these", "those"]
 # Filler words, ignored.
-stop = ["make", "makes", "please", "it", "its", "to", "of", "be", "is", "are", "look", "looks",
+stop = ["make", "makes", "add", "please", "it", "its", "to", "of", "be", "is", "are", "look", "looks",
         "just", "up", "down", "in", "on", "at", "for", "bit", "little",
-        "with", "gradient", "graduated", "where", "comes", "from", "shines", "area", "part", "side",
-        "half"]
+        "with", "light", "gradient", "graduated", "where", "comes", "from", "shines", "area", "part", "side",
+        "half",
+        # polite and wordy openings ("can you make the sky...", "I want the...")
+        "can", "could", "would", "you", "i", "we", "want", "need", "needs", "should"]
 # Words that reject the whole clause: a negation, an exclusion, or a word that turns the meaning
 # around. A rejected clause is reported in the sidecar and changes nothing.
 reject = ["not", "no", "don't", "dont", "never", "without", "avoid", "stop", "nor", "neither",
@@ -200,3 +248,28 @@ global_words = ["global", "everything", "all", "image", "photo", "picture", "who
                 "whole photo", "whole picture", "frame", "whole frame", "scene"]
 max_target_words = 4
 max_target_chars = 40
+
+# [translator.examples.NAME] what the small local model is shown (F20, translate_local.py): a request
+# (text), the answer it should give (target, size, [edits]). The prompt also lists every verb above
+# with its deltas, so the model learns the engine's units and a normal step from this file. An
+# example must not repeat a sentence that is used to measure the model (scripts/data/phrasings.toml).
+[translator.examples.dusky]
+text = "let the hills look a bit dusky"
+target = "mountain"
+[translator.examples.dusky.edits]
+exposure = -0.15
+saturation = -6
+
+[translator.examples.peach]
+text = "a long peach coloured fade across the bottom"
+target = "bottom"
+size = 1.5
+[translator.examples.peach.edits]
+temp = 12
+tint = -40
+
+[translator.examples.pond]
+text = "the pond looks too green"
+target = "water"
+[translator.examples.pond.edits]
+tint = -40

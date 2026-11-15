@@ -29,6 +29,7 @@ PLACE = "place:"                # a target that is a part of the frame (F18), no
 LIGHT_TARGET = PLACE + "light"  # the one place that needs a segmented concept: the sun
 LIGHT_CONCEPT = "sun"
 LAYER = "instruction:"          # name of the compositional layer a place becomes
+SIZE_ON_OBJECT = "size only applies to a gradient, an oval or a glow"
 _PLACE_SHAPES = ("gradient", "oval", "oval_outside", "glow")
 
 
@@ -58,6 +59,7 @@ class Vocab:
     places: dict[str, dict] = field(default_factory=dict)     # place name -> shape and its numbers
     place_words: tuple = ()     # ((tokens, place name), ...), longest phrase first
     amount_words: tuple = ()    # ((tokens, scale), ...), longest phrase first
+    size_words: tuple = ()      # ((tokens, size factor), ...), longest phrase first
     limits: Settings = field(default_factory=dict)
     stop: frozenset = frozenset()
     determiners: frozenset = frozenset()
@@ -103,6 +105,7 @@ def load_vocab(path: str) -> Vocab:
         verbs[name] = ops
         words += [(_toks(w), name) for w in body.get("words", [name])]
     amounts = [(_toks(w), float(v)) for w, v in data.get("amounts", {}).items()]
+    sizes = [(_toks(w), float(v)) for w, v in data.get("sizes", {}).items()]
     longest = lambda item: -len(item[0])  # noqa: E731
     parser, target = data.get("parser", {}), data.get("target", {})
 
@@ -120,6 +123,7 @@ def load_vocab(path: str) -> Vocab:
         places=places,
         place_words=tuple(sorted(place_words, key=longest)),
         amount_words=tuple(sorted(amounts, key=longest)),
+        size_words=tuple(sorted(sizes, key=longest)),
         limits={k: float(v) for k, v in data.get("limits", {}).items()},
         stop=frozenset(parser.get("stop", [])),
         determiners=frozenset(parser.get("determiners", [])),
@@ -172,7 +176,9 @@ def translatable(problem: str) -> bool:
     """Only a clause the parser plainly did not understand (`not understood: "<clause>"`) may go to
     the LLM. One it rejected on purpose (negation, exclusion, two verbs, ...) carries a reason in
     brackets; a model must not turn "don't brighten the face" into "brighten the face"."""
-    return problem.startswith('not understood: "')
+    # A size word on an object is the one reasoned rejection a model may read ("a bigger gradient
+    # for pink" names a place by a different route); it asks for nothing forbidden.
+    return problem.startswith('not understood: "') or problem.startswith(f"not understood ({SIZE_ON_OBJECT}): ")
 
 
 def from_translation(items: list[dict], clauses: list[str], vocab: Vocab, known) -> list[Adjustment]:
@@ -195,8 +201,69 @@ def from_translation(items: list[dict], clauses: list[str], vocab: Vocab, known)
             continue
         if target is None or not ops or any(ch.isdigit() for ch in target):
             continue
-        out.append(Adjustment(target=target, ops=ops, source=clause))
+        if target in vocab.places:          # "top" is the place, not an object called top
+            target = PLACE + target
+        try:
+            size = float(item.get("size", 1.0))
+        except (TypeError, ValueError):
+            size = 1.0
+        size = min(max(size, 0.25), 4.0) if math.isfinite(size) else 1.0
+        out.append(Adjustment(target=target, ops=ops, source=clause, size=size if is_place(target) else 1.0))
     return out
+
+
+_TRANSLATIONS: dict[tuple, list] = {}   # (who, model, clause texts) -> the model's answer, per process
+
+
+def _doubtful(adj: Adjustment, known: set[str]) -> bool:
+    """A target the word list made up from leftover words: not the whole photo, not a place, not a
+    known concept, and more than one word ("can you sky", "shadows trees", "give hour feel")."""
+    t = adj.target
+    return t != GLOBAL and not t.startswith(PLACE) and t not in known and len(t.split()) > 1
+
+
+def translate_problems(problems: list[str], vocab: Vocab, known, *, decider=None, cfg=None,
+                       allow_cloud: bool = True, adjustments=None):
+    """The clauses of `problems` that are plainly "not understood" (see `translatable`), read by
+    the cloud decider when one is active and `allow_cloud`, else by the local model when
+    `cfg.translator` allows it (F20). Returns (adjustments with `via` set, the problems that
+    remain). Any failure leaves the problems as they were."""
+    # With `adjustments` (what the word list made of the text), a clause whose target is doubtful is
+    # handed to the model as well, and the return value is (all adjustments, problems). Without a
+    # model nothing is taken away: the open vocabulary of F2 still applies to such a target.
+    kept = None if adjustments is None else list(adjustments)
+    def done(extra, rest):
+        return (extra if kept is None else kept + extra), rest
+    known = set(known)
+    shaky = {a.source for a in (kept or []) if _doubtful(a, known)}
+    asked_problems = problems + [f'not understood: "{s}"' for s in sorted(shaky)]
+    clauses = [clause_of(p) for p in asked_problems if translatable(p)]
+    if not clauses or cfg is None:
+        return done([], problems)
+    cloud = (allow_cloud and cfg.translator != "local" and cfg.llm_translate_instructions
+             and hasattr(decider, "translate"))
+    if cloud:
+        who, model, ask = "cloud", getattr(decider, "model", None), lambda: decider.translate(clauses, sorted(vocab.limits))
+    else:
+        from . import translate_local
+        if cfg.translator == "off" or not translate_local.available(cfg):
+            return done([], problems)
+        who, model = "local", cfg.local_model
+        ask = lambda: translate_local.translate(clauses, sorted(vocab.limits), sorted(vocab.places), cfg)  # noqa: E731
+    # One process asks once for the same text: a web preview builds a pipeline per request. An empty
+    # answer (capped, error, nothing to translate) is not kept, so it can be retried.
+    key = (who, model, tuple(clauses))
+    reply = _TRANSLATIONS.get(key)
+    if reply is None:
+        reply = ask()
+        if reply:
+            _TRANSLATIONS[key] = reply
+    extra = [a.model_copy(update={"via": "local" if who == "local" else "cloud"})
+             for a in from_translation(reply, clauses, vocab, known)]
+    read = {a.source for a in extra}
+    if kept is not None:      # a doubtful clause the model read replaces the word list's guess
+        kept = [a for a in kept if not (a.source in shaky and a.source in read)]
+    return done(extra, [p for p in problems if clause_of(p) not in read])
 
 
 def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], list[str]]:
@@ -216,11 +283,14 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             continue
         parts = []
         rejected = many_amounts = many_places = place_and_object = False
+        n_sizes = 0
         for chunk in (vocab.part_split.split(segment) if vocab.part_split else [segment]):
             tokens = list(_toks(chunk))
             verbs = _take(tokens, vocab.verb_words)
             amounts = _take(tokens, vocab.amount_words)
             many_amounts = many_amounts or len(amounts) > 1
+            sizes = _take(tokens, vocab.size_words)
+            n_sizes += len(sizes)
             places = _take(tokens, vocab.place_words)   # after the verbs: "sun glow" is a verb
             many_places = many_places or len(places) > 1
             rest = [t for t in tokens if t is not None]
@@ -236,6 +306,7 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
                 concept = PLACE + places[0]
             if verbs or concept or det:     # a part of filler words only is dropped
                 parts.append({"verbs": verbs, "amount": amounts[0] if amounts else None,
+                              "size": sizes[0] if sizes else None,
                               "concept": concept, "det": det})
         if rejected:
             problems.append(f'not understood (negation or exclusion): "{segment}"')
@@ -250,6 +321,8 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             why = "more than one verb"
         elif many_amounts:
             why = "more than one amount"
+        elif n_sizes > 1:
+            why = "more than one size"
         elif many_places:
             why = "more than one place"
         elif place_and_object:
@@ -260,17 +333,18 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
         for i, part in enumerate(parts):
             if why:
                 break
-            verbs, amount, concept = part["verbs"], part["amount"], part["concept"]
+            verbs, amount, concept, size = part["verbs"], part["amount"], part["concept"], part["size"]
             if not verbs:   # "brighten the jacket and the sky": the second part borrows the verb
                 before = [j for j in with_verb if j < i]
                 donor = parts[before[-1] if before else with_verb[0]]
                 verbs = donor["verbs"]
                 amount = donor["amount"] if amount is None else amount
-            if not concept and part["det"]:      # "darken the": a target was announced, none came
+                size = donor["size"] if size is None else size
+            if not concept and part["verbs"] and vocab.verb_place.get(part["verbs"][0]):
+                concept = PLACE + vocab.verb_place[part["verbs"][0]]   # "a wider glow": the verb's place
+            elif not concept and part["det"]:    # "darken the": a target was announced, none came
                 why = "no target"
                 break
-            if not concept and part["verbs"] and vocab.verb_place.get(part["verbs"][0]):
-                concept = PLACE + vocab.verb_place[part["verbs"][0]]   # "add a glow": the verb's place
             elif not concept:  # "brighten and warm the jacket": the first part borrows the target
                 after = [j for j in with_concept if j > i]
                 before = [j for j in with_concept if j < i]
@@ -280,10 +354,13 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             if target is None:
                 why = "target too long"
                 break
+            if size is not None and not is_place(target):
+                why = SIZE_ON_OBJECT
+                break
             scale = 1.0 if amount is None else amount
-            adj = Adjustment(target=target, source=segment,
+            adj = Adjustment(target=target, source=segment, size=1.0 if size is None else size,
                              ops={op: delta * scale for op, delta in vocab.verbs[verbs[0]].items()})
-            if not any(f.target == adj.target and f.ops == adj.ops for f in found):
+            if not any(f.target == adj.target and f.ops == adj.ops and f.size == adj.size for f in found):
                 found.append(adj)
         if why:
             problems.append(f'not understood ({why}): "{segment}"')
@@ -316,21 +393,26 @@ class Plan:
     present: set[str]                       # targets that have a mask in this photo
     touched: list[bool]                     # per group: a layer reached one of its cells
     layers: dict[str, Settings] = field(default_factory=dict)  # place name -> delta, one compositional layer each (F18)
+    sizes: dict[str, float] = field(default_factory=dict)      # place name -> size factor of its layer (F20); the last adjustment on the place wins
 
     @property
     def cells(self) -> list[RegionMask]:
         return [cell for group in self.groups for cell, _mask in group]
 
 
-def place_alpha(spec: dict, full_hw: tuple[int, int], light=None) -> np.ndarray:
-    """The full-size alpha of a place (instructions.toml [places.*]). A glow needs the `light`."""
+def place_alpha(spec: dict, full_hw: tuple[int, int], light=None, size: float = 1.0) -> np.ndarray:
+    """The full-size alpha of a place (instructions.toml [places.*]). A glow needs the `light`.
+    `size` scales the extent: a gradient's reach (capped at the far edge), an oval's radii, a
+    glow's radius. A vignette reaches further in when bigger, so its radii shrink."""
     shape = spec["shape"]
     if shape == "gradient":
-        return gradient_alpha(full_hw, float(spec["angle"]), float(spec["start"]), float(spec["end"]))
+        end = min(float(spec["end"]) * size, 1.0)
+        return gradient_alpha(full_hw, float(spec["angle"]), float(spec["start"]), end)
     if shape == "glow":
         return glow_alpha(full_hw, light.cx, light.cy,
-                          max(float(spec["min_radius"]), float(spec["radius_scale"]) * light.radius))
-    return radial_alpha(full_hw, float(spec["cx"]), float(spec["cy"]), float(spec["rx"]), float(spec["ry"]),
+                          size * max(float(spec["min_radius"]), float(spec["radius_scale"]) * light.radius))
+    k = 1.0 / size if shape == "oval_outside" else size
+    return radial_alpha(full_hw, float(spec["cx"]), float(spec["cy"]), float(spec["rx"]) * k, float(spec["ry"]) * k,
                         feather=float(spec["feather"]), inside=(shape == "oval"))
 
 
@@ -422,6 +504,7 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
     touched = [False] * len(groups)
     settings = {name: dict(s) for name, s in region_settings.items()}
     layers: dict[str, Settings] = {}
+    sizes: dict[str, float] = {}
     for target, delta in asked.items():
         if target == GLOBAL:
             continue
@@ -430,6 +513,7 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
             hit[target] = [] if target == LIGHT_TARGET and light is None else [LAYER + name]
             if hit[target]:
                 layers[name] = dict(delta)
+                sizes[name] = [a.size for a in adjustments if a.target == target][-1]
             continue
         hit[target] = []
         mask = union.get(target)
@@ -478,12 +562,14 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
                 owners={cell.name: own for group in groups for cell, _f, own in group},
                 detected=list(ext.detected) if ext else [], hit=hit, limited=limited,
                 before={name: dict(s) for name, s in settings.items()},
-                present={t for t in asked if t in union}, touched=touched, layers=layers)
+                present={t for t in asked if t in union}, touched=touched, layers=layers, sizes=sizes)
 
 
-def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]) -> list[str]:
+def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings],
+           local_model: str = "") -> list[str]:
     """Set each adjustment's `status` for this photo and return one sidecar note per adjustment.
-    Call it right after the region policies ran on `settings`."""
+    Call it right after the region policies ran on `settings`. `local_model` names the model that
+    read the clauses with via "local" (F20)."""
     notes: list[str] = []
     for a in adjustments:
         label = f'instruction "{a.source}"' if a.source else "adjustment"
@@ -513,4 +599,10 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
         a.status = "clamped" if clamped else "applied"
         tail = ", held back by a limit or the region policy" if clamped else ""
         notes.append(f"{label}: applied to {where} ({asked}){tail}")
+    for i, a in enumerate(adjustments):     # one note per adjustment, in order
+        if is_place(a.target) and a.target[len(PLACE):] in p.sizes and a.size != p.sizes[a.target[len(PLACE):]]:
+            notes[i] += f"; its size {a.size:g} is not used, the last instruction on this place sets {p.sizes[a.target[len(PLACE):]]:g}"
+        if a.via:
+            notes[i] += " \u2014 read by " + (f"{local_model or 'the local model'} on this computer" if a.via == "local"
+                                              else "the cloud model")
     return notes

@@ -263,6 +263,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .fu-chips{display:flex;flex-wrap:wrap;gap:6px}
 .fu-chips .chip{cursor:default;display:inline-flex;align-items:center;gap:6px}
 .fu-chips .chip.bad{border-color:var(--warn);color:var(--warn);background:transparent}
+.fu-chips .chip .via{font-size:9.5px;line-height:1.5;padding:0 5px;border:1px solid currentColor;border-radius:99px;opacity:.8}
 .fu-chips .chip button{background:none;border:0;color:inherit;cursor:pointer;font-size:13px;line-height:1;padding:0}
 .minibtn:disabled{opacity:.4;cursor:default}
 
@@ -659,6 +660,10 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <button class="minibtn" id="recipeLoad">Load recipe model…</button>
           <span class="tip" id="recipeName" style="margin-left:8px">no model — falls back to rules</span></div>
         <div class="tip" style="margin-top:6px">Learned predicts the global edit from a model trained on your approved pairs (build a Dataset, then <code>train-recipe</code>). Per-region edits + all safety gates stay the same; falls back to rules with no model.</div></div>
+      <div class="field"><label>Understand free text on this computer <span class="muted">— a small model reads instructions the word list does not know</span></label>
+        <div class="seg" id="translatorSeg" style="width:160px"><button class="on" data-t="auto">On</button>
+          <button data-t="off">Off</button></div>
+        <div class="tip" id="translatorNote" style="margin-top:6px"></div></div>
       <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
       <div class="field"><label for="rawMode">RAW development</label>
         <select class="tinput" id="rawMode">
@@ -739,6 +744,8 @@ const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural'
   cull:{input:null,out:'',mode:'best',count:200,scanLimit:'',recursive:true,emitXmp:false,model:''},
   followups:{},         /* photo path -> list of follow-up clauses (kept in local storage) */
   everyEdit:'',         /* instruction text for every photo */
+  translator:'',        /* '' = the configured default; 'auto' | 'off' once the switch is used (F20) */
+  translatorInfo:null,  /* {available, model} of the local instruction reader, from the server */
   hasPairs:false};
 const real=()=>STATE.files.length>0;
 const thumbURL=(p,px=360,rev='')=>'/api/thumb?px='+px+'&path='+encodeURIComponent(p)+(rev?'&v='+encodeURIComponent(rev):'');
@@ -751,7 +758,8 @@ const editOptions=()=>({
   decider:STATE.decider,recipe_model:STATE.recipeModel,
   concepts:selectedConcepts(),raw_mode:STATE.rawMode,
   backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent,
-  ...(STATE.everyEdit.trim()?{edit:STATE.everyEdit.trim()}:{})
+  ...(STATE.everyEdit.trim()?{edit:STATE.everyEdit.trim()}:{}),
+  ...(STATE.translator?{translator:STATE.translator}:{})
 });
 /* ---- follow-up edits (F19) ---- */
 const FU_KEY='autoedit.followups.v1',FU_MAX=2000;
@@ -1146,6 +1154,9 @@ $('#cullRun').onclick=async()=>{
 /* ---- follow-up bar: add, undo, remove, start over ---- */
 function fuNote(chip,problems){const t=chip.trim().toLowerCase().replace(/\s+/g,' ');
   return problems.find(p=>{const a=p.indexOf('"'),b=p.lastIndexOf('"');return a>=0&&b>a&&t.includes(p.slice(a+1,b));})||'';}
+/* A clause the local model read: the chip says so (F20). Only text from our own server, shown via textContent. */
+function fuVia(chip){const t=chip.trim().toLowerCase().replace(/\s+/g,' ');
+  return (STATE.preview?.result?.adjustments||[]).some(a=>a.via==='local'&&a.source&&t.includes(a.source));}
 function renderFollow(){
   const p=STATE.files[STATE.sel];if(!p)return;
   const list=fuList(p.path),problems=STATE.preview?.instruction_problems||[],box=$('#fuChips');box.innerHTML='';
@@ -1155,7 +1166,10 @@ function renderFollow(){
     const t=el('span');t.textContent=why?c+' (not understood)':c;if(why)chip.title=why;
     const x=el('button');x.type='button';x.textContent='×';x.setAttribute('aria-label','Remove: '+c);
     x.onclick=()=>{list.splice(i,1);fuChanged(p.path,list);};
-    chip.append(t,x);box.appendChild(chip);});
+    if(fuVia(c)){const m=el('span','via');m.textContent='local model';
+      m.title='Read by '+(STATE.translatorInfo?.model||'the local model')+' on this computer';chip.append(t,m,x);}
+    else chip.append(t,x);
+    box.appendChild(chip);});
   $('#fuUndo').disabled=$('#fuReset').disabled=!list.length;
   const rest=problems.filter(q=>!used.has(q));
   $('#everyNote').textContent=rest.length?'Not understood: '+rest.join(' · '):'Sent with every preview and with the batch. "Edit this version" adds to it for one photo.';}
@@ -1345,7 +1359,16 @@ function applyVariant(o){
   $('#varScrim').classList.remove('open');markPreviewStale();}
 
 /* ---- settings ----------------------------------------------------------- */
-$('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
+$('#settingsBtn').onclick=()=>{$('#settingsScrim').classList.add('open');loadTranslatorInfo();};
+async function loadTranslatorInfo(){
+  const note=$('#translatorNote');if(!STATE.served){note.textContent='';return;}
+  try{STATE.translatorInfo=await(await fetch('/api/translator/status')).json();}catch(e){STATE.translatorInfo=null;}
+  const i=STATE.translatorInfo;
+  note.textContent=!i?'':i.available?'Ollama is running with '+i.model+'. Nothing leaves this computer.'
+    :'Ollama is not running, or '+i.model+' is not installed. Until it is, instructions the word list does not know stay "not understood".';}
+$('#translatorSeg').addEventListener('click',e=>{const b=e.target.closest('[data-t]');if(!b)return;
+  STATE.translator=b.dataset.t;$('#translatorSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+  markPreviewStale();});
 
 /* ---- "What it did": everything the preview's sidecar record says, in plain sections ---- */
 const OP_NAMES={exposure:'Exposure',contrast:'Contrast',highlights:'Highlights',shadows:'Shadows',whites:'Whites',
@@ -1387,7 +1410,7 @@ function renderReport(){
   if(cm.length)out.push('<h5>Light shaping (vignette, gradients)</h5>'+cm.map(m=>`<div style="margin:8px 0 2px"><b>${esc(m.target.startsWith('instruction:')?'your instruction: the '+m.target.slice(12):m.target.replace(/_/g,' '))}</b></div><table>${opRows(m.ops)}</table>`).join(''));
   // instructions
   const ad=r.adjustments||[];
-  if(ad.length)out.push('<h5>Your instructions</h5><table>'+ad.map(x=>`<tr><td>${esc(x.source||'(direct)')} <span class="tip">${x.scope==='photo'?'this photo':'every photo'}</span></td><td>${esc(x.target)}: ${Object.entries(x.ops||{}).map(([k,v])=>esc(opName(k)+' '+signed(k,v))).join(', ')}</td><td class="n ${x.status==='applied'?'pos':x.status?'neg':''}">${esc(x.status||'')}</td></tr>`).join('')+'</table>');
+  if(ad.length)out.push('<h5>Your instructions</h5><table>'+ad.map(x=>`<tr><td>${esc(x.source||'(direct)')} <span class="tip">${x.scope==='photo'?'this photo':'every photo'}${x.via?' · read by the '+esc(x.via)+' model':''}</span></td><td>${esc(x.target)}: ${Object.entries(x.ops||{}).map(([k,v])=>esc(opName(k)+' '+signed(k,v))).join(', ')}</td><td class="n ${x.status==='applied'?'pos':x.status?'neg':''}">${esc(x.status||'')}</td></tr>`).join('')+'</table>');
   // regions found
   const cs=r.concepts||[];
   if(cs.length)out.push('<h5>What it looked for</h5><table>'+cs.map(c=>`<tr><td>${esc(c.name)}</td><td class="n">${c.present?'found':'not found'}</td><td class="n">${c.present?pct(c.score)+' sure':''}</td><td class="n">${c.present?pct(c.coverage)+' of frame':''}</td></tr>`).join('')+'</table>');
@@ -1470,7 +1493,7 @@ window.addEventListener('keydown',e=>{if(!real()||e.target.matches('input,textar
 /* ---- boot --------------------------------------------------------------- */
 renderStyles();renderChips();renderPalettes();renderFilm();
 fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length){STATE.served=true;
-  STATE.styleConcepts=Object.fromEntries(s.map(style=>[style.name,style.concepts||[]]));renderConcepts();syncRun();}
+  STATE.styleConcepts=Object.fromEntries(s.map(style=>[style.name,style.concepts||[]]));renderConcepts();syncRun();loadTranslatorInfo();}
   if(!STATE.served)standaloneNote();}).catch(()=>standaloneNote());
 </script>
 </body>

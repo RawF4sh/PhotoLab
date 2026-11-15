@@ -222,6 +222,29 @@ label = "Let the assistant read instructions"
 group = "llm"
 help = "Lets the assistant turn your edit instructions into changes when the built-in reader cannot."
 
+[setting.translator]
+label = "Understand free text on this computer"
+group = "direct"
+help = "A small model on this Mac reads edit instructions the word list does not know. Auto uses it when Ollama is running."
+
+[setting.local_model]
+label = "Local model"
+group = "direct"
+help = "The Ollama model that reads instructions."
+advanced = true
+
+[setting.local_url]
+label = "Local model address"
+group = "direct"
+help = "Where Ollama listens on this computer."
+advanced = true
+
+[setting.local_timeout_s]
+label = "Local model time limit (s)"
+group = "direct"
+help = "How long to wait for the local model before the instruction counts as not understood."
+advanced = true
+
 [setting.llm_thumb_px]
 label = "Preview size (pixels)"
 group = "llm"

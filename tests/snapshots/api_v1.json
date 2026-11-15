@@ -76,6 +76,11 @@
     ],
     "body": false
   },
+  "GET /api/v1/translator/status": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
   "GET /api/v1/version": {
     "path": [],
     "query": [],

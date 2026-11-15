@@ -151,6 +151,51 @@
       "advanced": false
     },
     {
+      "key": "translator",
+      "label": "Understand free text on this computer",
+      "group": "direct",
+      "type": "choice",
+      "default": "auto",
+      "choices": [
+        "auto",
+        "local",
+        "off"
+      ],
+      "help": "A small model on this Mac reads edit instructions the word list does not know. Auto uses it when Ollama is running.",
+      "advanced": false
+    },
+    {
+      "key": "local_model",
+      "label": "Local model",
+      "group": "direct",
+      "type": "string",
+      "default": "qwen3.5:9b",
+      "max_length": 100,
+      "help": "The Ollama model that reads instructions.",
+      "advanced": true
+    },
+    {
+      "key": "local_url",
+      "label": "Local model address",
+      "group": "direct",
+      "type": "string",
+      "default": "http://127.0.0.1:11434",
+      "max_length": 200,
+      "help": "Where Ollama listens on this computer.",
+      "advanced": true
+    },
+    {
+      "key": "local_timeout_s",
+      "label": "Local model time limit (s)",
+      "group": "direct",
+      "type": "float",
+      "default": 60.0,
+      "min": 0.0,
+      "max": 600.0,
+      "help": "How long to wait for the local model before the instruction counts as not understood.",
+      "advanced": true
+    },
+    {
       "key": "compose",
       "label": "Vignette and sky gradient",
       "group": "quality",

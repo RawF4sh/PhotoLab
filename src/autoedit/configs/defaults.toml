@@ -8,6 +8,7 @@ emit = "baked"             # only "baked" exists (an editable XMP hand-off is no
 consistency = "brightness" # "bursts": bring frames of one framing to one level and white balance (F9, opt-in)
 denoise = false            # true: noise reduction on high-ISO frames, chroma first (F7, opt-in)
 levels = false             # true: pull each frame's measured black point to a true black (F5, opt-in)
+translator = "auto"        # a small local model (Ollama) reads --edit clauses the word list misses; "off" never asks (F20)
 light_shaping = false      # true: a soft warm glow where the sun is, see [sun_glow] in compose.toml (F18, opt-in)
 highlight_hold = false     # true: keep source-blown highlights white, see [highlight_hold] in rules.toml (F6, opt-in)
 # look/preset/concepts/prompt are unset here — the style supplies look + concepts;

@@ -1,0 +1,209 @@
+# Phrasings a photographer might type into an instruction box, with what a correct reading is.
+# Written before any model was run on them (F20). Used by scripts/eval_translator.py.
+#
+#   text      the instruction, as typed
+#   targets   accepted targets: a concept, "global", or "place:<name>". [] = must be left out
+#             (it forbids something, or asks for nothing an edit can do)
+#   ops       expected sign of each op that must move ("+" or "-"). Ops not named may move too.
+#   size      optional: ">1" or "<1" for a place's size
+#
+# Colour conventions of the engine: tint negative = pink/magenta, positive = green;
+# temp positive = warmer.
+
+[[phrase]]
+text = "make the sky have a bigger gradient for pink"
+targets = ["sky", "place:top"]
+ops = { tint = "-" }
+
+[[phrase]]
+text = "give the clouds a rose tint"
+targets = ["cloud", "clouds", "sky"]
+ops = { tint = "-" }
+
+[[phrase]]
+text = "can you make the sky a little more purple"
+targets = ["sky"]
+ops = { tint = "-" }
+
+[[phrase]]
+text = "I want the sunset to feel more orange"
+targets = ["sunset", "sky", "global"]
+ops = { temp = "+" }
+
+[[phrase]]
+text = "the grass looks too yellow, make it greener"
+targets = ["grass"]
+ops = { tint = "+" }
+
+[[phrase]]
+text = "the water should be more turquoise"
+targets = ["water"]
+ops = { temp = "-" }
+
+[[phrase]]
+text = "the whole thing feels too blue"
+targets = ["global"]
+ops = { temp = "+" }
+
+[[phrase]]
+text = "skin looks too red"
+targets = ["skin"]
+ops = { saturation = "-" }
+
+[[phrase]]
+text = "make the mountains pop more"
+targets = ["mountain", "mountains"]
+ops = { contrast = "+" }
+
+[[phrase]]
+text = "too dark overall"
+targets = ["global"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "it's way too bright"
+targets = ["global"]
+ops = { exposure = "-" }
+
+[[phrase]]
+text = "the foreground is too dark"
+targets = ["foreground", "place:bottom"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "lift the shadows in the trees"
+targets = ["tree", "trees"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "tone down the sky a bit"
+targets = ["sky"]
+ops = { exposure = "-" }
+
+[[phrase]]
+text = "put a dark gradient over the top third"
+targets = ["place:top"]
+ops = { exposure = "-" }
+
+[[phrase]]
+text = "bigger vignette please"
+targets = ["place:edges"]
+ops = { exposure = "-" }
+size = ">1"
+
+[[phrase]]
+text = "a softer, smaller vignette"
+targets = ["place:edges"]
+ops = { exposure = "-" }
+size = "<1"
+
+[[phrase]]
+text = "add some light in the middle"
+targets = ["place:center"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "make the sun glow more"
+targets = ["place:light"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "a big warm glow from the sun"
+targets = ["place:light"]
+ops = { temp = "+" }
+size = ">1"
+
+[[phrase]]
+text = "darken the left side a little"
+targets = ["place:left"]
+ops = { exposure = "-" }
+
+[[phrase]]
+text = "brighten the right edge"
+targets = ["place:right"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "the bottom of the photo should be warmer"
+targets = ["place:bottom"]
+ops = { temp = "+" }
+
+[[phrase]]
+text = "make the snow whiter"
+targets = ["snow"]
+ops = { exposure = "+" }
+
+[[phrase]]
+text = "the snow looks blue, fix it"
+targets = ["snow"]
+ops = { temp = "+" }
+
+[[phrase]]
+text = "less saturated sky"
+targets = ["sky"]
+ops = { saturation = "-" }
+
+[[phrase]]
+text = "boost the colors of the flowers"
+targets = ["flower", "flowers"]
+ops = { saturation = "+" }
+
+[[phrase]]
+text = "more contrast on the rocks"
+targets = ["rock", "rocks"]
+ops = { contrast = "+" }
+
+[[phrase]]
+text = "make the lake darker and more blue"
+targets = ["lake", "water"]
+ops = { exposure = "-" }
+
+[[phrase]]
+text = "warm up the face slightly"
+targets = ["face", "skin"]
+ops = { temp = "+" }
+
+[[phrase]]
+text = "make it moodier"
+targets = ["global"]
+ops = { exposure = "-" }
+
+[[phrase]]
+text = "give it a golden hour feel"
+targets = ["global"]
+ops = { temp = "+" }
+
+[[phrase]]
+text = "cooler shadows in the forest"
+targets = ["forest", "tree", "trees"]
+ops = { temp = "-" }
+
+[[phrase]]
+text = "the sky needs more drama"
+targets = ["sky"]
+ops = { contrast = "+" }
+
+[[phrase]]
+text = "don't touch the face"
+targets = []
+
+[[phrase]]
+text = "leave the sky alone"
+targets = []
+
+[[phrase]]
+text = "never brighten the skin"
+targets = []
+
+[[phrase]]
+text = "make it pop like a movie"
+targets = ["global"]
+ops = { contrast = "+" }
+
+[[phrase]]
+text = "asdf qwerty"
+targets = []
+
+[[phrase]]
+text = "remove the person on the left"
+targets = []

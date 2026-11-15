@@ -44,7 +44,7 @@ def _config_digest(cfg: RunConfig) -> str:
 
 # Run settings that switch on an opt-in rule set of the same name in rules.toml.
 _OPT_IN_RULES = ("levels", "denoise")
-_TRANSLATIONS: dict[tuple, list] = {}   # (model, clause texts) -> the LLM's answer, per process
+_TRANSLATIONS = instructions._TRANSLATIONS   # the process cache of translated clauses lives next to its helper
 
 # Never written into a sidecar: local paths and the secret. `adjust` takes the config paths from
 # the current environment and asks for the two input files again.
@@ -133,20 +133,9 @@ class Pipeline:
             known = set(meta) | {c for cs in presets.values() for c in cs}
             adjustments, problems = instructions.parse(cfg.edit, vocab, known)
         decider = make_decider(cfg)
-        clauses = [instructions.clause_of(p) for p in problems if instructions.translatable(p)]
-        if clauses and cfg.llm_translate_instructions and hasattr(decider, "translate"):
-            # One process asks once for the same text: a web preview builds a pipeline per request.
-            # An empty answer (capped, error, nothing to translate) is not kept, so it can be retried.
-            key = (getattr(decider, "model", None), tuple(clauses))
-            reply = _TRANSLATIONS.get(key)
-            if reply is None:
-                reply = decider.translate(clauses, sorted(vocab.limits))
-                if reply:
-                    _TRANSLATIONS[key] = reply
-            extra = instructions.from_translation(reply, clauses, vocab, known)
-            done = {a.source for a in extra}
-            adjustments += extra
-            problems = [p for p in problems if instructions.clause_of(p) not in done]
+        if vocab is not None:   # clauses the word list missed or guessed at go to a model (F17, F20)
+            adjustments, problems = instructions.translate_problems(
+                problems, vocab, known, decider=decider, cfg=cfg, adjustments=adjustments)
         return cls(
             cfg=cfg,
             rules=rules,
@@ -386,7 +375,7 @@ class Pipeline:
             apply_regions, region_settings, owners = adj_plan.cells, adj_plan.settings, adj_plan.owners
         policy_notes = policies.enforce(region_settings, self.meta, owners=owners)
         if adj_plan is not None:
-            policy_notes += instructions.report(adjs, adj_plan, region_settings)
+            policy_notes += instructions.report(adjs, adj_plan, region_settings, local_model=cfg.local_model)
         policy_notes += [f"instruction {p}" for p in self.adjust_problems]
 
         # Shoot-consistency: a bounded exposure nudge toward this image's batch group target,
@@ -547,7 +536,7 @@ class Pipeline:
                     regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light)
             if adj_plan is not None:
-                comp += [(instructions.LAYER + name, instructions.place_alpha(self.vocab().places[name], full_hw, light), delta)
+                comp += [(instructions.LAYER + name, instructions.place_alpha(self.vocab().places[name], full_hw, light, adj_plan.sizes.get(name, 1.0)), delta)
                          for name, delta in adj_plan.layers.items()]
             if "reference_sky_grad" in reference_comp_settings:
                 comp.append((

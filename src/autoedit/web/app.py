@@ -105,6 +105,10 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         from .. import settings_schema as schema_mod
         return guard(lambda: schema_mod.schema(configs_dir, profile))
 
+    @api.get("/translator/status")
+    def translator_status():
+        return guard(lambda: service.translator_status(configs_dir, profile))
+
     @api.get("/version")
     def version():
         from .. import __version__

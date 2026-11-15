@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Free-text instructions (F20)
+
+### Added
+- **Colour and size words:** "make the sky pinker", purple, golden, teal, green, bluer; "a bigger
+  gradient", "a smaller vignette", "a wider glow".
+- **A small model on your computer reads what the word list misses** (Ollama with
+  `qwen3.5:9b`, `--translator auto|local|off`, a switch in Studio's settings). It fills in the same
+  bounded form a typed instruction gives, for the run-wide instructions and for "Edit this
+  version"; only the sentence is sent, and only to this computer. Without Ollama nothing changes.
+  On 40 test sentences it read 24 of the 26 it was given correctly, and never turned a "don't" into
+  an edit.
+
+### Changed
+- The cap on warming or cooling one target by instruction rose from 20 to 50 (colour words need it).
+
 ## [Unreleased] — Shaped light and follow-up edits (F18, F19)
 
 ### Added

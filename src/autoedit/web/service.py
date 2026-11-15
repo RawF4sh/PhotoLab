@@ -30,6 +30,7 @@ _ALLOWED = (
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
     "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "raw_mode",
     "highlight_hold", "light_shaping", "out_long_edge", "out_name", "out_subdir",
+    "translator",
 )
 
 
@@ -272,7 +273,17 @@ def photo_adjustments(pipe: Pipeline, text) -> tuple[list, list[str]]:
     if len(text) > MAX_PHOTO_EDIT:
         raise ValueError(f"photo_edit is longer than {MAX_PHOTO_EDIT} characters")
     adjs, problems = instructions.parse(text, pipe.vocab(), pipe.known_concepts())
+    # A follow-up never goes to the cloud (F19 keeps it on this machine); the local model may read it.
+    adjs, problems = instructions.translate_problems(
+        problems, pipe.vocab(), pipe.known_concepts(), cfg=pipe.cfg, allow_cloud=False, adjustments=adjs)
     return [a.model_copy(update={"scope": "photo"}) for a in adjs], problems
+
+
+def translator_status(configs_dir: str | None = None, profile: str | None = None) -> dict:
+    """Whether the local instruction reader can run now: {available, model} (F20)."""
+    from .. import translate_local
+    cfg = make_cfg({}, configs_dir, profile)
+    return {"available": cfg.translator != "off" and translate_local.available(cfg), "model": cfg.local_model}
 
 
 def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560,
