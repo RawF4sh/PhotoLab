@@ -303,6 +303,17 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .modal-h{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line)}
 .modal-h h3{font-size:15px}
 .modal-b{padding:16px 18px;overflow:auto}
+/* "What it did" report */
+.rep h5{margin:16px 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.rep h5:first-child{margin-top:0}
+.rep table{width:100%;border-collapse:collapse;font-size:12px}
+.rep td{padding:4px 8px 4px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.rep td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rep td.pos{color:#7fd49a}.rep td.neg{color:#f09a8a}
+.rep .lead{font-size:13px;line-height:1.55}
+.rep .flag{color:#f2c46d}
+.rep ul{margin:0;padding-left:18px;font-size:12px;line-height:1.55}
+.rep pre{font-size:11px;max-height:320px;overflow:auto;background:#111113;padding:10px;border-radius:8px}
 .rgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
 .rcard{border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;background:var(--elev)}
 .rcard .ph{height:118px;background:var(--stage);position:relative}
@@ -383,6 +394,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
     <button class="tbtn" id="variantsBtn" aria-label="Generate variants" title="Render several recipes for this photo, scored + ranked; apply the best" style="display:none">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Variants</button>
+    <button class="tbtn" id="reportBtn" aria-label="What it did" title="Everything this edit did to the photo, step by step" style="display:none">
+      <svg viewBox="0 0 24 24"><path d="M9 5h11M9 12h11M9 19h11"/><circle cx="4.5" cy="5" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="19" r="1"/></svg>What it did</button>
     <div class="tdiv"></div>
     <div class="seg" id="runFmtSeg" title="Output format">
       <button class="on" data-fmt="jpeg">JPEG</button><button data-fmt="tiff">TIFF</button></div>
@@ -587,6 +600,14 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <div id="cullStatus" class="tip" style="margin-top:12px"></div>
       <div id="cullResults" style="display:none;margin-top:12px"></div>
     </div>
+  </div></div>
+
+  <!-- ===== "what it did" report ===== -->
+  <div class="scrim" id="reportScrim"><div class="modal" style="width:min(820px,94vw)">
+    <div class="modal-h"><h3 id="reportTitle">What it did</h3>
+      <div style="display:flex;gap:7px"><button class="minibtn" id="reportCopy">Copy full record</button>
+      <button class="minibtn" id="reportClose">Close</button></div></div>
+    <div class="modal-b rep" id="reportBody"></div>
   </div></div>
 
   <!-- ===== settings modal ===== -->
@@ -811,7 +832,7 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
   const p=STATE.files[i];
   $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
-  syncRun();$('#variantsBtn').style.display='';
+  syncRun();$('#variantsBtn').style.display='';$('#reportBtn').style.display='none';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
   showSourceOnly(true);}
@@ -939,6 +960,7 @@ function applyPreview(res){const r=res.result||{};const ba=$('#ba');
   // why
   const notes=r.notes||[];
   $('#why').innerHTML=notes.length?'<ul>'+notes.map(w=>`<li>${esc(w)}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>';
+  $('#reportBtn').style.display='';
 }
 
 /* ---- editable concept selection (independent of per-photo detections) ---- */
@@ -1250,6 +1272,67 @@ function applyVariant(o){
 
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>$('#settingsScrim').classList.add('open');
+
+/* ---- "What it did": everything the preview's sidecar record says, in plain sections ---- */
+const OP_NAMES={exposure:'Exposure',contrast:'Contrast',highlights:'Highlights',shadows:'Shadows',whites:'Whites',
+  blacks:'Blacks',temp:'Temperature',tint:'Tint',vibrance:'Vibrance',saturation:'Saturation',dehaze:'Dehaze',
+  clarity:'Clarity',curve:'Tone curve',sharpen:'Sharpening',shadows_ev:'Shadow lift',highlight_rolloff:'Highlight roll-off',
+  hsl_blue_sat:'Blue saturation',hsl_green_sat:'Green saturation',hsl_green_lum:'Green brightness',hsl_skin_sat:'Skin saturation',
+  black_point:'Black point',white_point:'White point',denoise:'Noise reduction',
+  grade_shadows_temp:'Grade: shadow warmth',grade_shadows_tint:'Grade: shadow tint',
+  grade_highlights_temp:'Grade: highlight warmth',grade_highlights_tint:'Grade: highlight tint'};
+const opName=k=>OP_NAMES[k]||k.replace(/_/g,' ');
+const num=(v,d=2)=>v==null||isNaN(v)?'—':(+v).toFixed(d);
+const signed=(k,v)=>k==='exposure'||k==='shadows_ev'?(v>=0?'+':'')+(+v).toFixed(2)+' EV':(v>=0?'+':'')+(+v).toFixed(1);
+const pct=v=>v==null?'—':(v*100).toFixed(v<0.01&&v>0?2:1)+'%';
+function opRows(ops){return Object.entries(ops||{}).filter(([k,v])=>typeof v==='number'&&Math.abs(v)>1e-9)
+  .map(([k,v])=>`<tr><td>${esc(opName(k))}</td><td class="n ${v>0?'pos':'neg'}">${esc(signed(k,v))}</td></tr>`).join('');}
+function renderReport(){
+  const res=STATE.preview;if(!res)return;const r=res.result||{};const b=$('#reportBody');const out=[];
+  const p=STATE.files[STATE.sel];$('#reportTitle').textContent='What it did'+(p?' · '+p.name:'');
+  // summary
+  const lines=[`Scene: <b>${esc(r.scene||'?')}</b> (${pct(r.confidence)} sure). Style <b>${esc(r.style||'—')}</b>, decided by <b>${esc(r.decider||'rules')}</b>${r.model?' ('+esc(r.model)+')':''}.`,
+    `Quality check: ${num(r.quality_score)}${r.needs_review?` <span class="flag">· needs a look: ${esc(r.review_reason||'')}</span>`:' · passed'}.`];
+  if(r.decode_ev)lines.push(`RAW development lifted the file by ${num(r.decode_ev)} EV before editing.`);
+  if((r.warnings||[]).length)lines.push(`<span class="flag">Warnings: ${r.warnings.map(esc).join('; ')}</span>`);
+  out.push(`<h5>Summary</h5><div class="lead">${lines.join('<br>')}</div>`);
+  // before -> after
+  const a=r.global_stats||{},z=r.post_edit_stats||{};
+  const st=[['Median brightness','lum_p50',pct],['Subject / ground brightness','fg_p50',pct],['Darkest 10%','lum_p10',pct],
+    ['Brightest 10%','lum_p90',pct],['Pure white (clipped)','highlight_clip',pct],['Pure black (clipped)','shadow_clip',pct],
+    ['Colourfulness','mean_chroma',v=>num(v,3)],['Warmth','warmth',v=>num(v,3)],['Fine detail','detail_rms',v=>num(v,3)]];
+  if(r.post_edit_stats)out.push('<h5>The photo, before → after</h5><table>'+st.map(([l,k,f])=>
+    `<tr><td>${l}</td><td class="n">${f(a[k])}</td><td class="n">→</td><td class="n">${f(z[k])}</td></tr>`).join('')+'</table>');
+  // whole photo
+  const g=opRows(r.global_settings);
+  out.push('<h5>Edits to the whole photo</h5>'+(g?`<table>${g}</table>`:'<div class="tip">None.</div>'));
+  // regions
+  const ms=r.masks||[];
+  out.push('<h5>Edits to regions</h5>'+(ms.length?ms.map(m=>`<div style="margin:8px 0 2px"><b>${esc(m.target)}</b> · covers ${pct(m.coverage)} of the photo${m.confidence?` · found with ${pct(m.confidence)} confidence`:''}</div><table>${opRows(m.ops)||'<tr><td class="tip">no change</td></tr>'}</table>`).join(''):'<div class="tip">None.</div>'));
+  const cm=r.composition||[];
+  if(cm.length)out.push('<h5>Light shaping (vignette, gradients)</h5>'+cm.map(m=>`<div style="margin:8px 0 2px"><b>${esc(m.target.replace(/_/g,' '))}</b></div><table>${opRows(m.ops)}</table>`).join(''));
+  // instructions
+  const ad=r.adjustments||[];
+  if(ad.length)out.push('<h5>Your instructions</h5><table>'+ad.map(x=>`<tr><td>${esc(x.source||'(direct)')}</td><td>${esc(x.target)}: ${Object.entries(x.ops||{}).map(([k,v])=>esc(opName(k)+' '+signed(k,v))).join(', ')}</td><td class="n ${x.status==='applied'?'pos':x.status?'neg':''}">${esc(x.status||'')}</td></tr>`).join('')+'</table>');
+  // regions found
+  const cs=r.concepts||[];
+  if(cs.length)out.push('<h5>What it looked for</h5><table>'+cs.map(c=>`<tr><td>${esc(c.name)}</td><td class="n">${c.present?'found':'not found'}</td><td class="n">${c.present?pct(c.score)+' sure':''}</td><td class="n">${c.present?pct(c.coverage)+' of frame':''}</td></tr>`).join('')+'</table>');
+  // consistency
+  const wb=r.wb_bias||[0,0];
+  if(r.batch_group||r.exposure_bias||wb[0]||wb[1])out.push(`<h5>Batch consistency</h5><div class="lead">Group ${esc(r.batch_group||'—')}: exposure nudged ${signed('exposure',r.exposure_bias||0)}, white balance ${num(wb[0],1)} / ${num(wb[1],1)}.</div>`);
+  // why
+  const notes=r.notes||[];
+  out.push('<h5>Why, step by step</h5>'+(notes.length?'<ul>'+notes.map(n=>`<li>${esc(n)}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>'));
+  // time
+  const tm=Object.entries(r.stage_timings_ms||{});
+  if(tm.length)out.push('<h5>Time per step</h5><table>'+tm.map(([k,v])=>`<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="n">${(v/1000).toFixed(2)} s</td></tr>`).join('')+'</table>');
+  out.push(`<h5>Full record</h5><details><summary class="tip">Show everything as JSON (the same record a batch run writes next to each photo)</summary><pre>${esc(JSON.stringify(r,null,2))}</pre></details>`);
+  b.innerHTML=out.join('');
+}
+$('#reportBtn').onclick=()=>{renderReport();$('#reportScrim').classList.add('open');};
+$('#reportClose').onclick=()=>$('#reportScrim').classList.remove('open');
+$('#reportCopy').onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(STATE.preview?.result||{},null,2));
+  $('#reportCopy').textContent='Copied';setTimeout(()=>$('#reportCopy').textContent='Copy full record',1500);}catch(e){alert(e);}};
 $('#settingsClose').onclick=()=>$('#settingsScrim').classList.remove('open');
 $('#rawMode').onchange=e=>{STATE.rawMode=e.target.value;markPreviewStale();};
 /* edit engine (M6): rules | learned recipe predictor */
