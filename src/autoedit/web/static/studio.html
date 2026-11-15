@@ -134,7 +134,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .canvas-wrap{flex:1;display:grid;place-items:center;padding:46px 20px 18px;min-height:0}
 .ba{position:relative;max-width:100%;max-height:100%;border-radius:var(--r);overflow:hidden;background:var(--stage);
   box-shadow:0 0 0 1px var(--line),0 20px 60px -30px #000;user-select:none}
-.ba img{display:block;max-width:100%;max-height:calc(100vh - 235px);object-fit:contain;
+.ba img{display:block;max-width:100%;max-height:calc(100vh - 150px);object-fit:contain;
   -webkit-user-drag:none;user-select:none;pointer-events:none}  /* no native image-grab while sliding the split */
 .ba .layer{position:absolute;inset:0;overflow:hidden}
 .ba .layer img{width:100%;height:100%}
@@ -255,9 +255,11 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .rcard.var-best{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 
 /* follow-up bar under the preview (F19) */
-.fu{padding:8px 16px 12px;border-top:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column;gap:7px}
+.fu{margin-top:12px;padding-top:11px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
+.fu-h{font-size:11.5px;color:var(--ink-2)}
 .fu-row{display:flex;gap:6px;align-items:center}
-.fu-row .tinput{flex:1}
+.fu-row .minibtn{flex:1}
+.minibtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .fu-chips{display:flex;flex-wrap:wrap;gap:6px}
 .fu-chips .chip{cursor:default;display:inline-flex;align-items:center;gap:6px}
 .fu-chips .chip.bad{border-color:var(--warn);color:var(--warn);background:transparent}
@@ -461,16 +463,6 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <div class="genov"><span class="spin"></span><span>Generating preview…</span></div>
         </div>
       </div>
-      <div class="fu" id="fuBar" style="display:none">
-        <div class="fu-row">
-          <input class="tinput" id="fuInput" maxlength="300" aria-label="Change something"
-            placeholder="Change something… (e.g. a bit warmer, darken the top, brighten the face)"/>
-          <button class="minibtn" id="fuApply">Apply</button>
-          <button class="minibtn" id="fuUndo" disabled>Undo</button>
-          <button class="minibtn" id="fuReset" disabled>Start over</button>
-        </div>
-        <div class="fu-chips" id="fuChips"></div>
-      </div>
     </main>
 
     <!-- right develop panel -->
@@ -482,6 +474,17 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
               <svg viewBox="0 0 24 24"><path d="M5 4l14 8-14 8z"/></svg>Generate preview
             </button>
             <span class="state" id="previewState">No photo</span>
+          </div>
+          <div class="fu" id="fuBar" style="display:none">
+            <label class="fu-h" for="fuInput">Edit this version</label>
+            <input class="tinput" id="fuInput" maxlength="300" aria-label="Edit this version"
+              placeholder="e.g. a bit warmer, darken the top, add a glow on the sun"/>
+            <div class="fu-row">
+              <button class="minibtn primary" id="fuApply">Apply</button>
+              <button class="minibtn" id="fuUndo" disabled>Undo</button>
+              <button class="minibtn" id="fuReset" disabled>Start over</button>
+            </div>
+            <div class="fu-chips" id="fuChips"></div>
           </div>
         </div></div>
       <div id="previewError" role="alert" class="tip" style="padding:0 13px;color:var(--danger)"></div>
@@ -502,7 +505,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
         <div class="dsec-b">
           <input class="tinput" id="everyInput" maxlength="1000" placeholder="e.g. brighten the sky, a bit warmer"/>
-          <div class="tip" id="everyNote" style="margin-top:8px">Sent with every preview and with the batch. Changes you type under a photo add to it.</div>
+          <div class="tip" id="everyNote" style="margin-top:8px">Sent with every preview and with the batch. "Edit this version" adds to it for one photo.</div>
         </div></div>
       <div class="dsec collap"><div class="dsec-h" data-collap><h4>Palette</h4>
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
@@ -871,7 +874,7 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   syncRun();$('#variantsBtn').style.display='';$('#reportBtn').style.display='none';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
-  showSourceOnly(true);$('#fuBar').style.display='';renderFollow();}
+  showSourceOnly(true);$('#fuBar').style.display='none';renderFollow();}
 
 /* ---- before/after view -------------------------------------------------- */
 function setView(v){const ba=$('#ba');ba.className='ba mode-'+v+(ba.classList.contains('gen')?' gen':'');
@@ -997,7 +1000,7 @@ function applyPreview(res){const r=res.result||{};const ba=$('#ba');
   // why
   const notes=r.notes||[];
   $('#why').innerHTML=notes.length?'<ul>'+notes.map(w=>`<li>${esc(w)}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>';
-  $('#reportBtn').style.display='';
+  $('#reportBtn').style.display='';$('#fuBar').style.display='';
   renderFollow();
 }
 
@@ -1155,7 +1158,7 @@ function renderFollow(){
     chip.append(t,x);box.appendChild(chip);});
   $('#fuUndo').disabled=$('#fuReset').disabled=!list.length;
   const rest=problems.filter(q=>!used.has(q));
-  $('#everyNote').textContent=rest.length?'Not understood: '+rest.join(' · '):'Sent with every preview and with the batch. Changes you type under a photo add to it.';}
+  $('#everyNote').textContent=rest.length?'Not understood: '+rest.join(' · '):'Sent with every preview and with the batch. "Edit this version" adds to it for one photo.';}
 function fuChanged(path,list){
   if(list.length)STATE.followups[path]=list;else delete STATE.followups[path];
   fuSave();markPreviewStale();renderFollow();loadPreview();}
