@@ -15,23 +15,26 @@ from __future__ import annotations
 from .concepts import ConceptMeta
 
 
-def enforce(region_settings: dict[str, dict], meta: dict[str, ConceptMeta]) -> list[str]:
+def enforce(region_settings: dict[str, dict], meta: dict[str, ConceptMeta],
+            owners: dict[str, list[str]] | None = None) -> list[str]:
     """Mutate `region_settings` ({concept_name: settings}) in place to satisfy each region's
-    policy. Returns human-readable notes for the sidecar (what was dropped/clamped)."""
+    policy. Returns human-readable notes for the sidecar (what was dropped/clamped).
+    `owners` maps an entry name to the concepts whose policies all apply to it (F2 cells)."""
     notes: list[str] = []
     for concept, settings in region_settings.items():
-        cm = meta.get(concept)
-        if cm is None:
-            continue
-        for op in cm.forbidden_ops:
-            if settings.get(op, 0.0):
-                settings.pop(op, None)
-                notes.append(f"policy[{concept}]: dropped {op} (forbidden)")
-        for op, cap in cm.max_ops.items():
-            v = settings.get(op)
-            if v is None:
+        for owner in (owners or {}).get(concept, [concept]):
+            cm = meta.get(owner)
+            if cm is None:
                 continue
-            if abs(v) > cap:
-                settings[op] = cap if v > 0 else -cap
-                notes.append(f"policy[{concept}]: clamped {op} {v:+.0f}→{settings[op]:+.0f}")
+            for op in cm.forbidden_ops:
+                if settings.get(op, 0.0):
+                    settings.pop(op, None)
+                    notes.append(f"policy[{concept}]: dropped {op} (forbidden)")
+            for op, cap in cm.max_ops.items():
+                v = settings.get(op)
+                if v is None:
+                    continue
+                if abs(v) > cap:
+                    settings[op] = cap if v > 0 else -cap
+                    notes.append(f"policy[{concept}]: clamped {op} {v:+.0f}→{settings[op]:+.0f}")
     return notes

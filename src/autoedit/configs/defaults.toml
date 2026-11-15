@@ -5,6 +5,10 @@ style = "natural"          # styles.toml profile: look + default concepts + brie
 intensity = 0.8
 decider = "rules"          # "rules" | "llm"
 emit = "baked"             # only "baked" exists (an editable XMP hand-off is not implemented)
+consistency = "brightness" # "bursts": bring frames of one framing to one level and white balance (F9, opt-in)
+denoise = false            # true: noise reduction on high-ISO frames, chroma first (F7, opt-in)
+levels = false             # true: pull each frame's measured black point to a true black (F5, opt-in)
+highlight_hold = false     # true: keep source-blown highlights white, see [highlight_hold] in rules.toml (F6, opt-in)
 # look/preset/concepts/prompt are unset here — the style supplies look + concepts;
 # override any of them per-run via CLI flags (--look, --preset, --concepts, --prompt).
 # palette/palette_strength are also unset by default; set --palette cool_blue or type a
@@ -14,6 +18,7 @@ emit = "baked"             # only "baked" exists (an editable XMP hand-off is no
 backend = "stub"           # "stub" (no GPU, heuristic) | "sam3"
 device = "auto"            # auto -> cuda > mps > cpu
 analysis_long_edge = 1536  # segmentation/stats resolution; apply is full-res
+mask_cache = true          # keep raw masks in <out>/.autoedit-masks (not for the stub) so re-renders skip SAM
 
 [decode]
 # RAW development (camera RAW only; JPEG/TIFF ignore this block). "none" = the historical libraw
@@ -32,14 +37,25 @@ tone_target_p50 = 0.40     # tone_target mode: median luma target (gamma-encoded
 fallback_ev = 0.0          # unavailable/incompatible preview: no camera-independent fixed lift
 
 [output]
-format = "jpeg"            # "jpeg" | "tiff"
+format = "jpeg"            # "jpeg" | "tiff" | "webp" | "png"
 quality = 95               # 95 preserves the anti-banding dither in flat skies (matches the web UI)
 metadata = "shareable"     # EXIF in exports: "keep" (all) | "shareable" (no GPS, no serial numbers) | "none"
+# long_edge = 2048         # longest side of the export in pixels (never upscales); left out = full size
+name = "{stem}"            # file name without extension; fields {stem} {style} {n} (n takes a format: {n:04d})
+subdir = ""                # subfolder of the output folder
+# export = "web"           # a preset from exports.toml (full | web | social | archive | webp)
 
 [llm]
 mode = "refine"            # "refine" (bounded deltas) | "propose"
-model = "claude-haiku-4-5-20251001"
-temperature = 0.0
+model = "claude-haiku-5-5"
+temperature = 0.0          # accepted for older run files; current models reject it, so it is not sent
 max_calls = 0              # 0 = unlimited; >0 caps then falls back to rules
-budget_usd = 0.0           # 0 = unlimited
+budget_usd = 1.0           # per run; 0 = unlimited
+input_usd_per_mtok = 0.10  # prices of the model, for the budget cap; update them with the model
+output_usd_per_mtok = 0.50
+translate_instructions = true   # --edit clauses the local parser rejects: the LLM may translate them
 thumb_px = 512
+
+[performance]
+workers = 1                # render processes for a batch; 0 = half the cores, at most 4
+threads = 0                # threads inside one render; 0 = one per core

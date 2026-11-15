@@ -26,6 +26,7 @@ DEFAULTS = {"warning": 0.12, "reduce_ops": 0.22, "hard_fail": 0.35, "min_coverag
 STRETCH_OPS = (
     "exposure", "shadows_ev", "highlights", "shadows", "whites", "blacks",
     "dehaze", "contrast", "curve", "clarity", "sharpen",
+    "black_point", "white_point",   # F5: the toe of the levels curve has a slope of up to 1.6
 )
 
 

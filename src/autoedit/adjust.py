@@ -1,0 +1,113 @@
+"""Re-render one photo from its sidecar, with per-photo adjustments (F3)."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import pathlib
+
+from . import emit, instructions
+from .contract import Adjustment, Result, RunConfig
+from .edit.ops import OP_NAMES
+from .paths import config_paths
+from .pipeline import Pipeline
+
+_SIDECAR = ".autoedit.json"
+
+
+def parse_set(text: str) -> Adjustment:
+    """"sky.exposure=-0.3" -> a photo adjustment. The target is `global` or a concept."""
+    left, eq, value = text.partition("=")
+    target, dot, op = left.strip().rpartition(".")
+    target = " ".join(target.lower().split())
+    if not eq or not dot or not target or op not in OP_NAMES:
+        raise ValueError(f"--set expects TARGET.OP=VALUE (for example sky.exposure=-0.3), got {text!r}")
+    try:
+        delta = float(value)
+    except ValueError:
+        raise ValueError(f"--set {text!r}: {value!r} is not a number") from None
+    if not math.isfinite(delta):
+        raise ValueError(f"--set {text!r}: the value must be a finite number")
+    return Adjustment(target=target, ops={op: delta}, scope="photo")
+
+
+def _source_from_manifest(out_dir: str, image: str) -> str | None:
+    try:
+        with open(os.path.join(out_dir, "run.json")) as fh:
+            path = os.path.join(json.load(fh)["input_dir"], image)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return path if os.path.isfile(path) else None
+
+
+def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
+             source: str | None = None, configs_dir: str | None = None,
+             reference: str | None = None, recipe_model: str | None = None,
+             allow_cloud: bool = False, profile: str | None = None) -> dict:
+    """Render the photo behind `target` (its exported image or its sidecar) again. Stored
+    per-photo adjustments are kept unless `reset`; `sets` and `edit` add new ones."""
+    sidecar = target if target.endswith(_SIDECAR) else os.path.splitext(target)[0] + _SIDECAR
+    if not os.path.isfile(sidecar):
+        raise FileNotFoundError(f"no sidecar at {sidecar}")
+    with open(sidecar) as fh:
+        old = Result.model_validate_json(fh.read())
+    stored = old.audit.get("run_config")
+    if not stored:
+        raise ValueError("this sidecar does not record its run settings; "
+                         "render the photo again with `autoedit run` first")
+    # Consent for the cloud is given per command: what the batch was allowed does not carry over.
+    stored = {**stored, "allow_cloud": bool(allow_cloud)}
+    if stored.get("decider") == "llm" and not allow_cloud:
+        raise ValueError("the run used the LLM decider; a re-render calls it again (a thumbnail "
+                         "leaves the machine and your key is billed). Pass --allow-cloud to allow it")
+    here = os.path.dirname(os.path.abspath(sidecar))
+    # With an export subfolder the manifest and the mask cache stay in the run folder above it: take
+    # the subfolder from the recorded settings and strip exactly those parts. No guessing from the
+    # parent (that picked another run's folder). No key (a sidecar from before F10): this folder.
+    here_parts = pathlib.Path(here).parts
+    sub = pathlib.PurePosixPath((stored.get("out_subdir") or "").replace("\\", "/")).parts
+    out_dir = here
+    if sub and len(sub) < len(here_parts) and here_parts[-len(sub):] == sub:
+        out_dir = str(pathlib.Path(*here_parts[:-len(sub)]))
+    source = source or _source_from_manifest(out_dir, old.image)
+    if not source or not os.path.isfile(source):
+        raise FileNotFoundError(f"source photo for {old.image} not found; pass --source")
+    given = {"reference": reference, "recipe_model": recipe_model}
+    for key, name in (old.audit.get("run_inputs") or {}).items():
+        if not name:
+            continue
+        flag = "--" + key.replace("_", "-")
+        if not given.get(key):
+            raise ValueError(f"the run used {flag} {name}; pass it again")
+        if os.path.basename(given[key]) != name:
+            raise ValueError(f"the run used {flag} {name}, not {os.path.basename(given[key])}")
+    cfg = RunConfig(**{**config_paths(configs_dir, profile), **stored,
+                       **{k: v for k, v in given.items() if v}})
+    pipe = Pipeline.build(cfg)
+    pipe.use_mask_cache(out_dir)
+    kept = [] if reset else [a.model_copy(update={"status": ""})
+                             for a in old.adjustments if a.scope == "photo"]
+    new = [parse_set(s) for s in sets]
+    problems: list[str] = []
+    if edit and edit.strip():
+        parsed, problems = instructions.parse(edit, pipe.vocab(), pipe.known_concepts())
+        new += [a.model_copy(update={"scope": "photo"}) for a in parsed]
+    out_rgb, result = pipe.process_one(source, adjustments=kept + new,
+                                       exposure_bias=old.exposure_bias, batch_group=old.batch_group,
+                                       wb_bias=tuple(old.wb_bias))
+    if result.decider != old.decider:
+        raise ValueError(f"the re-render used the {result.decider} decider, the run used "
+                         f"{old.decider}; nothing was written")
+    warnings: list[str] = []
+    if old.audit.get("config_digest") and old.audit["config_digest"] != pipe.config_digest:
+        warnings.append("the config files differ from the ones the batch used; "
+                        "the re-render may differ from the batch output")
+    result.notes += [f"re-render: {w}" for w in warnings]
+    result.notes += [f"instruction {p}" for p in problems]
+    image_out = os.path.join(here, os.path.basename(old.audit.get("output") or (
+        os.path.basename(sidecar)[:-len(_SIDECAR)] + {"tiff": ".tif", "webp": ".webp", "png": ".png"}.get(
+            cfg.out_format, ".jpg"))))
+    emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, source)
+    return {"image": image_out, "sidecar": sidecar, "problems": problems, "warnings": warnings,
+            "adjustments": [a.model_dump() for a in result.adjustments]}

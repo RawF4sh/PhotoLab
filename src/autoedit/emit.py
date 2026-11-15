@@ -8,7 +8,7 @@ import numpy as np
 
 from . import __version__
 from .contract import DetectedConcept, GlobalStatsModel, MaskOps, RegionStatsModel, Result, Settings
-from .imageio import export_exif, save_image, srgb_profile
+from .imageio import export_exif, resize_long_edge, save_image, srgb_profile
 
 
 def build_result(
@@ -76,13 +76,17 @@ def write_sidecar(result: Result, path: str) -> None:
 
 
 def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
-                source: str | None = None, metadata: str = "none") -> str:
+                source: str | None = None, metadata: str = "none", long_edge: int | None = None) -> str:
     """Write the baked image and return a one-line note for the sidecar ("" when there is
     nothing to say).
 
     With `source` (the photo this export was made from) the file is a product export: it gets
     the sRGB profile and, as `metadata` says, the source's EXIF. Without `source` the bytes are
-    what they were before F1; measurement and contact-sheet exports rely on that."""
+    what they were before F1; measurement and contact-sheet exports rely on that.
+
+    `long_edge` shrinks the export first (never enlarges); the EXIF pixel size is the size written."""
+    if long_edge:
+        rgb = resize_long_edge(rgb, long_edge)
     if source is None:
         save_image(rgb, path, fmt=fmt, quality=quality)
         return ""
@@ -98,23 +102,80 @@ def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92
             f"(metadata = {metadata})")
 
 
+def write_outputs(out_rgb, result: Result, image_out: str, sidecar: str, cfg, source: str) -> None:
+    """Write the baked image (when there are pixels) and the sidecar that explains it."""
+    if out_rgb is not None:
+        note = write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
+                           source=source, metadata=cfg.metadata, long_edge=cfg.out_long_edge)
+        if note:
+            result.notes.append(note)
+        result.audit["output"] = os.path.basename(image_out)
+    write_sidecar(result, sidecar)
+
+
+_EXT = {"tiff": "tif", "webp": "webp", "png": "png"}
+
+
+def source_ids(paths) -> set[tuple[int, int]]:
+    """(device, inode) of each readable input of a run. Names are not enough to tell two paths
+    apart: on a case-insensitive volume IMG_1.jpg and IMG_1.JPG are one file."""
+    ids = set()
+    for p in paths:
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue                     # a photo that cannot be read fails on its own
+        ids.add((st.st_dev, st.st_ino))
+    return ids
+
+
 def output_paths(out_dir: str, image_name: str, fmt: str,
-                 taken: set[str] | None = None) -> tuple[str, str]:
+                 taken: set[str] | None = None, name: str = "{stem}", subdir: str = "",
+                 fields: dict | None = None,
+                 sources: set[tuple[int, int]] | None = None) -> tuple[str, str]:
     """Map a source path to its (image_out, sidecar) targets under out_dir.
+
+    `name` is the file-name template ({stem}, plus the `fields`: style, n) and `subdir` a folder
+    under out_dir (created); the sidecar sits next to its image. Defaults give the plain
+    `<stem>.jpg` in out_dir.
 
     Two sources sharing a stem (a camera's IMG_001.dng + IMG_001.jpg, or same-named files from
     different folders) would otherwise write the SAME output and silently overwrite each other
     (image + explanation sidecar). Pass a persistent `taken` set across a batch: on collision the
     stem gets a -2/-3 suffix. Deterministic given a stable iteration order, so resume reproduces
-    the same assignment. `taken=None` keeps the legacy single-source behavior unchanged."""
-    stem = os.path.splitext(os.path.basename(image_name))[0]
-    ext = "tif" if fmt == "tiff" else "jpg"
-    image_out = os.path.join(out_dir, f"{stem}.{ext}")
+    the same assignment. `taken=None` keeps the legacy single-source behavior unchanged.
+
+    `sources` (see `source_ids`) are all the inputs of the run: an export that would land on any of
+    them raises, not only on its own source. Without it only the own source is checked."""
+    src_stem = os.path.splitext(os.path.basename(image_name))[0]
+    stem = name.format(stem=src_stem, **(fields or {"style": "", "n": 0}))
+    # The template is checked when the config is built, but {style} is filled in here from a value
+    # nobody checked ("../../x"), so the filled name must be a plain file name. A leading dot is
+    # fine only when it is the source's own (a hidden photo keeps the name it always had).
+    if (not stem or stem in (".", "..") or any(c in stem for c in "/\\\0") or os.path.splitdrive(stem)[0]
+            or (stem.startswith(".") and not (src_stem.startswith(".") and stem.startswith(src_stem)))):
+        raise ValueError(f"export file name {stem!r} (from the template {name!r}) is not a plain file name")
+    ext = _EXT.get(fmt, "jpg")
+    folder = os.path.join(out_dir, subdir) if subdir else out_dir
+    image_out = os.path.join(folder, f"{stem}.{ext}")
+    if subdir:
+        # The web layer approves the output folder only; a symlink inside it must not lead out.
+        real_out = os.path.realpath(out_dir)
+        real_folder = os.path.realpath(folder)
+        if real_folder != real_out and not real_folder.startswith(real_out + os.sep):
+            raise ValueError(f"{folder}: the sub-folder {subdir!r} leads outside the output folder")
     if taken is not None:
         n = 2
         while image_out in taken:
-            image_out = os.path.join(out_dir, f"{stem}-{n}.{ext}")
+            image_out = os.path.join(folder, f"{stem}-{n}.{ext}")
             n += 1
         taken.add(image_out)
+    if os.path.exists(image_out):
+        st = os.stat(image_out)
+        if (st.st_dev, st.st_ino) in (sources or ()) or (
+                os.path.exists(image_name) and os.path.samefile(image_out, image_name)):
+            raise ValueError(f"{image_out}: this export would overwrite a source photo; "
+                             "choose another output folder, --subdir or --name")
+    os.makedirs(folder, exist_ok=True)
     out_stem = os.path.splitext(os.path.basename(image_out))[0]
-    return image_out, os.path.join(out_dir, f"{out_stem}.autoedit.json")
+    return image_out, os.path.join(folder, f"{out_stem}.autoedit.json")

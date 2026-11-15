@@ -1,0 +1,131 @@
+# AutoEdit instructions: plain-language region edits ("brighten the jacket"), parsed locally by
+# src/autoedit/instructions.py. This is data: add a verb or a word here, not in code.
+#
+# [verbs.NAME]  words = every surface form that selects the verb. The other keys are op deltas at
+#               amount 1.0, in the apply engine's units (exposure in EV, the rest about -100..100).
+# [amounts]     words that scale the deltas of their clause.
+# [limits]      ceiling (absolute value) for the SUM of instruction deltas on one target, per op.
+# [target]      gating for an instructed concept that has no [concept.X] entry in concepts.toml,
+#               and the smallest overlap, as a fraction of the frame, that becomes its own cell.
+# [policy]      target word -> protected concept whose region policy it obeys.
+# [parser]      separators, joiners, determiners, ignored words, words that reject a clause,
+#               words that mean the whole photo, and target length limits.
+#
+# An instruction is added on top of the rule baseline and is not scaled by --intensity. Region
+# policies in concepts.toml (forbidden ops, caps) still apply to the sum.
+
+[verbs.brighten]
+words = ["brighten", "brighter", "lighten", "lighter", "lift"]
+exposure = 0.30
+
+[verbs.darken]
+words = ["darken", "darker", "dim", "dimmer"]
+exposure = -0.30
+
+[verbs.warm]
+words = ["warm", "warmer", "warm up"]
+temp = 10
+
+[verbs.cool]
+words = ["cool", "cooler", "cool down"]
+temp = -10
+
+[verbs.saturate]
+words = ["saturate", "more saturated", "more colorful", "more colourful", "more vivid"]
+saturation = 12
+
+[verbs.mute]
+words = ["mute", "muted", "more muted", "desaturate", "less saturated", "less colorful", "less colourful"]
+saturation = -14
+
+[verbs.soften]
+words = ["soften", "softer", "smooth", "smoother"]
+clarity = -12
+contrast = -6
+
+[verbs.deepen]
+words = ["deepen", "deeper", "richer"]
+exposure = -0.12
+contrast = 8
+saturation = 6
+
+[amounts]
+"slightly" = 0.5
+"subtly" = 0.5
+"gently" = 0.5
+"a little" = 0.5
+"a bit" = 0.5
+"a touch" = 0.5
+"somewhat" = 0.75
+"more" = 1.3
+"much" = 1.6
+"a lot" = 1.6
+"strongly" = 1.6
+"way" = 1.6
+
+[limits]
+exposure = 0.75
+temp = 20
+saturation = 25
+clarity = 20
+contrast = 15
+
+[target]
+min_score = 0.45
+min_coverage = 0.003
+min_cell_coverage = 0.002
+
+[policy]
+# A target that is a kind of a protected concept obeys that concept's region policy too
+# (concepts.toml: forbidden ops, caps). The head noun of a target is checked as well, so
+# "blue sky" obeys the sky policy without an entry here.
+face = "skin"
+faces = "skin"
+cheek = "skin"
+cheeks = "skin"
+forehead = "skin"
+arm = "skin"
+arms = "skin"
+hand = "skin"
+hands = "skin"
+glacier = "snow"
+ice = "snow"
+cloud = "sky"
+clouds = "sky"
+forest = "trees"
+bush = "foliage"
+bushes = "foliage"
+lake = "water"
+river = "water"
+sea = "water"
+ocean = "water"
+pond = "water"
+waterfall = "water"
+meadow = "grass"
+lawn = "grass"
+field = "grass"
+peak = "mountain"
+peaks = "mountain"
+hill = "mountain"
+hills = "mountain"
+
+[parser]
+# Words that end one instruction and start the next, besides . , ; ! ? and a line break.
+separators = ["then"]
+# What joins two parts of one instruction: "brighten the jacket and the sky".
+joiners = ["and", "&", "+"]
+# Words that announce a target. A clause that has one but no target is not understood.
+determiners = ["the", "a", "an", "my", "our", "his", "her", "their", "this", "that", "these", "those"]
+# Filler words, ignored.
+stop = ["make", "makes", "please", "it", "its", "to", "of", "be", "is", "are", "look", "looks",
+        "just", "up", "down", "in", "on", "at", "for", "bit", "little"]
+# Words that reject the whole clause: a negation, an exclusion, or a word that turns the meaning
+# around. A rejected clause is reported in the sidecar and changes nothing.
+reject = ["not", "no", "don't", "dont", "never", "without", "avoid", "stop", "nor", "neither",
+          "but", "except", "apart", "excluding", "besides", "unless",
+          "less", "hardly", "barely", "undo", "revert", "reset", "remove",
+          "instead", "rather", "than", "or", "percent", "times"]
+global_words = ["global", "everything", "all", "image", "photo", "picture", "whole image",
+                "whole photo", "whole picture", "frame", "whole frame", "scene"]
+max_target_words = 4
+max_target_chars = 40

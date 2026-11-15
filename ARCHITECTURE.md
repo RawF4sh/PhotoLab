@@ -10,8 +10,8 @@ The product wedge is *open-vocabulary region editing* — you can say "dress", "
 and it masks and edits that. The edits themselves are classic, explainable photo adjustments
 (exposure, tone, white balance, dehaze, etc.) — never generative pixels.
 
-> Code lives in `src/autoedit/` (~5.9k LoC). Core runtime deps are tiny: numpy, Pillow, pydantic +
-> stdlib. torch/SAM, Anthropic, OpenCV/Kornia, rawpy, tifffile are **optional extras**, imported
+> Code lives in `src/autoedit/`. Core runtime deps are tiny: numpy, Pillow, pydantic +
+> stdlib. torch/SAM, Anthropic, OpenCV/Kornia, rawpy, tifffile, pillow-heif are **optional extras**, imported
 > lazily, so the default "stub" pipeline runs anywhere with no GPU/network.
 
 ---
@@ -36,12 +36,12 @@ decode → segment → resolve → stats → scene → decide → apply → emit
 
 | Stage | Module | What it does |
 |---|---|---|
-| **decode** | `imageio.py` | Load file → float32 RGB [0,1], sRGB gamma. RAW/16-bit/ICC aware. |
+| **decode** | `imageio.py` | Load file → float32 RGB [0,1], sRGB gamma. RAW/16-bit/ICC aware; also AVIF and HEIC/HEIF. |
 | **segment** | `segment/` | SAM 3 (or stub) → one mask per **named concept**, at proxy resolution. |
 | **resolve** | `segment/resolve.py` | Gate weak detections; arbitrate overlaps into a non-overlapping label map. |
 | **stats** | `stats.py` | Per-region + global image statistics (brightness, saturation, clipping, haze…). |
 | **scene** | `scene.py` | Classify the frame: `landscape` / `people` / `other`. |
-| **decide** | `decide/` | Stats → edit values. Rules baseline (+ look/intensity), or LLM refine. |
+| **decide** | `decide/` | Stats → edit values. Rules baseline (+ look/intensity), LLM refine, or learned recipe. |
 | **apply** | `edit/` | Composite region edits → global finishing → safety gates, at **full res**. |
 | **emit** | `emit.py` | Write baked image + sidecar JSON (the "why"). |
 
@@ -73,7 +73,10 @@ truncate it):
 3. Pillow native 16-bit single-channel modes.
 4. **8-bit path**: embedded **ICC profile → sRGB** (AdobeRGB/Display-P3 JPEGs) via `ImageCms` —
    transforming the *original* mode, so CMYK-with-profile converts correctly — honor the EXIF
-   orientation tag, then to RGB.
+   orientation tag, then to RGB. JPEG, PNG, WebP, BMP and **AVIF** (Pillow 11.3 or later) take this
+   path. **HEIC/HEIF** take it too, through the optional `pillow-heif` package (`pip install
+   '.[heif]'`, registered lazily by `_ensure_heif`); without it that photo fails alone with a
+   message that names the extra, and the batch goes on. `autoedit doctor` lists both.
 
 **EXIF priors** are read into a small normalized dict — `iso`, `exposure_ev` — and threaded through
 stats so rules can reference camera context (e.g. ease sharpening at high ISO). Missing EXIF →
@@ -83,7 +86,7 @@ neutral defaults. `is_raw(path)` / `is_supported(path)` are the public helpers u
 uint8+dither round-trip), so 16-bit sources keep their precision in analysis proxies.
 
 Output: `save_image` writes JPEG (q95 default, no chroma subsampling — preserves the anti-banding
-dither) or **16-bit TIFF** (via tifffile). Writes are **atomic** (temp file + `os.replace`): a crash
+dither), **16-bit TIFF** (via tifffile), WebP or PNG. Writes are **atomic** (temp file + `os.replace`): a crash
 mid-write leaves the old file or nothing, never a truncated image a resume would mistake as done.
 
 ---
@@ -99,6 +102,23 @@ later. This isolates the SAM license + torch dependency to one file.
   GPU/network (used by tests and the default backend).
 - **`Sam3Segmenter`** (`segment/sam3.py`) — SAM 3 open-vocabulary segmentation; torch imported
   lazily; weights fetched from Hugging Face on first run (never committed).
+  `autoedit models status|download|remove` (`models.py`) manages those weights.
+
+### Adding a segmenter
+
+- **Protocol.** `segment/base.py::Segmenter`: `segment(img, concepts) -> list[RegionMask]`, one
+  union mask per concept at proxy resolution, with a `score`.
+- **Registration.** `segment/__init__.py::make_segmenter` (the name), `RunConfig.backend` and
+  `--backend`. Heavy imports (torch, weights) stay inside the backend's own file, like `sam3.py`.
+- **What the pipeline needs.** Text prompts for arbitrary concepts; a score that `min_score` in
+  `concepts.toml` can gate on; masks that reach the frame edge.
+- **Candidates** (public documentation, to be checked before any use; every licence is
+  "verify"). For each, check the licence of the code *and* of the weights, and whether it takes
+  free-text prompts:
+  - Grounding DINO (box from text) + a promptable mask model such as SAM 2: verify both licences.
+  - OWL-ViT / OWLv2 (text to boxes) + a mask model: verify licences.
+  - CLIPSeg (text to coarse masks): verify licence; masks are low resolution.
+  - SEEM / X-Decoder style open-vocabulary segmenters: verify licence and prompt type.
 
 ### Per-concept caching (`segment/cache.py`)
 
@@ -109,6 +129,11 @@ cache. (Styles share concepts heavily, so a style switch usually segments one or
 instead of the whole set.) A `None` sentinel remembers "this concept found nothing", so an absent
 concept isn't re-run. Keyed by `(path, proxy shape, mtime)`; LRU-bounded to 8 images; pathless
 in-memory images bypass it. The resident UI segmenter is wrapped in this cache.
+
+`DiskMaskCache` (same file) keeps the raw masks of each photo on disk in `<out>/.autoedit-masks/`,
+one `.npz` per photo keyed by the proxy pixels (never unpickled). It wraps every backend except the
+stub, so `autoedit adjust`, a resumed batch and a later run with another style do not segment again.
+`--no-mask-cache` / `[segment] mask_cache = false` turns it off.
 
 ### Resolution / arbitration (`segment/resolve.py`)
 
@@ -199,7 +224,19 @@ TOML; you never hardcode a tuning value that belongs in config.
 | `concepts.toml` | Per-concept metadata: priority, gating, feather, guards, policies. |
 | `compose.toml` | Compositional moves (vignette, sky graduate). |
 | `intents.toml` | Free-text look vocabulary → bounded global nudges (see §10). |
+| `instructions.toml` | Vocabulary of `--edit`: eight verbs with word forms, amount words, a limit per op, rejected words. |
+| `exports.toml` | Export presets (`full`, `web`, `social`, `archive`, `webp`). |
+| `calibrate.toml` | Dimensions and step sizes of `autoedit calibrate`. |
+| `settings.toml` | Description of every run setting (`autoedit settings`, `settings_schema.py`). |
+| `palettes.toml`, `quality.toml`, `workflows.toml` | OKLab palettes; source-relative limits of the quality workflow; experimental workflows. |
 | `defaults.toml` | Default run config. |
+
+**Profile overlay.** `--profile DIR`, `AUTOEDIT_PROFILE` or `~/.config/autoedit` (when it exists)
+names a folder of TOML files with only the user's differences. `paths.read_config` / `config_paths`
+merge each file over the packaged file of the same name, key by key (`paths.merge`); a table over a
+non-table is an error that names the key. Looks saved by `autoedit looks save` are written there
+(`paths.dump_toml`). `paths.config_path` falls back to the packaged file when the active configs
+folder lacks one. With no profile nothing changes.
 
 ### rules.toml + the sandboxed evaluator (`rules.py`)
 
@@ -237,6 +274,11 @@ a lifted frame gets its depth back; negative `highlights`/`whites` are capped at
 second exposure (a mask often ends where the picture has no edge); output sharpening is light
 and applied once.
 
+**Opt-in rule sets.** `[opt_in.NAME.<scene>.<block>]` tables in `rules.toml` join the rules only
+when the run setting `NAME` is on (`rules.load(path, enable=[...])`). The shipped ones are
+`levels` (rule for `black_point`) and `denoise` (rule scaled by ISO and the planned exposure lift).
+A tool that reads `rules.toml` directly never sees them.
+
 ### looks.toml (`looks.py`) — magnitude shaping
 
 A look never adds new decisions; it scales/offsets existing ones, then everything is scaled by
@@ -248,7 +290,8 @@ final = clamp(base * look_mul + look_add) * intensity
 
 Fields: `contrast_mul`, `vibrance_add`, **`saturation_add`** (uniform global lift — vibrance protects
 already-saturated pixels, this doesn't; global-only so the skin guard can hold it off faces),
-`clarity_mul`, `dehaze_mul`, `curve_mul`, `exposure_mul`, and global-only finishing `curve_add`
+`clarity_mul`, `dehaze_mul`, `curve_mul`, `exposure_mul`, a flag `preserve_exposure` (a look dark on
+purpose opts out of the darkness gate; no packaged look sets it), and global-only finishing `curve_add`
 (filmic S-curve) + `grade_{shadows,highlights}_{temp,tint}` (split-tone). `dramatic` is tuned to
 genuinely commit (contrast 1.6×, vibrance +14, saturation +12, clarity 1.7×, dehaze 1.8×, deep
 teal-orange grade).
@@ -274,6 +317,17 @@ Per-concept `ConceptMeta`: `priority` (arbitration order), `min_score`/`min_cove
 `guard_global` (skin-safe guard member, e.g. skin/snow), and **region policies** `forbidden` (ops
 dropped entirely on this region) + `max` (per-op magnitude caps).
 
+### Region instructions (`instructions.py`, `configs/instructions.toml`)
+
+`--edit "brighten the jacket, darken the sky slightly"` is parsed locally (no LLM) into
+`Adjustment`s: a verb, an optional amount word and a target, joined by "and" or commas. A clause is
+taken whole or rejected (negations, exclusions, numbers, two verbs, a missing target); a rejected
+clause is named in the sidecar. An instruction is a delta on top of the rule baseline. A target
+inside another region (a jacket inside `subject`) keeps that region's settings and gets the delta
+on top, as a separate **cell** of that region. With the LLM decider active, a clause the parser
+rejected is translated by the model into the same bounded structure. `autoedit adjust`
+(`adjust.py`) stores its own deltas through the same path with `scope: "photo"`.
+
 ---
 
 ## 7. Deciding the edit (`decide/`)
@@ -285,8 +339,13 @@ The decider turns stats into two settings dicts: **global** + **per-region**.
   (`looks.shape`). This is the whole decision on the default path.
 - **`LlmDecider`** (`decide/llm_decider.py`) — optional Anthropic refine/propose on top of the rule
   baseline, steered by the style brief + user prompt. **Degrades safely**: missing `anthropic` / no
-  API key / budget cap / any error → falls back to the rules baseline. Off by default, opt-in
-  consent required. Only a **thumbnail + stats** leave the machine — never full-res pixels.
+  API key / budget cap / a refusal / any error → falls back to the rules baseline. Off by default,
+  opt-in consent required. Only a **thumbnail + stats** leave the machine — never full-res pixels.
+  The default model is `claude-haiku-5-5`; the request has no `temperature` and uses a strict tool
+  schema; the cost is counted from the real token usage against a per-run cap (default 1.00 USD).
+  The new request shape is not verified against the live API.
+- **`LearnedDecider`** (`decide/learned_decider.py`) — global recipe from `recipe.py`, regions from
+  the rules baseline; falls back to the rules.
 
 `make_decider(cfg)` picks the implementation; `DecisionContext` carries scene/stats/rules/looks/
 brief/thumb into it.
@@ -304,8 +363,13 @@ curve does and a bare multiply cannot:
 
 ```
 white balance → exposure (+ highlight knee) → shadow lift → tone(highlights/shadows/whites/blacks)
-  → contrast → curve → dehaze → clarity → vibrance/saturation → targeted HSL → color grade → sharpen
+  → contrast → curve → dehaze → clarity → black/white point → vibrance/saturation → targeted HSL
+  → color grade → denoise → sharpen
 ```
+
+The order is data: `ops.STEPS` (a tuple of key groups), read by `apply_ops` and by the guarded
+pass in `edit/apply.py`. The per-pixel stretches (tone, colour) run on row strips in threads
+(`edit/par.py`, see §9); dehaze and clarity read neighbouring pixels and run on the whole frame.
 
 Notable ops:
 
@@ -326,6 +390,14 @@ Notable ops:
 - **targeted_hsl** — saturation/luminance of specific hue bands (skin/orange, green, blue),
   weighted by existing saturation so neutrals stay safe.
 - **color_grade** — split-tone: tint shadows and highlights toward different colors.
+- **black_point / white_point** (`ops.levels`, opt-in: `--levels`) — measure where the darkest
+  (brightest) tones sit after the lifts and pull them toward true black (clean white). The op
+  reshapes only the darkest (brightest) tenth of the frame, so a dark source cannot come out darker.
+  The effect is small (the black floor of a washed frame drops by 6 to 10 levels of 255). A rule
+  drives the black point; the white point is reachable through `autoedit adjust`.
+- **denoise** (opt-in: `--denoise`) — chroma first, then luma; both filters follow the grain
+  measured on the frame, so a clean frame keeps its detail. The rule scales it with ISO (none below
+  800, full from 6400) and the exposure lift. It runs before sharpening.
 - **sharpen** — small-radius unsharp mask on luma (output sharpening), applied last.
 
 ### Real dehaze (dark-channel prior)
@@ -352,18 +424,28 @@ actually clear.
 `apply_image` composes the final pixels at full resolution:
 
 1. **Region edits** in priority order, with **claim compositing** `a_eff = alpha·(1 − claimed)` so
-   even feathered masks never double-edit a pixel.
+   even feathered masks never double-edit a pixel. A region an instruction reached is a list of
+   **cells** (the instructed target and the rest of the region); the cells of one region are blended
+   in parallel against the same input with no claim between them, and a cell without settings still
+   claims its pixels.
 2. **Compositional moves** (vignette, sky graduate) blended independently — they intentionally
    overlap regions.
 3. **Global finishing** over the whole frame. With the **skin-safe guard**, protected regions
    (skin/snow) get the global pass *minus* the high-risk ops (clarity/saturation/vibrance/grade/HSL)
    — faces keep global exposure/tone but not the aggressive look.
-4. **Final clip**, then the **oversaturation gate** (see §11).
+4. **Final clip**, then the **highlight hold** (opt-in, `--highlight-hold`): where the source is
+   near white in all three channels (ramp from 0.80 to 0.985) the edit may not darken the pixel
+   (`gates.highlight_hold`). Then the **oversaturation gate** (see §11).
 
 Masks are upsampled and feathered against the full-res luma with a **guided filter** (`edit/filters.py`)
 so a mask alpha snaps to the real sky/hair/ridge boundary instead of haloing. `box_blur` (O(N)
 integral-image), `gaussian_blur` (3 box passes), `box_min` (separable erosion), and `guided_filter`
 are the dependency-free primitives.
+
+**Threads.** `edit/par.py` runs a per-pixel function on horizontal strips of 256 rows in a thread
+pool and joins them; the result is bit-identical to one call (a frame under 1.5 MP is one call).
+`--threads` / `AUTOEDIT_THREADS` sets the count (0: one per core). A function that reads neighbours
+or a whole-frame statistic never goes through it.
 
 ---
 
@@ -389,14 +471,17 @@ Three independent safety layers, all data-driven:
 
 - **Region policies** (`policies.py`) — hard rails enforced *after* the decider on whatever the
   rules/LLM proposed: drop `forbidden` ops and clamp to `max` magnitudes per concept (e.g. snow
-  can't be tinted, skin can't be over-clarified). **Re-enforced after reference tuning** too — the
+  can't be tinted, skin can't be over-clarified). `enforce(..., owners)` lets an instructed target
+  inherit the policies of every protected concept named in it ("skin tones" gets the skin policy). **Re-enforced after reference tuning** too — the
   reference tuner mutates region settings later in the pipeline, and the rails must win over it.
 - **Skin-safe guard** (`pipeline.py::_build_guard` + `edit/apply.py`) — holds aggressive *global*
   ops off `guard_global` concepts (skin/snow). The guarded op list is `rules.toml [guard].ops`.
 - **Oversaturation gate** (`edit/gates.py::chroma_guard`) — final pass capping each pixel's chroma
   increase vs the source (`rules.toml [guard].max_chroma_increase`, default +30%); snow/skin and
   near-white highlights held tighter, with the feathered guard mask tightening the ceiling
-  *gradually* at region edges. This is what keeps results true-to-life. `gates.assess` then scores
+  *gradually* at region edges. It compares against the source pixel by pixel; with `denoise` active it
+  compares against a denoised copy of the source (made once per photo), because against the raw
+  source it would stamp the source's colour noise back onto the result. This is what keeps results true-to-life. `gates.assess` then scores
   the **edited** output → quality score + review flag; its thresholds are data too
   (`rules.toml [quality_gate]`, defaults in `gates.GATE_DEFAULTS`).
 
@@ -404,13 +489,28 @@ Three independent safety layers, all data-driven:
 
 ## 12. Shoot consistency (`consistency.py`)
 
-A batch shouldn't edit each photo in a vacuum. A cheap **two-pass anchor**:
+A batch shouldn't edit each photo in a vacuum. Two modes (`--consistency`, `[run] consistency`);
+`plan()` picks one and returns a per-file bias.
+
+**`brightness`** (default), a cheap **two-pass anchor**:
 
 1. **Pass 1** — measure each image's brightness from a tiny proxy (`quick_lum`), cluster into
    lighting groups by a 1-D brightness gap split (`plan_groups`), compute a per-group target.
 2. **Pass 2** — nudge each image a **bounded ±0.15 EV** toward its group target (`exposure_bias`),
    so a folder doesn't drift in brightness photo-to-photo. The per-scene look still dominates; this
    only removes drift.
+
+**`bursts`** (opt-in): `find_bursts` groups consecutive shots (by capture time) that are at most
+`max_gap_s` (30 s) apart and repeat one framing: same orientation, and thumbnails that correlate at
+`min_similarity` (0.8) once each row's mean is removed, so "sky over ground" alone does not count.
+A RAW file and its JPEG are one shot. A burst never reaches more than `max_span_s` (120 s) past its
+first frame. Each frame is decided once without rendering (with the rules, never the LLM), then
+`burst_biases` nudges exposure (at most `max_ev`, 0.5), temp and tint (at most `max_wb`, 4) toward
+the burst's median, never below what the rules decided and never into clipping. The RAW files of
+a burst are evened out among themselves and the other files among themselves (`kind_biases`): a
+RAW decode starts well below the camera's JPEG, and one median for both would spend the nudge on
+that gap. The limits are in `rules.toml [consistency]`; the
+sidecar records `exposure_bias` and `wb_bias`.
 
 Applied by both the CLI batch (`batch.py`) and the UI job runner (`web/jobs.py`), toggleable in the
 UI (Settings → Batch consistency, default on).
@@ -420,7 +520,7 @@ UI (Settings → Batch consistency, default on).
 ## 13. Output (`emit.py`)
 
 Per photo: a **baked image** (`output_paths` picks the extension from `out_format`; `write_image`
-writes JPEG or 16-bit TIFF) plus a **sidecar JSON** (`Result.model_dump`). The sidecar is
+writes JPEG, 16-bit TIFF, WebP or PNG) plus a **sidecar JSON** (`Result.model_dump`). The sidecar is
 first-class — scene + confidence, detected concepts (present + score + coverage), global + per-region
 settings, compositional moves, post-edit stats, quality score / needs-review / reasons, batch group,
 decider/model, timing, and the **`notes` "why" list** (human-readable rationale: which rules fired,
@@ -437,6 +537,16 @@ maker note, with orientation reset to upright and pixel size and colour space co
 16-bit TIFF carries the profile and the basic tags only. Measurement and contact-sheet exports pass
 no `source` and stay untagged. Spec: `docs/plans/F1-export-metadata.md`.
 
+**Export options.** `--export NAME` applies a preset from `exports.toml` (`exports.py`): format,
+quality, `long_edge` (never upscales), name pattern, subfolder, metadata mode. Precedence: packaged
+defaults, the preset, explicit values in the profile's `defaults.toml` or the run file, then command
+flags; `--export ""` switches a preset off. The name pattern (`out_name`) may only use `{stem}`,
+`{style}` and `{n}` (`contract.py` validates it), and `output_paths` re-checks the filled name: it
+must be a plain file name, so a style such as `../../x` cannot leave the folder. `out_subdir` must
+be a relative folder name without `..`; braces are rejected. `output_paths` also refuses an image
+path that is the source photo itself. Every format carries the sRGB profile. `run.json` stays in
+the output root; sidecars sit next to their images, in the subfolder.
+
 Same-stem sources (a camera's `IMG_001.dng` + `IMG_001.jpg`, or same-named files across folders)
 **never overwrite each other**: `output_paths` takes a per-batch `taken` set and disambiguates with
 a `-2`/`-3` suffix, sidecar included. Both image and sidecar writes are atomic (`os.replace`), so
@@ -451,6 +561,20 @@ photo never aborts the run) → optional `resume` (skip photos whose sidecar exi
 Pass 1 of consistency runs here before the loop; `--no-consistent` skips it (each photo judged in
 isolation), mirroring the UI's Settings toggle.
 
+**Render workers.** `--workers N` (`[performance] workers`; 0 picks half the cores, at most 4;
+default 1) renders photos in a process pool (`spawn`). With a model backend the parent segments each
+photo, one at a time, into the disk mask cache and the workers render from it without loading the
+model (a worker's segmenter raises on a cache miss). It falls back to one worker with the LLM
+decider (the budget is counted per process) or with `--no-mask-cache` on a model backend. Threads
+inside each worker are `--threads` divided by the workers. `run.json` records `workers`.
+
+**`autoedit adjust`** (`adjust.py`) re-renders one photo: it finds the run through the sidecar and
+`run.json` (or `--source`), takes the run settings from the sidecar's `audit.run_config` (no paths,
+no API key), adds the photo's own adjustments (`--set sky.exposure=-0.3`, `--edit "..."`) and writes
+the image and sidecar again. Without adjustments it reproduces the batch bytes (masks come from the
+cache). It warns when the digest of the config files differs from the batch's, and needs
+`--allow-cloud` for a run that used the LLM decider.
+
 ---
 
 ## 15. The Studio web app (`web/`)
@@ -462,8 +586,15 @@ run drawer · review/settings modals.
 
 ### Endpoints
 
+Every JSON route sits on one router mounted at `/api/v1` (documented) and at `/api` (the old
+paths, same handlers, kept for the Studio pages). Every failure has one shape, `{"error", "code"}`
+(`forbidden`, `not_found`, `bad_request`, `internal`), including validation errors. The route list
+is pinned by `tests/snapshots/api_v1.json`; a test fails on any change, and
+`AUTOEDIT_UPDATE_SNAPSHOTS=1` rewrites it on purpose.
+
 | Route | Purpose |
 |---|---|
+| `GET /api/v1/version`, `/api/v1/settings/schema` | API and engine version; the run-setting schema (what `autoedit settings` prints; pinned by `tests/snapshots/settings_schema.json`). |
 | `GET /api/styles`, `/api/presets` | List styles / concept presets. |
 | `GET /api/list?dir=` | Flat supported-image list (classic UI). |
 | `GET /api/groups?dir=` | **RAW+JPEG pairs collapsed** into one logical photo (Studio UI). |
@@ -471,6 +602,8 @@ run drawer · review/settings modals.
 | `POST /api/pick?kind=` | Native folder/file picker (POST — it registers a trust-boundary root). |
 | `POST /api/preview` | Single-image before/after (lossless WebP data-URLs) + decision sidecar. |
 | `POST /api/jobs`, `GET /api/jobs/{id}`, `POST .../control` | Background batch with live progress. |
+| `GET /api/jobs/{id}/events` | The same progress as a server-sent event stream: an `event: snapshot` whenever it changes, `event: done` at the end. |
+| `POST /api/run`, `/run-one`, `/curate`; `/curate/jobs`; `/review/labels`; `/datasets/…`; `/aesthetic/…`; `/variants` | Workflow routes (see APP_GUIDE.md). |
 
 ### Trust boundary & safety
 
@@ -503,24 +636,39 @@ twice. Thumbnails use the JPEG when present (no slow rawpy decode for a tile). O
 
 In-memory job registry; a worker thread builds the pipeline once and iterates photos
 (editing → finished/review/failed), writing baked image + sidecar, with per-image isolation,
-pause/resume/cancel between photos, and live progress snapshots the UI polls. Runs the consistency
-two-pass when enabled.
+pause/resume/cancel between photos, and live progress snapshots the UI polls or reads from the
+event stream. Runs the consistency plan when enabled. The web service resolves `backend = "auto"`
+itself (`service.make_cfg`) and reads the profile; it does not read `defaults.toml`.
 
 ---
 
 ## 16. CLI (`cli.py`)
 
 ```
-autoedit run <in> <out> [--style …] [--prompt …] [--concepts a,b,c] [--look …]
-                        [--intensity F] [--decider rules|llm] [--backend stub|sam3]
-                        [--format jpeg|tiff] [--reference img] [--resume] [--dry-run] …
+autoedit run <in> [out] [--style --prompt --edit "…" --preset --concepts a,b,c --look
+                         --palette --palette-strength --reference img --reference-strength
+                         --intensity F --decider rules|llm|learned --recipe-model m.json
+                         --allow-cloud --api-key --llm-mode refine|propose
+                         --backend stub|sam3|auto --device
+                         --raw-mode … --format jpeg|tiff|webp|png --quality --metadata keep|shareable|none
+                         --long-edge PX --name PATTERN --subdir DIR --export PRESET
+                         --analysis-long-edge --no-compose --no-vignette --no-sharpen
+                         --levels --denoise --highlight-hold
+                         --workers N --threads N --no-mask-cache
+                         --no-consistent --consistency brightness|bursts
+                         --resume --dry-run --config run.toml --configs-dir DIR --profile DIR]
+autoedit adjust <photo|sidecar> [--set TARGET.OP=VALUE] [--edit "…"] [--reset] [--source IMG] …
+autoedit curate | dataset | rank-variants | train-recipe | train-aesthetic   # workflow + learning
+autoedit looks list | save NAME [--from BASE --set FIELD=VALUE] | delete NAME
+autoedit calibrate [photos] [--out DIR | --continue DIR [--finish]] [--count --rounds --seed --name …]
+autoedit models status | download | remove
 autoedit ui [--host --port --no-open]      # launch Studio
 autoedit doctor                            # device + backend availability
-autoedit styles | presets                  # list profiles
+autoedit styles | presets | exports | settings [--json]   # list profiles / presets / settings
 ```
 
 `run.toml`/`defaults.toml` provide defaults; CLI flags and the UI options override them via
-`RunConfig` (`contract.py`).
+`RunConfig` (`contract.py`). Most commands take `--configs-dir` and `--profile`.
 
 ---
 
@@ -542,14 +690,18 @@ autoedit styles | presets                  # list profiles
 ## 18. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable.
-**322 tests** currently green. Any new edit op needs a math test; rule changes need a golden test —
+**665 tests** in 76 files currently green (run on two Python interpreters, with different Pillow and
+FastAPI versions). Any new edit op needs a math test; rule changes need a golden test —
 percentile/WB rule goldens assert BOTH the new adaptive behavior on populated stats AND exact
 byte-for-byte reproduction of the pre-retune output on zero-filled stats. Coverage includes:
 identity no-op, each op's math, dehaze (identity + real haze reduction), the `veil` vs legacy
 `haze` divergence on bright-but-not-hazy scenes, sky-excluded foreground stats, region-aware
 auto-WB (cast measurement + warmth-preserving correction), segmentation cache (overlap reuse,
 absent-concept sentinel, LRU), RAW+JPEG grouping, intent parsing, guards/gates, security/trust
-boundary, batch consistency, web service preview/jobs, and the blind-test A/B harness itself.
+boundary, batch consistency (brightness and bursts), region instructions, `adjust`, export presets
+and path checks, the profile overlay, the API route and settings snapshots, input formats, thread
+and worker equality with the single-thread bytes, and web service preview/jobs, and the blind-test
+A/B harness itself. Per-pixel ops are tested for identical output on one and four threads.
 
 **Definition of done** (per change): test suite green; a stub corpus run completes with sidecars +
 manifest; configs/docs updated if behavior changed.
@@ -561,7 +713,7 @@ manifest; configs/docs updated if behavior changed.
 ```
 src/autoedit/
   pipeline.py            # the 8-stage orchestrator (process_one)
-  batch.py               # folder batch + per-image isolation + consistency pass 1
+  batch.py               # folder batch, per-image isolation, render workers, consistency plan
   contract.py            # RunConfig + all pydantic models (Result, stats, settings)
   cli.py                 # command-line interface
   imageio.py             # decode/encode, RAW/16-bit/ICC, EXIF, color helpers
@@ -574,31 +726,48 @@ src/autoedit/
   compose.py             # compositional moves (vignette, sky graduate)
   intent.py              # free-text look intent → bounded global nudges
   policies.py            # post-decision region hard rails
-  consistency.py         # two-pass shoot brightness normalization
+  consistency.py         # shoot consistency: brightness groups, bursts
   notes.py               # human-readable "why" notes
   emit.py                # sidecar + image output, manifest
-  paths.py               # config/cache path resolution
+  paths.py               # config/cache path resolution, profile overlay, TOML merge/dump
+  instructions.py        # --edit parser + plan (cells of instructed regions)
+  adjust.py              # autoedit adjust: re-render one photo from its sidecar
+  exports.py             # export presets (exports.toml)
+  calibrate.py           # taste calibration (blind pairs, votes, look fit)
+  models.py              # SAM 3 weights: status / download / remove
+  settings_schema.py     # description of every run setting (settings.toml + RunConfig)
+  curate.py review.py dataset.py aesthetic.py critic.py recipe.py variants.py   # workflow + learning (APP_GUIDE.md)
+  captures.py quality.py quality_runner.py experiments.py workflows.py tonemetrics.py
+                         # quality workflow, experiments, tone metrics (docs/QUALITY_WORKFLOW.md)
+  palette.py             # OKLab palette model (edit/palette.py applies it)
   segment/
     base.py              # Segmenter protocol + RegionMask
     stub.py / sam3.py    # backends (no-GPU stub / SAM 3)
-    cache.py             # per-concept mask cache (fast style switching)
+    cache.py             # per-concept mask cache + DiskMaskCache (<out>/.autoedit-masks)
     resolve.py           # gating + overlap arbitration → label map
   decide/
     base.py              # DecisionContext + Decider protocol
     rules_decider.py     # default deterministic decider
     llm_decider.py       # optional Anthropic refine/propose
+    learned_decider.py   # global recipe from the trained predictor, regions from rules
   edit/
     ops.py               # the frozen-order edit primitives
     apply.py             # region/compose/global compositing + gates
+    par.py               # row-strip thread pool for per-pixel work
     filters.py           # box/gaussian blur, box_min, guided_filter
+    banding.py           # posterization detector + remediation
+    oklab.py palette.py  # OKLab helpers + regional palette grade
     mask.py              # alpha building / feathering
-    gates.py             # oversaturation gate + post-edit assessment
+    gates.py             # oversaturation gate, highlight hold, post-edit assessment
     reference.py         # optional reference-photo color match
   web/
     app.py               # FastAPI routes + middleware
     service.py           # framework-agnostic logic (preview, groups, pipeline)
-    jobs.py              # background batch jobs + live progress
+    jobs.py              # background batch jobs + live progress (+ event stream source)
+    curate_jobs.py aesthetic_jobs.py   # background jobs for culling and critic training
     static/studio.html   # the single-file Studio UI
   configs/
     rules.toml looks.toml styles.toml concepts.toml compose.toml intents.toml defaults.toml
+    palettes.toml quality.toml workflows.toml
+    instructions.toml exports.toml calibrate.toml settings.toml
 ```

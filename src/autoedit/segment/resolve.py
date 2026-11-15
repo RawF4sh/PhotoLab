@@ -46,7 +46,7 @@ def resolve(
             detected.append(DetectedConcept(name=name, present=False, score=0.0, coverage=0.0))
             continue
         cov = float(rm.mask.mean())
-        is_present = rm.score >= cm.min_score and cov >= cm.min_coverage and rm.mask.any()
+        is_present = bool(rm.score >= cm.min_score and cov >= cm.min_coverage and rm.mask.any())
         detected.append(
             DetectedConcept(
                 name=name,

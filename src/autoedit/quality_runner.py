@@ -21,6 +21,7 @@ from .captures import assert_separate_output, discover_captures, sha256_file, st
 from .contract import Result, RunConfig
 from .imageio import Image, downscale_long_edge, load_image
 from .quality import assess_pixels, load_quality_config
+from .segment import resolve_backend
 
 
 def write_json(path: str | Path, data) -> None:
@@ -41,7 +42,7 @@ def build_safe_engine(cfg: RunConfig, workflow="current", options=None):
     try:
         return WorkflowEngine(cfg, workflow=workflow, options=options)
     except Exception as exc:
-        if cfg.backend != "sam3":
+        if resolve_backend(cfg.backend) != "sam3":
             raise
         fallback = WorkflowEngine(cfg.model_copy(update={"backend": "stub", "concepts": []}),
                                   workflow=workflow, options=options)
@@ -113,7 +114,7 @@ def render_safe(path: str, cfg: RunConfig, workflow: str = "current", image: Ima
     try:
         proposal, result = engine.process(path, image=image, common_source=reference)
     except Exception as exc:
-        if cfg.backend != "sam3":
+        if resolve_backend(cfg.backend) != "sam3":
             raise
         # Record this as a fallback, never as a completed SAM experiment.
         backend_error = f"{type(exc).__name__}: {exc}"

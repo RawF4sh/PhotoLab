@@ -65,14 +65,14 @@ decode → segment → resolve → stats → scene → decide → apply → emit
 
 | Stage | Module | Does |
 |---|---|---|
-| **decode** | `imageio.py` | Load to float32 RGB [0,1] sRGB. RAW (rawpy, with EXIF priors), 16-bit TIFF (tifffile), ICC→sRGB (incl. CMYK profiles), EXIF orientation honored on every path. |
+| **decode** | `imageio.py` | Load to float32 RGB [0,1] sRGB. RAW (rawpy, with EXIF priors), 16-bit TIFF (tifffile), AVIF, HEIC/HEIF (optional `heif` extra), ICC→sRGB (incl. CMYK profiles), EXIF orientation honored on every path. |
 | **segment** | `segment/` | SAM 3 (or stub) → one mask per **named concept**. Per-concept **cache** so style switches don't re-run SAM. |
 | **resolve** | `segment/resolve.py` | Gate weak detections; arbitrate overlaps into a non-overlapping label map (no pixel edited twice). |
 | **stats** | `stats.py` | Per-region + global stats: brightness, saturation, clipping, haze, **luminance percentiles**, **OKLab chroma/warmth**. |
 | **scene** | `scene.py` | Classify `landscape` / `people` / `other`. |
 | **decide** | `decide/` | Stats → settings. `rules` (default), `llm` (opt-in cloud), or **`learned`** (recipe predictor). |
 | **apply** | `edit/` | Composite region edits → global finishing → palette → safety gates, at **full resolution**. |
-| **emit** | `emit.py` | Baked image (JPEG/16-bit TIFF) + sidecar JSON. |
+| **emit** | `emit.py` | Baked image (JPEG, 16-bit TIFF, WebP or PNG) + sidecar JSON. |
 
 **Analyze on a proxy, apply at full res.** Masks/stats are computed on a downscaled proxy; edits are
 applied at native resolution with edge-aware (guided-filter) mask feathering.
@@ -110,7 +110,9 @@ applied at native resolution with edge-aware (guided-filter) mask feathering.
 ### Edit ops (frozen order, `edit/ops.py`)
 
 `white balance → exposure (+ highlight knee) → shadow lift → tone → contrast → curve → dehaze →
-clarity → vibrance/saturation → targeted HSL → color grade → sharpen`. An empty settings dict is a strict no-op. Notable:
+clarity → black/white point → vibrance/saturation → targeted HSL → color grade → denoise → sharpen`.
+An empty settings dict is a strict no-op. Per-pixel work runs on row strips in threads
+(`edit/par.py`) with identical output. Notable:
 
 - **Shadow lift** (`shadows_ev`) — opens dark foregrounds by up to N stops with black pinned
   (a bounded gain that fades to nothing at mid-grey), so a dark scene is lifted without a grey veil.
@@ -119,6 +121,14 @@ clarity → vibrance/saturation → targeted HSL → color grade → sharpen`. A
   refine edge-aware with the guided filter, invert the scattering model, blend by amount. Tapers on
   smooth bright gradients so foggy skies don't band.
 - **Palette grade** — the OKLab regional split-tone described above.
+- **Black and white point** (`--levels`, off by default) — pulls the measured black point toward a true
+  black. It reshapes only the darkest tenth of the frame, so the effect is small (the black floor of
+  a washed frame drops by 6 to 10 levels of 255). The white point is available to `autoedit adjust`.
+- **Denoise** (`--denoise`, off by default) — chroma first, before sharpening. The rule scales it with
+  ISO (from 800, full from 6400) and the exposure lift; a file without an EXIF ISO gets none.
+- **Highlight hold** (`--highlight-hold`, off by default) — where the source is near white in all
+  three channels, the edit may not darken the pixel, so a blown sky stays white instead of turning
+  light grey.
 
 ### Safety layers (all data-driven, all still apply under learned/variant modes)
 
@@ -139,6 +149,8 @@ clarity → vibrance/saturation → targeted HSL → color grade → sharpen`. A
   distance to the camera render) as an unattended gate. With `--fail-on-regression`, missing or
   failed photos make the run fail even when all successfully measured photos pass. Reports also
   retain RGB clipping deltas, review reasons and expected/completed counts.
+- **Region instructions** — the cells of an instructed region keep the region's own policies, so
+  `--edit` cannot push a protected region (skin, snow) past its limits.
 - **Post-edit assessment** — `quality_score`, `needs_review`, `warnings`, measured on the *edited*
   output. Thresholds are data (`rules.toml [quality_gate]`). Drives the review queue and variant
   scoring.
@@ -153,6 +165,12 @@ clarity → vibrance/saturation → targeted HSL → color grade → sharpen`. A
 Two-pass batch normalization: measure each photo's brightness, cluster into lighting groups, nudge
 each toward its group target (bounded ±0.15 EV) so a folder doesn't drift photo-to-photo. Toggle in
 Settings (default on).
+
+A second mode, `--consistency bursts` (off by default), finds bursts: consecutive shots at most 30 s
+apart that repeat one framing (same orientation, thumbnails alike once each row's mean is removed). A
+RAW file and its JPEG count as one shot. Each frame is nudged toward the burst's median exposure
+(at most 0.5 stops) and white balance (at most 4 units); a nudge never cuts below what the rules
+decided and never pushes a frame into clipping. The limits are in `rules.toml [consistency]`.
 
 ---
 
@@ -301,9 +319,13 @@ localhost-origin-checked; `serve` refuses non-loopback hosts without `--unsafe-n
 ```
 autoedit run <in> <out> [--style … --prompt … --palette … --intensity … --reference IMG
                          --decider rules|llm|learned --recipe-model m.json
-                         --backend stub|sam3 --format jpeg|tiff --resume --dry-run
-                         --metadata keep|shareable|none
+                         --backend stub|sam3|auto --format jpeg|tiff|webp|png --resume --dry-run
+                         --metadata keep|shareable|none --edit "…" --export PRESET
+                         --long-edge PX --name PATTERN --subdir DIR --workers N --threads N
+                         --consistency brightness|bursts --profile DIR
+                         --highlight-hold --denoise --levels
                          --no-consistent --no-compose --no-vignette --no-sharpen …]
+autoedit adjust <photo|sidecar> [--set sky.exposure=-0.3 --edit "…" --reset --source IMG]
 autoedit ui [--host --port --no-open]                 # launch Studio
 
 # workflow
@@ -316,13 +338,24 @@ autoedit rank-variants <image|folder> [--out csv --aesthetic-model m.json]
 autoedit train-aesthetic <labels.csv> <images> <model.json>
 autoedit train-recipe    <dataset> <model.json>
 
+# personal setup
+autoedit looks list | save NAME [--from BASE --set FIELD=VALUE] | delete NAME
+autoedit calibrate <photos> --out DIR | --continue DIR [--finish]
+autoedit models status | download | remove
+
 # info
-autoedit doctor | presets | styles
+autoedit doctor | presets | styles | exports | settings [--json]
 ```
 
 ---
 
 ## 11. Web API reference
+
+Every route below also lives under `/api/v1` (for example `/api/v1/preview`); the plain `/api/…`
+paths still work. Every failure answers with one error shape, `{"error": "…", "code": "…"}`.
+Also available: `GET /api/v1/version`, `GET /api/v1/settings/schema` (the data behind
+`autoedit settings`) and `GET /api/v1/jobs/{id}/events`, a server-sent event stream for a job. The
+route list is pinned by `tests/snapshots/api_v1.json`.
 
 | Endpoint | Purpose |
 |---|---|
@@ -351,6 +384,15 @@ autoedit doctor | presets | styles
 | `concepts.toml` | Per-concept priority, gating, feather, guards, region policies. |
 | `compose.toml` | Compositional moves (vignette, sky graduate). |
 | `defaults.toml` | Default run config, including `[output] metadata` (which camera data an export keeps). |
+| `instructions.toml` | The words `--edit` understands: verbs, amount words, a limit per op. |
+| `exports.toml` | Export presets (`full`, `web`, `social`, `archive`, `webp`). |
+| `calibrate.toml` | Dimensions and step sizes of `autoedit calibrate`. |
+| `settings.toml` | Description of every run setting (`autoedit settings`). |
+
+Your own differences can live in a **profile** folder (`--profile DIR`, `AUTOEDIT_PROFILE`, or
+`~/.config/autoedit`): TOML files with only the keys you change, merged over these files.
+`rules.toml` also holds opt-in rule sets (`[opt_in.NAME…]`) that apply only when the run setting
+`NAME` is on.
 
 ---
 
@@ -373,7 +415,7 @@ autoedit doctor | presets | styles
 ## 14. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable —
-**322 tests** across 51 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`). Coverage: each edit op's math, identity no-op, real
+**665 tests** across 76 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`). Coverage: each edit op's math, identity no-op, real
 dehaze, OKLab palette (direction / neutral protection / gamut / auto-grade restraint), banding
 detector + dither + sidecar consistency, segmentation cache, RAW+JPEG grouping, EXIF orientation
 (all 8 values), decode robustness (grayscale/RGBA/CMYK/16-bit), the `veil` atmospheric-haze
@@ -399,7 +441,41 @@ updated if behavior changed.
 
 ---
 
-## 15. File map
+## 15. From the command line
+
+The Studio covers the everyday loop. These commands do the same work, and a few things more, from a
+terminal. `autoedit <command> --help` lists every option.
+
+- **Say what you want in words:** `autoedit run ./photos ./out --edit "brighten the jacket, darken the sky slightly"`.
+  Any thing the segmenter can find may be named. The sidecar says for each instruction whether it was
+  applied, clamped or not found.
+- **Fix one photo after the batch:** `autoedit adjust ./out/photo.jpg --set sky.exposure=-0.3` or
+  `--edit "warm the grass a little"`. It renders that photo again from its sidecar; `--reset` drops
+  your adjustments.
+- **Make a big batch faster:** `--workers 4` renders several photos at once; `--threads` sets the
+  threads inside one render. Masks are kept on disk in `<out>/.autoedit-masks`, so a re-run or an
+  adjustment does not segment again (`--no-mask-cache` turns this off).
+- **Export for a purpose:** `--export web` (also `full`, `social`, `archive`, `webp`) sets format,
+  size, name and subfolder in one word; `autoedit exports` lists them. `--long-edge`, `--name` (fields
+  `{stem}`, `{style}`, `{n}` only) and `--subdir` set them one by one. A run refuses to write an export
+  over its own source photo.
+- **Even out a burst:** `--consistency bursts` nudges frames of one framing toward the same exposure
+  and white balance (section 3).
+- **Keep your own settings and looks:** `autoedit looks save warm --from natural --set vibrance_add=6`
+  stores a look in your profile folder; `--profile DIR` or `AUTOEDIT_PROFILE` picks the folder.
+  `autoedit looks list` shows where each look comes from.
+- **Teach it your taste:** `autoedit calibrate ./photos --out ./calib` renders blind pairs; vote on the
+  page, then `autoedit calibrate --continue ./calib` for the next round. The result is saved as a look.
+- **Manage the SAM 3 weights:** `autoedit models status`, `download` and `remove`. Nothing is
+  downloaded unless you run `download`.
+- **See every setting:** `autoedit settings` prints each run setting with its type, default and
+  range; `--json` gives the schema.
+- **Try the three quality options:** `--highlight-hold`, `--denoise` and `--levels`. All are off by
+  default and each changes how a photo looks.
+
+---
+
+## 16. File map
 
 ```
 src/autoedit/
@@ -409,6 +485,8 @@ src/autoedit/
   stats.py scene.py rules.py looks.py styles.py concepts.py compose.py   # measure + decide (data)
   intent.py palette.py   # free-text intent + OKLab palette model
   policies.py consistency.py notes.py emit.py paths.py
+  instructions.py adjust.py      # --edit parsing; per-photo re-render (autoedit adjust)
+  exports.py calibrate.py models.py settings_schema.py   # presets · taste calibration · SAM 3 weights · settings schema
   # ── workflow + learning ──
   curate.py              # culling (diverse/best/aesthetic), contact sheet
   review.py              # review labels (vocab, append-only CSV/JSON, summary)
@@ -416,13 +494,14 @@ src/autoedit/
   aesthetic.py critic.py # aesthetic scorer + reusable critic (train/score/review-priority)
   recipe.py              # learned recipe predictor (stats → settings)
   variants.py            # variant specs + scoring + pick
-  segment/               # base · stub · sam3 · cache (per-concept) · resolve
+  segment/               # base · stub · sam3 · cache (per-concept + disk) · resolve
   decide/                # base · rules_decider · llm_decider · learned_decider · make_decider
-  edit/                  # ops · apply · filters · oklab · palette · gates · banding · reference · mask
+  edit/                  # ops · apply · par (row-strip threads) · filters · oklab · palette · gates · banding · reference · mask
   web/
     app.py               # FastAPI routes + trust boundary + origin guard
     service.py           # framework-agnostic logic (preview, curate, dataset, aesthetic, variants)
     jobs.py curate_jobs.py aesthetic_jobs.py   # background jobs
     static/studio.html   # the single-file Studio UI
-  configs/               # rules looks styles palettes intents concepts compose defaults .toml
+  configs/               # rules looks styles palettes intents concepts compose defaults
+                         # instructions exports calibrate settings .toml
 ```

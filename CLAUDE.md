@@ -59,3 +59,6 @@ auto-mask fixed regions).
   `model` and `effort` exactly as it specifies for that kind of work: planning on Fable at `max`
   effort, checks on Opus at `high`, building from a spec on Sonnet at `medium`, mechanical edits
   and searches on Haiku at `low`. That file is authoritative if this summary and it ever differ.
+- When the owner asks for work without supervision ("do the rest, don't ask me"), follow
+  `docs/UNATTENDED_RUN.md`: no questions, no git writes, default pixels unchanged, owner decisions
+  recorded instead of asked, and one commit block at the end.

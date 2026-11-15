@@ -53,6 +53,7 @@ pip install -e .            # core: numpy, Pillow, pydantic (runs now with the s
 pip install -e '.[sam]'     # + torch + SAM 3 (real open-vocab masks; GPU recommended)
 pip install -e '.[llm]'     # + Anthropic SDK (LLM per-region refine)
 pip install -e '.[accel]'   # + OpenCV/Kornia/colour-science/tifffile/rawpy (quality + 16-bit)
+pip install -e '.[heif]'    # + pillow-heif (HEIC/HEIF phone photos; AVIF needs no extra)
 ```
 
 No GPU needed to try it: the **stub segmenter** (heuristic sky/subject/skin) runs the whole
@@ -64,7 +65,9 @@ SAM License. Accept it at https://huggingface.co/facebook/sam3, then `huggingfac
 tells you exactly which of these steps is missing. Apple Silicon runs on the `mps` device out of
 the box (a CPU fallback is enabled for the few ops Metal lacks); NVIDIA uses `cuda`; anything else
 falls back to CPU (slow but works). Camera RAW input (`.cr2/.nef/.arw/.dng`…) needs the `accel`
-extra for `rawpy`.
+extra for `rawpy`. AVIF input works with Pillow 11.3 or later; HEIC and HEIF input needs the
+`heif` extra (without it a HEIC photo fails alone, with a message naming the extra, and the rest of
+the batch runs).
 
 ## Use
 
@@ -78,6 +81,18 @@ autoedit train-aesthetic labels.csv ./images ./aesthetic.json       # train a li
 autoedit curate ./photos ./curated --mode aesthetic --aesthetic-model ./aesthetic.json
 autoedit run ./raws ./out --raw-mode preview_ev_headroom       # RAW development candidate (default: none)
 autoedit run ./photos ./out --metadata keep                    # keep GPS and serial numbers too (default shareable drops both; none writes no EXIF)
+autoedit run ./photos ./out --edit "brighten the jacket, darken the sky slightly"   # region instructions in words
+autoedit adjust ./out/IMG_0001.jpg --set sky.exposure=-0.3   # re-render one photo from its sidecar
+autoedit run ./photos ./out --workers 4                        # render processes for a batch (default 1)
+autoedit run ./photos ./out --export web                       # export preset: format, size, name, subfolder
+autoedit exports       # list export presets
+autoedit run ./photos ./out --consistency bursts               # even out frames of one framing (default: brightness)
+autoedit looks save warm --from natural --set vibrance_add=6   # save your own look into your profile
+autoedit run ./photos ./out --look warm --profile ~/my-profile # use a profile folder (or set AUTOEDIT_PROFILE)
+autoedit calibrate ./photos --out ./calib                      # fit a personal look from blind pairs you vote on
+autoedit models status # SAM 3 weights: status | download | remove
+autoedit settings      # every run setting with its type, default and range (--json for the schema)
+autoedit run ./photos ./out --highlight-hold --denoise --levels   # three quality options, all off by default
 autoedit doctor        # check device + backend availability
 autoedit presets       # list concept presets
 ```
@@ -124,6 +139,15 @@ local `./configs` dir or `--configs-dir`):
 - [looks.toml](src/autoedit/configs/looks.toml) — magnitude shaping + split-tone color grading.
 - [compose.toml](src/autoedit/configs/compose.toml) — radial/linear compositional moves (vignette, sky grad).
 - [concepts.toml](src/autoedit/configs/concepts.toml) — concept presets + per-concept priority/feather/rule mapping.
+- [instructions.toml](src/autoedit/configs/instructions.toml) — the words `--edit` understands (verbs, amounts, limits per op).
+- [exports.toml](src/autoedit/configs/exports.toml) — export presets for `--export` (`full`, `web`, `social`, `archive`, `webp`).
+- [calibrate.toml](src/autoedit/configs/calibrate.toml) — dimensions and step sizes of `autoedit calibrate`.
+- [settings.toml](src/autoedit/configs/settings.toml) — the description of every run setting, shown by `autoedit settings`.
+
+A **profile** is a folder that holds only your differences, in TOML files named like the packaged
+ones. It is merged key by key over the packaged files, so changing one value does not mean copying
+a file. Point to it with `--profile DIR` or `AUTOEDIT_PROFILE` (default: `~/.config/autoedit` if it
+exists); `autoedit looks save` writes your own looks there.
 
 ## Develop
 

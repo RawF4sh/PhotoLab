@@ -19,7 +19,8 @@ __all__ = ["DecisionContext", "Decider", "RulesDecider", "make_decider", "DISCLO
 DISCLOSURE = (
     "AutoEdit cloud (BYO-key): the LLM decider sends a SMALL THUMBNAIL + image stats to your "
     "AI provider (Anthropic) and bills YOUR API key per photo. Full-resolution pixels never "
-    "leave your machine; segmentation stays local. Enable with --allow-cloud (or "
+    "leave your machine; segmentation stays local. With --edit, the text of an instruction the "
+    "local parser did not understand is sent too. Enable with --allow-cloud (or "
     "AUTOEDIT_ALLOW_CLOUD=1)."
 )
 
@@ -85,5 +86,7 @@ def make_decider(cfg) -> Decider:
         temperature=cfg.llm_temperature,
         max_calls=cfg.llm_max_calls,
         budget_usd=cfg.llm_budget_usd,
+        input_usd_per_mtok=cfg.llm_input_usd_per_mtok,
+        output_usd_per_mtok=cfg.llm_output_usd_per_mtok,
         api_key=key,
     )

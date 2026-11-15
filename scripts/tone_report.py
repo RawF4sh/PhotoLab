@@ -389,6 +389,22 @@ def print_table(rows: list[dict], summary: dict) -> None:
         print(f"  {k:28s} {v}")
 
 
+def _parse_sets(pairs, error):
+    """`KEY=VALUE` pairs -> RunConfig kwargs. A value is JSON when it parses (true, 1.0), else a
+    string. An unknown key or a malformed pair goes to `error` (argparse's `ap.error`)."""
+    out = {}
+    for pair in pairs:
+        key, eq, raw = pair.partition("=")
+        if not eq or key not in RunConfig.model_fields:
+            error(f"--set {pair}: expected KEY=VALUE with KEY a RunConfig field")
+            continue
+        try:
+            out[key] = json.loads(raw)
+        except ValueError:
+            out[key] = raw
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="AutoEdit tone report (objective dark-RAW gate)")
     ap.add_argument("src", help="folder of source photos (RAW or JPEG)")
@@ -407,11 +423,14 @@ def main() -> int:
     ap.add_argument("--dark-regress", dest="dark_regress", type=float, default=defaults["dark_regress"])
     ap.add_argument("--clip-budget", dest="clip_budget", type=float, default=defaults["clip_budget"])
     ap.add_argument("--shadow-clip-budget", type=float, default=defaults["shadow_clip_budget"])
+    ap.add_argument("--set", dest="extra", action="append", default=[], metavar="KEY=VALUE",
+                    help="extra RunConfig field for --render (repeatable), e.g. --set levels=true")
     ap.add_argument("--csv", help="write per-photo rows here")
     ap.add_argument("--json", help="write {summary, rows, errors} here")
     ap.add_argument("--fail-on-regression", dest="fail", action="store_true",
                     help="exit nonzero for tone regressions or any source that cannot be assessed")
     args = ap.parse_args()
+    extra = _parse_sets(args.extra, ap.error)
 
     thr = dict(dark_source=args.dark_source, dark_regress=args.dark_regress, clip_budget=args.clip_budget,
                shadow_clip_budget=args.shadow_clip_budget)
@@ -425,6 +444,7 @@ def main() -> int:
             kw["style"] = args.style
         if args.intensity is not None:
             kw["intensity"] = args.intensity
+        kw.update(extra)
         rows = rows_by_render(args.src, RunConfig(**kw), limit=args.limit, max_px=args.max_px,
                               camera=args.camera, thr=thr, errors=errors, unsafe_control=args.unsafe_control)
     elif args.out:

@@ -1,0 +1,46 @@
+# Taste calibration (`autoedit calibrate`): blind pairs that differ along one dimension of the
+# look; the votes move the look. A dimension is a direction in look-field space, its numbers are
+# the step of the first round (each later round uses a smaller one, see `shrink`).
+#
+# The two versions of a pair are the base look minus and plus one step, so they differ by two
+# steps. The steps are sized so that this difference is plain to see at page size in the first
+# round and still visible in the last. Steps a third of these gave pairs nobody could tell apart
+# (a mean difference of about one 8-bit level), and a vote on such a pair is noise.
+
+[run]
+count = 8            # photos per round
+rounds = 3
+seed = 1             # shuffles the pair order and the left/right slots; the photo choice does not use it
+shrink = 0.7         # each round's step is this fraction of the round before
+min_votes = 4        # a dimension with fewer decisive votes does not move
+dead_zone = 0.2      # |share for plus - share for minus| below this: no move
+render_long_edge = 1600
+
+[dimension.lift]     # how much of the exposure lift the look keeps
+label = "brighter or darker"
+exposure_mul = 0.4
+
+[dimension.depth]    # contrast and the filmic curve
+label = "more or less depth"
+contrast_mul = 0.35
+curve_add = 12
+
+[dimension.colour]
+label = "more or less colour"
+vibrance_add = 16
+saturation_add = 8
+
+[dimension.warmth]   # split-tone warmth in highlights and shadows
+label = "warmer or cooler"
+grade_highlights_temp = 16
+grade_shadows_temp = 8
+
+# Every look value stays inside [low, high].
+[bounds]
+exposure_mul = [0.4, 1.4]
+contrast_mul = [0.5, 1.8]
+curve_add = [-20, 30]
+vibrance_add = [-15, 25]
+saturation_add = [-15, 20]
+grade_highlights_temp = [-20, 20]
+grade_shadows_temp = [-20, 20]

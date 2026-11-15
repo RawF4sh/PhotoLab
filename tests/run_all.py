@@ -45,13 +45,29 @@ def _install_pytest_shim():
         def __exit__(self, et, ev, tb):
             if et is None:
                 raise AssertionError(f"did not raise {self.exc}")
+            self.value = ev   # like pytest: `with pytest.raises(E) as e: ...; str(e.value)`
             return issubclass(et, self.exc)
 
+    builtin_abs = abs
+
+    class _Approx:   # pytest.approx for plain numbers, with pytest's default tolerances
+        def __init__(self, want, rel=None, abs=None):
+            self.want = want
+            self.tol = max((1e-6 if rel is None else rel) * builtin_abs(want), 1e-12 if abs is None else abs)
+
+        def __eq__(self, got):
+            return builtin_abs(got - self.want) <= self.tol
+
+        def __repr__(self):
+            return f"approx({self.want!r})"
+
     shim.raises = lambda exc: _Raises(exc)
+    shim.approx = _Approx
     sys.modules["pytest"] = shim
 
 
 def main() -> int:
+    os.environ["AUTOEDIT_PROFILE"] = ""   # a developer's own profile must not change results
     root = pathlib.Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root / "src"))
     _install_pytest_shim()

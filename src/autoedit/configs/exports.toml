@@ -1,0 +1,34 @@
+# AutoEdit export presets: `--export NAME` (or [output] export = "NAME" in a run file).
+# Keys: format ("jpeg" | "tiff" | "webp" | "png"), quality, long_edge (pixels; left out = full
+# size), name (file name template: {stem}, {style}, {n}), subdir, metadata ("keep" | "shareable"
+# | "none"). A flag on the command line wins over the preset.
+
+[full]
+format = "jpeg"
+quality = 95
+
+[web]
+format = "jpeg"
+quality = 85
+long_edge = 2048
+name = "{stem}_web"
+subdir = "web"
+
+[social]
+format = "jpeg"
+quality = 88
+long_edge = 1350
+name = "{stem}_social"
+subdir = "social"
+metadata = "none"
+
+[archive]
+format = "tiff"
+metadata = "keep"
+subdir = "archive"
+
+[webp]
+format = "webp"
+quality = 82
+long_edge = 2560
+subdir = "webp"

@@ -31,6 +31,23 @@ from .base import RegionMask
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
+_IMPORTABLE: bool | None = None
+
+
+def importable() -> bool:
+    """Can the SAM 3 classes really be imported here? The packages can be installed and the import
+    can still fail (seen: a broken binary in a dependency), and only the import tells. It costs
+    the torch import once; the answer is kept for the process."""
+    global _IMPORTABLE
+    if _IMPORTABLE is None:
+        try:
+            from transformers import Sam3Model, Sam3Processor  # type: ignore  # noqa: F401
+            _IMPORTABLE = True
+        except Exception:
+            _IMPORTABLE = False
+    return _IMPORTABLE
+
+
 def pick_device(requested: str = "auto") -> str:
     """Resolve device: explicit, else cuda > mps > cpu."""
     try:

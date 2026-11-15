@@ -11,13 +11,13 @@ from __future__ import annotations
 import numpy as np
 
 from ..contract import Settings
-from . import gates, ops
+from . import gates, ops, par
 from .palette import palette_grade
 
 
 def apply_image(
     full_rgb: np.ndarray,
-    regions: list[tuple[np.ndarray, Settings]],
+    regions: list[tuple[np.ndarray, Settings] | list[tuple[np.ndarray, Settings]]],
     global_settings: Settings,
     compositional: list[tuple[np.ndarray, Settings]] | None = None,
     guard_mask: np.ndarray | None = None,
@@ -28,9 +28,12 @@ def apply_image(
     palette: tuple | None = None,
     report: dict | None = None,
     on_stage=None,
+    highlight_hold: tuple[float, float] | None = None,
+    chroma_reference: np.ndarray | None = None,
 ) -> np.ndarray:
     """full_rgb: float HxWx3 gamma [0,1].
-    regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited.
+    regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited. An entry
+    may be a list of such pairs: the cells of one region, blended in parallel (F2).
     compositional: [(alpha_full, settings), ...] — radial/linear moves blended independently
     (they intentionally overlap regions, e.g. a vignette over the background).
     guard_mask / guard_ops: skin-safe guard. Over `guard_mask` (float HxW [0,1]) the final
@@ -38,19 +41,40 @@ def apply_image(
     keep global exposure/tone but not the aggressive look. Both None → byte-identical to before.
     chroma_max_increase: if set, a final oversaturation gate caps each pixel's chroma increase
     vs the source by this fraction (snow/skin in `protect_chroma` held tighter). None → off.
-    report: optional dict the gate fills with {'chroma_limited': frac} for the sidecar."""
+    report: optional dict the gate fills with {'chroma_limited': frac} for the sidecar.
+    highlight_hold: (start, full) of the F6 highlight hold, or None (default) for no new code.
+    chroma_reference: what the oversaturation gate compares against, when the caller has it
+    already (the pipeline computes the denoised source once per photo). None: the source,
+    denoised here when `denoise` is active."""
     out = full_rgb.astype(np.float32).copy()
     claimed = np.zeros(out.shape[:2], dtype=np.float32)
 
-    for alpha, settings in regions:
+    for entry in regions:
+        if isinstance(entry, list):   # the cells of one region (F2): blended in parallel against
+            free = 1.0 - claimed      # the same input, so the cut between them loses no edit
+            total = np.zeros_like(claimed)
+            mix = None
+            for alpha, settings in entry:
+                w = np.clip(np.minimum(alpha * free, free - total), 0.0, None)
+                if float(w.max()) <= 1e-4:
+                    continue
+                # A cell without settings still claims its pixels, as an unchanged copy, so the
+                # part of a layer outside the regions cannot spill into it and bypass its policy.
+                part = (ops.apply_ops(out, settings) if settings else out) * w[..., None]
+                mix = part if mix is None else mix + part
+                total = total + w
+            if mix is not None:
+                out = out * (1.0 - total[..., None]) + mix
+                claimed = np.clip(claimed + total, 0.0, 1.0)
+            continue
+        alpha, settings = entry
         if not settings:
             continue
         a_eff = alpha * (1.0 - claimed)
         if float(a_eff.max()) <= 1e-4:
             continue
         edited = ops.apply_ops(out, settings)
-        a3 = a_eff[..., None]
-        out = out * (1.0 - a3) + edited * a3
+        out = par.rows(lambda o, e, a: o * (1.0 - a[..., None]) + e * a[..., None], out, edited, a_eff)
         claimed = np.clip(claimed + a_eff, 0.0, 1.0)
 
     if on_stage is not None:
@@ -60,23 +84,29 @@ def apply_image(
         if not settings or float(alpha.max()) <= 1e-4:
             continue
         edited = ops.apply_ops(out, settings)
-        a3 = alpha[..., None]
-        out = out * (1.0 - a3) + edited * a3
+        out = par.rows(lambda o, e, a: o * (1.0 - a[..., None]) + e * a[..., None], out, edited, alpha)
 
     if on_stage is not None:
         on_stage("after_composition", out)
 
     if global_settings:
         if guard_mask is not None and guard_ops:
-            # Two full-frame renders by design: the kept ops include spatial ones (dehaze
-            # airlight, clarity/sharpen blur radii scale with image size), so rendering the
-            # guarded pass on a mask bounding-box crop would change their results. Correctness
-            # over the ~2x cost; the kept==∅ case already skips the second render.
-            full = ops.apply_ops(out, global_settings)
-            kept = {k: v for k, v in global_settings.items() if k not in guard_ops}
-            guarded = ops.apply_ops(out, kept) if kept else out
-            m = guard_mask[..., None]
-            out = full * (1.0 - m) + guarded * m  # protected pixels get global minus guarded ops
+            # Two renders by design: the kept ops include ones whose result depends on the whole
+            # frame, so the guarded pass cannot run on a crop. Every step before the first guarded
+            # op is the same in both renders, so it runs once (exact: a bundle cut between two
+            # steps of ops.STEPS and applied in two calls is the same sequence of calls).
+            cut = next((i for i, step in enumerate(ops.STEPS)
+                        if any(k in guard_ops and global_settings.get(k) for k in step)),
+                       len(ops.STEPS))
+            first = {k for step in ops.STEPS[:cut] for k in step}
+            pre = {k: v for k, v in global_settings.items() if k in first}
+            post = {k: v for k, v in global_settings.items() if k not in first}
+            base = ops.apply_ops(out, pre) if pre else out
+            full = ops.apply_ops(base, post)
+            kept = {k: v for k, v in post.items() if k not in guard_ops}
+            guarded = ops.apply_ops(base, kept) if kept else base
+            out = par.rows(lambda f, g, m: f * (1.0 - m[..., None]) + g * m[..., None],
+                           full, guarded, guard_mask)  # protected pixels get global minus guarded ops
         else:
             out = ops.apply_ops(out, global_settings)
 
@@ -95,10 +125,24 @@ def apply_image(
 
     out = np.clip(out, 0.0, 1.0)
 
+    # Keep blown highlights white: a clipped source area has no detail for the pulls to recover.
+    if highlight_hold is not None:
+        out, held = gates.highlight_hold(full_rgb.astype(np.float32), out, *highlight_hold)
+        if report is not None:
+            report["highlight_held"] = held
+            report["highlight_blown"] = float((full_rgb.min(axis=-1) >= highlight_hold[1]).mean())
+
     # Final safety pass: never let the edit be more saturated than the source allows.
     if chroma_max_increase is not None:
+        reference = chroma_reference if chroma_reference is not None else full_rgb.astype(np.float32)
+        if chroma_reference is None and global_settings.get("denoise", 0.0):
+            # The gate compares colourfulness pixel by pixel. Against a noisy source that stamps
+            # the source's colour noise back onto the denoised result (measured at ISO 12800:
+            # 7 levels of colour grain with the raw source as reference, 0.4 with this). So the
+            # reference gets the same noise reduction as the edit.
+            reference = ops.denoise(reference, global_settings["denoise"])
         out, limited = gates.chroma_guard(
-            full_rgb.astype(np.float32), out,
+            reference, out,
             max_increase=chroma_max_increase,
             neutral_allowance=chroma_neutral_allowance,
             protect=protect_chroma,

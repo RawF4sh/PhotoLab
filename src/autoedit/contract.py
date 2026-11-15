@@ -11,9 +11,11 @@ Op names and units are defined by the apply engine (edit/ops.py), NOT Adobe CRS 
 
 from __future__ import annotations
 
+import re
+import string
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .paths import config_path
 
@@ -28,6 +30,8 @@ class RunConfig(BaseModel):
     # selection / look
     style: str = "natural"  # styles.toml profile: look + default concepts + brief
     prompt: str | None = None  # free-text intent, combined with the style brief for the LLM
+    edit: str | None = Field(default=None, max_length=400)
+    # plain-language region instructions, e.g. "brighten the jacket" (instructions.toml)
     preset: str | None = None  # concept-set override (concepts.toml); wins over the style's set
     concepts: list[str] | None = None  # None uses style/preset; [] explicitly disables region editing
     look: str | None = None  # magnitude profile override; defaults to the style's look
@@ -47,10 +51,14 @@ class RunConfig(BaseModel):
     # model_dump()/repr/log path can ever serialize the secret — read it via cfg.api_key only.
     api_key: str | None = Field(default=None, exclude=True, repr=False)
     llm_mode: Literal["refine", "propose"] = "refine"
-    llm_model: str = "claude-haiku-4-5-20251001"
+    llm_model: str = "claude-haiku-5-5"
     llm_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
     llm_max_calls: int = Field(default=0, ge=0)  # 0 = unlimited
-    llm_budget_usd: float = Field(default=0.0, ge=0.0)
+    llm_budget_usd: float = Field(default=1.0, ge=0.0)  # per run; 0 = unlimited
+    # prices of llm_model, for the budget cap; update them when you change the model
+    llm_input_usd_per_mtok: float = Field(default=0.10, ge=0.0)
+    llm_output_usd_per_mtok: float = Field(default=0.50, ge=0.0)
+    llm_translate_instructions: bool = True
     llm_thumb_px: int = Field(default=512, ge=64, le=1024)
 
     # RAW development (imageio._decode_raw). "none" is today's libraw render and stays the
@@ -63,18 +71,30 @@ class RunConfig(BaseModel):
     raw_fallback_ev: float = Field(default=0.0, ge=0.0, le=5.0)     # no universal lift without a preview
 
     # segmentation
-    backend: Literal["stub", "sam3"] = "stub"
+    backend: Literal["stub", "sam3", "auto"] = "stub"
     device: str = "auto"
     analysis_long_edge: int = Field(default=1536, ge=64, le=8192)
+    mask_cache: bool = True  # keep raw masks under <out>/.autoedit-masks (not for the stub) so re-renders skip segmentation
+    workers: int = Field(default=1, ge=0, le=64)  # render processes for a batch; 0 = half the cores, at most 4
+    threads: int = Field(default=0, ge=0, le=256)  # threads for per-pixel work inside one render; 0 = one per core
+
+    consistency: Literal["brightness", "bursts"] = "brightness"  # shoot consistency (F9); "bursts" evens out frames of one framing
 
     # output
-    out_format: Literal["jpeg", "jpg", "tiff"] = "jpeg"
+    out_format: Literal["jpeg", "jpg", "tiff", "webp", "png"] = "jpeg"
+    out_long_edge: int | None = Field(default=None, ge=64, le=20000)  # longest side of the export in pixels (F10); never upscales; None = full size
+    out_name: str = "{stem}"  # export file name without extension; fields {stem} {style} {n}
+    out_subdir: str = ""  # subfolder of the output folder
+    export: str | None = None  # name of a preset in exports.toml (applied by the CLI and the web service)
     quality: int = Field(default=95, ge=1, le=100)  # higher q preserves the anti-banding dither (TIFF stays lossless)
     metadata: Literal["keep", "shareable", "none"] = "shareable"  # EXIF carried into exports (F1); "shareable" drops GPS and serial numbers; sRGB profile always embedded
     emit: Literal["baked"] = "baked"  # "editable" (XMP hand-off) was accepted but never implemented; removed until it exists
     compose: bool = True  # apply radial/linear compositional moves (vignette, sky grad)
     vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff
     sharpen: bool = True  # output sharpening (unsharp mask); off → no sharpen ops applied
+    highlight_hold: bool = False  # keep source-blown highlights white (F6); off → the edit may grey them
+    levels: bool = False  # black and white point (F5); off → the rule-driven black_point is dropped after decide
+    denoise: bool = False  # noise reduction (F7); off → the rule set is not loaded and the op is dropped after decide
 
     # paths to config assets — resolved to ./configs or the packaged configs (see paths.py)
     rules_path: str = Field(default_factory=lambda: config_path("rules.toml"))
@@ -84,6 +104,43 @@ class RunConfig(BaseModel):
     compose_path: str = Field(default_factory=lambda: config_path("compose.toml"))
     intents_path: str = Field(default_factory=lambda: config_path("intents.toml"))
     palettes_path: str = Field(default_factory=lambda: config_path("palettes.toml"))
+    instructions_path: str = Field(default_factory=lambda: config_path("instructions.toml", packaged_fallback=True))
+    exports_path: str = Field(default_factory=lambda: config_path("exports.toml", packaged_fallback=True))
+
+    @field_validator("out_name")
+    @classmethod
+    def _check_out_name(cls, v: str) -> str:
+        # Only plain {stem} {style} {n}: attribute/index access ({n[0]}, {stem.x}), conversions and
+        # nested fields in a spec could pull other text into the name. A spec is for {n} only.
+        try:
+            for _, field, spec, conv in string.Formatter().parse(v):
+                if field is None:
+                    continue
+                if field not in ("stem", "style", "n") or conv is not None:
+                    raise ValueError(f"field {{{field}}} is not allowed, use plain {{stem}}, {{style}}, {{n}}")
+                if spec and (field != "n" or "{" in spec or "}" in spec):
+                    raise ValueError(f"a format spec is only allowed on {{n}}, without braces (got {spec!r})")
+                if spec and not re.fullmatch(r"(0?[1-9][0-9]?)?d?", spec):
+                    # {n:c} writes a control character, {n:x} hex, {n:>8} pads with spaces
+                    raise ValueError(f"the format spec of {{n}} is a width of 1 to 99, an optional 0 in front "
+                                     f"and an optional d (got {spec!r})")
+            name = v.format(stem="x", style="s", n=1)
+        except (KeyError, IndexError, ValueError, AttributeError, TypeError) as e:
+            raise ValueError(f"out_name {v!r} is not a valid template (fields: stem, style, n): {e}") from None
+        if not name or "/" in name or "\\" in name or ".." in name:
+            raise ValueError(f"out_name {v!r} must give a non-empty file name without '/', '\\' or '..'")
+        return v
+
+    @field_validator("out_subdir")
+    @classmethod
+    def _check_out_subdir(cls, v: str) -> str:
+        if (len(v) > 100 or v.startswith(("/", "\\")) or ".." in v.replace("\\", "/").split("/")
+                or (len(v) > 1 and v[1] == ":") or "{" in v or "}" in v):
+            # Braces: the folder is not a template (only the file name is), and a folder literally
+            # named "{style}" is never what was meant.
+            raise ValueError(f"out_subdir {v!r} must be a relative folder name (no '..', no leading '/' "
+                             "or drive, no {fields}, at most 100 characters)")
+        return v
 
 
 class DetectedConcept(BaseModel):
@@ -196,6 +253,15 @@ class MaskOps(BaseModel):
     confidence: float = 0.0  # segmenter score for the concept
 
 
+class Adjustment(BaseModel):
+    """One directed change: a delta on a target, on top of the rule baseline (F2, F3)."""
+    target: str                      # "global" or a concept name
+    ops: Settings                    # op name -> delta
+    source: str = ""                 # the instruction clause it came from; "" for a direct adjustment
+    scope: Literal["run", "photo"] = "run"   # "run": from the run's --edit; "photo": from `autoedit adjust`
+    status: Literal["", "applied", "clamped", "blocked", "not_found"] = ""   # filled in per photo
+
+
 class Result(BaseModel):
     """The per-image sidecar (`<name>.autoedit.json`) — every decision, auditable."""
 
@@ -211,6 +277,7 @@ class Result(BaseModel):
     masks: list[MaskOps] = Field(default_factory=list)
     composition: list[MaskOps] = Field(default_factory=list)  # radial/linear moves
     notes: list[str] = Field(default_factory=list)
+    adjustments: list[Adjustment] = Field(default_factory=list)
     # ── post-edit safety / explainability (measured on the EDITED output) ──
     post_edit_stats: GlobalStatsModel | None = None  # stats recomputed after apply (not source)
     post_region_stats: list[RegionStatsModel] = Field(default_factory=list)  # same masks, edited px
@@ -220,6 +287,8 @@ class Result(BaseModel):
     review_reason: str = ""         # why it needs review (clipping/oversaturation/…)
     warnings: list[str] = Field(default_factory=list)  # structured safety flags
     batch_group: str = ""           # shoot-consistency group id (batch normalization)
+    exposure_bias: float = 0.0      # shoot-consistency nudge this photo got (needed to re-render it alone)
+    wb_bias: list[float] = Field(default_factory=lambda: [0.0, 0.0], min_length=2, max_length=2)  # burst white-balance nudge [temp, tint]
     decider: str = "rules"
     model: str | None = None
     engine_version: str = ""

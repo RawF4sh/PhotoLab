@@ -7,25 +7,49 @@ across the batch so the model load cost is paid once.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import (compose, emit, intent as intent_mod, looks as looks_mod, palette as palette_mod,
+from . import (compose, emit, instructions, intent as intent_mod, looks as looks_mod, palette as palette_mod,
                policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
 from .concepts import load_concepts, meta_for
-from .contract import Result, RunConfig
+from .contract import Adjustment, Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
-from .edit import apply_image, banding, build_alpha, gates, reference as ref_match, linear_alpha
+from .edit import apply_image, banding, build_alpha, gates, ops, par, reference as ref_match, linear_alpha
 from .imageio import Image, downscale_long_edge, load_image, luma, raw_opts_from
 from .notes import build_notes
 from .segment import ResolvedRegions, make_segmenter, resolve
+from . import segment as segment_mod
+from .segment import MASK_CACHE_DIR, DiskMaskCache
 from .segment.base import Segmenter
 from .styles import Style, combine_brief, load_styles, style_for
+
+def _config_digest(cfg: RunConfig) -> str:
+    """A short hash of the config files a run reads, so a re-render can tell that they changed."""
+    h = hashlib.blake2b(digest_size=8)
+    for name in sorted(n for n in RunConfig.model_fields if n.endswith("_path")):
+        try:
+            with open(getattr(cfg, name), "rb") as fh:
+                h.update(fh.read())
+        except (OSError, TypeError):
+            h.update(b"missing")
+    return h.hexdigest()
+
+
+# Run settings that switch on an opt-in rule set of the same name in rules.toml.
+_OPT_IN_RULES = ("levels", "denoise")
+_TRANSLATIONS: dict[tuple, list] = {}   # (model, clause texts) -> the LLM's answer, per process
+
+# Never written into a sidecar: local paths and the secret. `adjust` takes the config paths from
+# the current environment and asks for the two input files again.
+_NOT_STORED = {name for name in RunConfig.model_fields if name.endswith("_path")} | {
+    "api_key", "reference", "recipe_model", "workers", "threads"}
 
 # High-risk global ops the skin-safe guard holds off protected (skin/face) regions when no
 # [guard] block is present in rules.toml. Exposure/tone/contrast are intentionally NOT guarded —
@@ -72,20 +96,55 @@ class Pipeline:
     quality_gate: dict | None = None  # post-edit gate thresholds from rules.toml (None → defaults)
     ref_feats: dict | None = None    # cached per-concept reference look (M5); computed once per run
     ref_proxy: Image | None = None   # cached decoded reference proxy — one decode per run, not per photo
+    instr: instructions.Vocab | None = None  # instructions.toml vocabulary (F2)
+    adjustments: list = field(default_factory=list)      # parsed from cfg.edit, once per run
+    adjust_problems: list = field(default_factory=list)  # clauses of cfg.edit that were not understood
+    config_digest: str = ""   # hash of the config files, stored in the sidecar for `adjust`
+    highlight_hold: tuple[float, float] | None = None  # (start, full) of the F6 hold; None → off
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
+        par.set_threads(cfg.threads)
+        if cfg.backend == "auto":
+            cfg = cfg.model_copy(update={"backend": segment_mod.resolve_backend(cfg.backend)})
         presets, meta = load_concepts(cfg.concepts_path)
         moves = compose.load_compose(cfg.compose_path) if cfg.compose else []
         if not cfg.vignette:  # vignette is a toggleable subset of the compositional moves
             moves = [m for m in moves if "vignette" not in m.name]
-        rules = rules_mod.load(cfg.rules_path)
+        # Opt-in rule sets ([opt_in.<name>] in rules.toml) join the rules only when their run
+        # setting is on; a default run never sees them.
+        rules = rules_mod.load(cfg.rules_path, enable=[n for n in _OPT_IN_RULES if getattr(cfg, n, False)])
         # which global ops the skin-safe guard holds off protected regions (rules-as-data; the
         # [guard] block in rules.toml, with a sane default so older config files still work).
         guard_ops = set(rules.get("guard", {}).get("ops", []) or _DEFAULT_GUARD_OPS)
         # oversaturation gate: cap each pixel's chroma increase vs the source (None disables).
         cm = rules.get("guard", {}).get("max_chroma_increase", _DEFAULT_CHROMA_MAX)
         chroma_max = None if cm in (None, "", "off") else float(cm)
+        hh = None
+        if cfg.highlight_hold:
+            blk = rules.get("highlight_hold", {})
+            hh = (float(blk.get("start", 0.80)), float(blk.get("full", 0.985)))
+        vocab = None
+        adjustments, problems = [], []
+        if cfg.edit and cfg.edit.strip():
+            vocab = instructions.load_vocab(cfg.instructions_path)
+            known = set(meta) | {c for cs in presets.values() for c in cs}
+            adjustments, problems = instructions.parse(cfg.edit, vocab, known)
+        decider = make_decider(cfg)
+        clauses = [instructions.clause_of(p) for p in problems if instructions.translatable(p)]
+        if clauses and cfg.llm_translate_instructions and hasattr(decider, "translate"):
+            # One process asks once for the same text: a web preview builds a pipeline per request.
+            # An empty answer (capped, error, nothing to translate) is not kept, so it can be retried.
+            key = (getattr(decider, "model", None), tuple(clauses))
+            reply = _TRANSLATIONS.get(key)
+            if reply is None:
+                reply = decider.translate(clauses, sorted(vocab.limits))
+                if reply:
+                    _TRANSLATIONS[key] = reply
+            extra = instructions.from_translation(reply, clauses, vocab, known)
+            done = {a.source for a in extra}
+            adjustments += extra
+            problems = [p for p in problems if instructions.clause_of(p) not in done]
         return cls(
             cfg=cfg,
             rules=rules,
@@ -95,9 +154,10 @@ class Pipeline:
             styles=load_styles(cfg.styles_path),
             compose_moves=moves,
             segmenter=make_segmenter(cfg.backend, cfg.device),
-            decider=make_decider(cfg),
+            decider=decider,
             guard_ops=guard_ops,
             chroma_max=chroma_max,
+            highlight_hold=hh,
             intents=intent_mod.load_intents(cfg.intents_path),
             palettes=palette_mod.load_palettes(cfg.palettes_path),
             auto_palette=palette_mod.load_auto_palette_config(cfg.palettes_path),
@@ -105,7 +165,41 @@ class Pipeline:
                      if isinstance(v, (int, float))},
             quality_gate={k: float(v) for k, v in (rules.get("quality_gate", {}) or {}).items()
                           if isinstance(v, (int, float))} or None,
+            instr=vocab,
+            adjustments=adjustments,
+            config_digest=_config_digest(cfg),
+            adjust_problems=problems,
         )
+
+    def vocab(self) -> instructions.Vocab:
+        """The instructions vocabulary, loaded on first use (a run without --edit never reads it)."""
+        if self.instr is None:
+            self.instr = instructions.load_vocab(self.cfg.instructions_path)
+        return self.instr
+
+    def known_concepts(self) -> set[str]:
+        """Concept names the configs define; the instruction parser maps plurals onto them."""
+        return set(self.meta) | {c for cs in self.presets.values() for c in cs}
+
+    def use_mask_cache(self, out_dir: str) -> None:
+        """Keep raw masks under `out_dir` so `autoedit adjust` and later runs skip segmentation.
+        Not for the stub: its masks are instant and deterministic."""
+        if (self.cfg.mask_cache and self.cfg.backend != "stub"
+                and not isinstance(self.segmenter, DiskMaskCache)):
+            self.segmenter = DiskMaskCache(
+                self.segmenter, os.path.join(out_dir, MASK_CACHE_DIR, self.cfg.backend))
+
+    def presegment(self, path: str) -> None:
+        """Decode and segment one photo, nothing else: fills the mask cache for a render worker."""
+        concepts = self.concepts_for(style_for(self.cfg.style, self.styles))
+        extra = instructions.extra_concepts(self.adjustments, concepts)
+        if concepts or extra:
+            img = load_image(path, decode=raw_opts_from(self.cfg))
+            self.segmenter.segment(downscale_long_edge(img, self.cfg.analysis_long_edge),
+                                   concepts + extra)
+        if self.cfg.reference:
+            # the reference's masks too, once per run: a render worker reads them from the cache
+            self._reference_concept_features(concepts)
 
     def concepts_for(self, style: Style) -> list[str]:
         """Resolution: explicit --concepts > --preset > the style's set > the generic preset."""
@@ -120,8 +214,10 @@ class Pipeline:
     def process_one(self, path: str, do_apply: bool = True,
                     image: Image | None = None, exposure_bias: float = 0.0,
                     batch_group: str = "",
+                    wb_bias: tuple[float, float] = (0.0, 0.0),
                     on_resolved: Callable[[ResolvedRegions], None] | None = None,
                     on_stage=None,
+                    adjustments: list[Adjustment] | None = None,
                     ) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
@@ -139,10 +235,12 @@ class Pipeline:
             on_stage("candidate_decode", img.rgb)
         proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
+        adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
+        extra = instructions.extra_concepts(adjs, concepts)
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
-        raw = self.segmenter.segment(proxy, concepts) if concepts else []
+        raw = self.segmenter.segment(proxy, concepts + extra) if (concepts or extra) else []
         stage_timings["segment"] = (time.perf_counter() - stage_started) * 1000
         stage_started = time.perf_counter()
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
@@ -186,6 +284,13 @@ class Pipeline:
             global_settings.pop("sharpen", None)
             for s in region_settings.values():
                 s.pop("sharpen", None)
+        if not cfg.levels:  # black and white point is opt-in until it has passed a blind vote (F5)
+            for s in (global_settings, *region_settings.values()):
+                s.pop("black_point", None)
+                s.pop("white_point", None)
+        if not cfg.denoise:  # noise reduction is opt-in until it has passed a blind vote (F7)
+            for s in (global_settings, *region_settings.values()):
+                s.pop("denoise", None)
 
         # Free-text look intent (e.g. "warm sunset, moody") → bounded GLOBAL nudges on top of the
         # rule baseline, so typing what you want works fully offline. Scaled by intensity; the
@@ -249,7 +354,15 @@ class Pipeline:
 
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
-        policy_notes = policies.enforce(region_settings, self.meta)
+        apply_regions, owners, adj_plan = resolved.regions, None, None
+        if adjs:
+            adj_plan = instructions.plan(adjs, self.vocab(), raw, concepts, resolved,
+                                         region_settings, global_settings, self.meta)
+            apply_regions, region_settings, owners = adj_plan.cells, adj_plan.settings, adj_plan.owners
+        policy_notes = policies.enforce(region_settings, self.meta, owners=owners)
+        if adj_plan is not None:
+            policy_notes += instructions.report(adjs, adj_plan, region_settings)
+        policy_notes += [f"instruction {p}" for p in self.adjust_problems]
 
         # Shoot-consistency: a bounded exposure nudge toward this image's batch group target,
         # so a folder doesn't drift in brightness photo-to-photo (batch normalization, F5).
@@ -258,6 +371,12 @@ class Pipeline:
             global_settings["exposure"] = float(np.clip(base + exposure_bias, -3.0, 3.0))
             policy_notes.append(
                 f"batch normalize: {exposure_bias:+.2f} EV toward group {batch_group or '?'}")
+
+        if wb_bias[0] or wb_bias[1]:
+            global_settings["temp"] = global_settings.get("temp", 0.0) + wb_bias[0]
+            global_settings["tint"] = global_settings.get("tint", 0.0) + wb_bias[1]
+            policy_notes.append(f"batch normalize: white balance {wb_bias[0]:+.1f} temp, "
+                                f"{wb_bias[1]:+.1f} tint toward group {batch_group or '?'}")
 
         notes_extra: list[str] = list(policy_notes)
 
@@ -307,7 +426,7 @@ class Pipeline:
                 )
                 # Re-enforce region policies: the tuner can re-introduce ops the rails already
                 # dropped (e.g. temp on snow). Hard rails must win over reference matching.
-                notes_extra.extend(policies.enforce(region_settings, self.meta))
+                notes_extra.extend(policies.enforce(region_settings, self.meta, owners=owners))
                 if region_feedback:
                     parts = []
                     for item in region_feedback[:3]:
@@ -362,6 +481,7 @@ class Pipeline:
         comp_settings.update(reference_comp_settings)
 
         out_rgb = None
+        gate_src = None   # the oversaturation gate's reference, when it is not the plain source
         guard_note = None
         # Banding-gate state, threaded from the remediation decision (inside `if do_apply:`) to
         # the final post-reference-match reassessment (outside it) — must exist even when
@@ -376,13 +496,24 @@ class Pipeline:
         if do_apply:
             guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
-            for r in resolved.regions:  # priority-descending
-                s = region_settings.get(r.name)
-                if not s:
-                    continue
-                cm = meta_for(r.name, self.meta)
-                alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
-                regions_apply.append((alpha, s))
+            if adj_plan is not None:
+                for group, concept, touched in zip(adj_plan.groups, adj_plan.feather, adj_plan.touched):
+                    cells = [(fmask, region_settings.get(cell.name) or {}) for cell, fmask in group]
+                    if not touched:
+                        cells = [(fmask, s) for fmask, s in cells if s]
+                        if not cells:
+                            continue
+                    feather_px = meta_for(concept, self.meta).feather_px
+                    entry = [(build_alpha(fmask, full_hw, feather_px, guide=guide), s) for fmask, s in cells]
+                    regions_apply.append(entry if touched else entry[0])
+            else:
+                for r in apply_regions:  # priority-descending
+                    s = region_settings.get(r.name)
+                    if not s:
+                        continue
+                    cm = meta_for(r.name, self.meta)
+                    alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
+                    regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
             if "reference_sky_grad" in reference_comp_settings:
                 comp.append((
@@ -410,6 +541,12 @@ class Pipeline:
                 ))
             guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings, guide)
             gate_report: dict = {}
+            # What the oversaturation gate compares against. With noise reduction on, that is the
+            # denoised source (see apply_image). It is the same for every render of this photo
+            # (the banding re-render, the gate after a reference match), so it is made once.
+            gate_src = None
+            if self.chroma_max is not None and global_settings.get("denoise", 0.0):
+                gate_src = ops.denoise(img.rgb.astype(np.float32), global_settings["denoise"])
             out_rgb = apply_image(
                 img.rgb, regions_apply, global_settings,
                 compositional=[(a, s) for _n, a, s in comp],
@@ -418,10 +555,21 @@ class Pipeline:
                 chroma_neutral_allowance=chroma_neutral_allowance,
                 protect_chroma=guard_mask,
                 palette=palette_arg, report=gate_report,
-                on_stage=on_stage,
+                on_stage=on_stage, highlight_hold=self.highlight_hold,
+                chroma_reference=gate_src,
             )
             if guard_mask is not None:
                 guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
+            held_white = gate_report.get("highlight_held", 0.0)
+            if held_white > 0.005:
+                # Two numbers: what was blown, and how much of the frame the soft shoulder below
+                # it eased back. The second is much larger on a bright frame.
+                blown = gate_report.get("highlight_blown", 0.0)
+                what = (f"{blown * 100:.0f}% of the frame is blown in the source and stays white"
+                        if blown >= 0.005 else "nothing in the frame is blown in the source")
+                notes_extra.append(
+                    f"highlight hold: {what}; {held_white * 100:.0f}% of the frame was eased back toward its "
+                    "source brightness")
             limited = gate_report.get("chroma_limited", 0.0)
             if limited > 0.005:
                 notes_extra.append(f"oversaturation gate: pulled chroma back on {limited * 100:.0f}% of frame")
@@ -446,7 +594,9 @@ class Pipeline:
                     red = 0.35 if baction == "fail" else 0.55
 
                     gs2 = banding.damp_settings(global_settings, red)
-                    regions2 = [(a, banding.damp_settings(s, red)) for a, s in regions_apply]
+                    regions2 = [[(a, banding.damp_settings(s, red)) for a, s in e]
+                                if isinstance(e, list) else (e[0], banding.damp_settings(e[1], red))
+                                for e in regions_apply]
                     out_rgb = apply_image(
                         img.rgb, regions2, gs2,
                         compositional=[(a, s) for _n, a, s in comp],
@@ -455,7 +605,8 @@ class Pipeline:
                         chroma_neutral_allowance=chroma_neutral_allowance,
                         protect_chroma=guard_mask,
                         palette=palette_arg, report={},
-                        on_stage=on_stage,
+                        on_stage=on_stage, highlight_hold=self.highlight_hold,
+                        chroma_reference=gate_src,
                     )
                     # The sidecar must report the settings that actually rendered the pixels —
                     # swap in the damped values so the JSON matches the output, not the plan.
@@ -528,9 +679,11 @@ class Pipeline:
                         f"{post_mountain_report['reference_p90']:.2f} ({moves})")
                 # Reference transfer runs AFTER apply, so re-run the safety gates over it — a
                 # match can re-introduce oversaturation/cast that the first gate already cleared.
+                if self.highlight_hold is not None:   # the match can grey the held whites again
+                    out_rgb, _ = gates.highlight_hold(img.rgb.astype(np.float32), out_rgb, *self.highlight_hold)
                 if self.chroma_max is not None:
                     out_rgb, rlim = gates.chroma_guard(
-                        img.rgb.astype(np.float32), out_rgb,
+                        gate_src if gate_src is not None else img.rgb.astype(np.float32), out_rgb,
                         max_increase=self.chroma_max, protect=guard_mask)
                     out_rgb = np.clip(out_rgb, 0.0, 1.0)
                     if rlim > 0.005:
@@ -579,7 +732,8 @@ class Pipeline:
                 resolved_coverages if same_shape else None)
             preserve_terms = (self.rules.get("quality_gate", {}) or {}).get(
                 "preserve_terms", _DEFAULT_PRESERVE_TERMS)
-            preserve = bool(cfg.prompt) and any(t in cfg.prompt.lower() for t in preserve_terms)
+            preserve = (bool(cfg.prompt) and any(t in cfg.prompt.lower() for t in preserve_terms)) or \
+                self.looks.get(look, looks_mod.Look()).preserve_exposure
             quality_score, needs_review, review_reason, warnings = gates.assess(
                 gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate,
                 preserve_exposure=preserve)
@@ -622,14 +776,14 @@ class Pipeline:
         if needs_review:
             notes.append(f"⚠ needs review: {review_reason}")
         # arbitrated coverage + segmenter confidence per region, for the sidecar audit trail
-        region_meta = {r.name: (float(r.coverage), float(r.score)) for r in resolved.regions}
+        region_meta = {r.name: (float(r.coverage), float(r.score)) for r in apply_regions}
         result = emit.build_result(
             image_name=os.path.basename(path),
             scene=sc.name,
             confidence=sc.confidence,
             style=cfg.style,
             brief=brief,
-            detected=resolved.detected,
+            detected=resolved.detected + (adj_plan.detected if adj_plan else []),
             gstats=gstats,
             region_stats=region_stats,
             global_settings=global_settings,
@@ -650,10 +804,19 @@ class Pipeline:
             timing_ms=(time.perf_counter() - t0) * 1000.0,
         )
         stage_timings["assess_result"] = (time.perf_counter() - stage_started) * 1000
+        result.adjustments = adjs
         result.stage_timings_ms.update(stage_timings)
         result.audit.update(decode_info=getattr(img, "decode_info", {}),
                             source_format=os.path.splitext(path)[1].lower().lstrip("."),
                             decode_injected=image is not None)
+        result.exposure_bias = float(exposure_bias)
+        result.wb_bias = [float(wb_bias[0]), float(wb_bias[1])]
+        result.audit.update(
+            run_config=cfg.model_dump(mode="json", exclude=_NOT_STORED),
+            run_inputs={k: (os.path.basename(v) if v else None)
+                        for k, v in (("reference", cfg.reference),
+                                     ("recipe_model", cfg.recipe_model if cfg.decider == "learned" else None))},
+            config_digest=self.config_digest)
         return out_rgb, result
 
     def _get_ref_proxy(self) -> Image | None:

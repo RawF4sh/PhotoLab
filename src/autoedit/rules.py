@@ -21,9 +21,19 @@ from .contract import GlobalStatsModel, RegionStatsModel, Settings
 RuleSet = dict[str, dict[str, dict[str, str]]]
 
 
-def load(path: str) -> RuleSet:
+def load(path: str, enable=()) -> RuleSet:
+    """Load rules.toml. `enable` names opt-in rule sets: the tables under `[opt_in.<name>]` hold
+    the rules of features that are off by default. They are merged into the scene blocks only
+    when the feature is enabled, so a default run (and any tool that reads the file with a plain
+    `load(path)`) never sees them."""
     with open(path, "rb") as fh:
-        return tomllib.load(fh)
+        data = tomllib.load(fh)
+    opt_in = data.pop("opt_in", {})
+    for name in enable:
+        for scene, blocks in opt_in.get(name, {}).items():
+            for block, entries in blocks.items():
+                data.setdefault(scene, {}).setdefault(block, {}).update(entries)
+    return data
 
 
 # ── sandboxed expression evaluator ───────────────────────────────────────────

@@ -25,24 +25,21 @@ from ..styles import load_styles
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
 _ALLOWED = (
-    "style", "prompt", "preset", "look", "intensity", "palette", "palette_strength",
+    "style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
-    "emit", "compose", "vignette", "sharpen", "raw_mode",
+    "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "raw_mode",
+    "highlight_hold", "out_long_edge", "out_name", "out_subdir",
 )
 
 
-def make_cfg(opts: dict, configs_dir: str | None = None) -> RunConfig:
-    configs_dir = configs_dir or paths.configs_dir()
-    kw: dict = {
-        "rules_path": os.path.join(configs_dir, "rules.toml"),
-        "looks_path": os.path.join(configs_dir, "looks.toml"),
-        "concepts_path": os.path.join(configs_dir, "concepts.toml"),
-        "styles_path": os.path.join(configs_dir, "styles.toml"),
-        "compose_path": os.path.join(configs_dir, "compose.toml"),
-        "intents_path": os.path.join(configs_dir, "intents.toml"),
-        "palettes_path": os.path.join(configs_dir, "palettes.toml"),
-    }
+def make_cfg(opts: dict, configs_dir: str | None = None, profile: str | None = None) -> RunConfig:
+    kw: dict = paths.config_paths(configs_dir, profile)
+    if opts.get("export"):
+        from .. import exports as _exports   # preset first: explicit options win over it
+        kw.update(_exports.preset_kwargs(opts["export"], kw.get("exports_path")
+                                         or paths.config_path("exports.toml", packaged_fallback=True)))
+        kw["export"] = opts["export"]
     for k in _ALLOWED:
         if opts.get(k) is not None:
             kw[k] = opts[k]
@@ -51,7 +48,11 @@ def make_cfg(opts: dict, configs_dir: str | None = None) -> RunConfig:
         kw["concepts"] = [c.strip() for c in concepts.split(",") if c.strip()]
     elif isinstance(concepts, list):
         kw["concepts"] = concepts
-    return RunConfig(**kw)
+    cfg = RunConfig(**kw)
+    if cfg.backend == "auto":   # the service builds its own segmenter, so it needs the real name
+        from .. import segment
+        cfg = cfg.model_copy(update={"backend": segment.resolve_backend("auto")})
+    return cfg
 
 
 # A resident segmenter per (backend, device) so the UI doesn't reload the 848M model on every
@@ -131,16 +132,14 @@ def build_pipeline(cfg: RunConfig) -> Pipeline:
     return pipe
 
 
-def list_styles(configs_dir: str | None = None) -> list[dict]:
-    configs_dir = configs_dir or paths.configs_dir()
-    styles = load_styles(os.path.join(configs_dir, "styles.toml"))
+def list_styles(configs_dir: str | None = None, profile: str | None = None) -> list[dict]:
+    styles = load_styles(paths.config_paths(configs_dir, profile)["styles_path"])
     return [{"name": s.name, "look": s.look, "brief": s.brief, "concepts": s.concepts}
             for s in styles.values()]
 
 
-def list_presets(configs_dir: str | None = None) -> dict[str, list[str]]:
-    configs_dir = configs_dir or paths.configs_dir()
-    presets, _ = load_concepts(os.path.join(configs_dir, "concepts.toml"))
+def list_presets(configs_dir: str | None = None, profile: str | None = None) -> dict[str, list[str]]:
+    presets, _ = load_concepts(paths.config_paths(configs_dir, profile)["concepts_path"])
     return presets
 
 
@@ -261,7 +260,8 @@ def _mask_previews(resolved) -> list[dict]:
     return overlays
 
 
-def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560) -> dict:
+def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560,
+            profile: str | None = None) -> dict:
     """Render a single-image before/after preview + the decision sidecar.
 
     The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
@@ -271,7 +271,7 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     pixel-exact like PNG but a much smaller payload. Capped at max_px (retina-sharp at the on-screen
     stage). Segmentation is cached, so re-previews are fast."""
     check_image(image_path)
-    cfg = make_cfg(opts, configs_dir)
+    cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
     work = load_image(image_path, decode=raw_opts_from(cfg))
     if work.long_edge > 4096:                       # bound apply cost on very large files
@@ -289,8 +289,9 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     }
 
 
-def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
-    cfg = make_cfg(opts, configs_dir)
+def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None = None,
+              profile: str | None = None) -> dict:
+    cfg = make_cfg(opts, configs_dir, profile)
     return batch.run(cfg, input_dir, out_dir, do_apply=True)
 
 
@@ -389,7 +390,7 @@ def aesthetic_score(opts: dict) -> dict:
 
 
 def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
-                  with_images: bool = True) -> dict:
+                  with_images: bool = True, profile: str | None = None) -> dict:
     """Render several recipe variants for one photo, score each (safety gate + optional aesthetic
     critic), rank, auto-pick the best, and flag uncertain cases for review (M7). Non-generative —
     every variant is an ordinary bounded edit."""
@@ -412,7 +413,7 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
     for spec in specs:
         o = {k: v for k, v in opts.items() if k not in ("variants", "aesthetic_model")}
         o.update(variants.spec_opts(spec))
-        cfg = make_cfg(o, configs_dir)
+        cfg = make_cfg(o, configs_dir, profile)
         raw_opts = raw_opts_from(cfg)
         if work is None or raw_opts != decode_opts:
             work = downscale_long_edge(load_image(image_path, decode=raw_opts), 1400)
@@ -432,20 +433,20 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
             "review": review, "variants": scored}
 
 
-def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None) -> dict:
+def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None,
+            profile: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)
-    cfg = make_cfg(opts, configs_dir)
+    cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
+    pipe.use_mask_cache(out_dir)
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True)
     os.makedirs(out_dir, exist_ok=True)
-    image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format)
-    note = emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
-                            source=image_path, metadata=cfg.metadata)
-    if note:
-        result.notes.append(note)
-    emit.write_sidecar(result, sidecar)
+    image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,
+                                           subdir=cfg.out_subdir, fields={"style": cfg.style, "n": 1},
+                                           sources=emit.source_ids([image_path]))
+    emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, image_path)
     return {"image_out": image_out, "sidecar": sidecar, "result": result.model_dump()}
 
 

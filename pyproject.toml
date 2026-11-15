@@ -30,6 +30,8 @@ sam = ["transformers>=5.12", "torch>=2.4", "torchvision>=0.19", "accelerate>=1.0
 llm = ["anthropic>=0.40"]
 # Quality/perf accelerators for the apply engine + 16-bit IO.
 accel = ["opencv-python>=4.9", "kornia>=0.7", "colour-science>=0.4", "tifffile>=2024.1", "rawpy>=0.19"]
+# HEIC/HEIF input (phone photos); AVIF needs no extra on Pillow 11.3 or later.
+heif = ["pillow-heif>=0.16"]
 # Local web app (FastAPI + browser UI): `autoedit ui`.
 ui = ["fastapi>=0.110", "uvicorn>=0.27"]
 # Nicer CLI/progress (optional; argparse fallback always works).

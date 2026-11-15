@@ -3,6 +3,204 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Personal style and interface groundwork (F12 to F17)
+
+A default run renders the same bytes as before.
+
+### Added
+- **Taste calibration** (`autoedit calibrate PHOTOS --out DIR`, then `--continue DIR`). The
+  command picks a diverse handful of your photos and renders blind pairs that differ along one
+  dimension of the look (brightness, depth, colour, warmth). You vote on a self-contained page;
+  each round moves the look toward what you chose and uses a smaller step. The result is saved
+  as a look in your profile (`--look calibrated`). The dimensions and step sizes are data in
+  `configs/calibrate.toml`.
+- **Model manager** (`autoedit models status | download | remove`): shows whether the SAM 3
+  packages and weights are present and how much disk they use, fetches the weights on request,
+  and removes them with `--yes`. Nothing is downloaded unless you run `download`.
+- **Versioned API**: every JSON route of the local web app is also served under `/api/v1`, with
+  one error shape (`{"error", "code"}`), `GET /api/v1/version`, and
+  `GET /api/v1/jobs/{id}/events` as a server-sent event stream. The old `/api/...` paths keep
+  working. The route list is pinned by a snapshot test.
+- **More input formats**: AVIF (Pillow 11.3 or later), and HEIC and HEIF with the optional extra
+  `pip install 'autoedit[heif]'`. Without the extra a HEIC photo fails by itself with a message
+  that names the extra; the rest of the batch runs. `autoedit doctor` lists both.
+- **Settings schema** (`autoedit settings`, `autoedit settings --json`,
+  `GET /api/v1/settings/schema`): every run setting with its label, group, type, default, range
+  or choices and a one-line help text, so that an interface can build its controls from it. The
+  words live in `configs/settings.toml`; a test fails when a setting is added without them.
+- `ARCHITECTURE.md`: a section "Adding a segmenter".
+
+### Changed
+- **LLM decider (optional, off by default, your own key).** The default model is
+  `claude-haiku-5-5`. The request no longer sends `temperature` (current models reject it), uses
+  a strict tool schema, and treats a refusal like any other failure: the rules decide. The budget
+  cap counts the real token usage with two price settings (`[llm] input_usd_per_mtok`,
+  `output_usd_per_mtok`) and now defaults to 1.00 USD per run. With the LLM decider active, a
+  clause of `--edit` that the local parser did not understand is translated by the model into
+  the same bounded structure the parser produces; only the text of that clause is sent.
+
+## [Unreleased] — Workflow features (F8 to F11)
+
+A default run renders the same bytes as before: every item below is a new option or command.
+
+### Added
+- **Export presets** (`--export NAME`, `autoedit exports`, `configs/exports.toml`): `full`, `web`,
+  `social`, `archive` and `webp`. A preset sets the format, quality, long edge, file name pattern,
+  subfolder and metadata mode in one word; a flag given with it wins over it.
+- **Output options**: `--long-edge PIXELS` (never upscales), `--name "{stem}_{style}_{n}"`,
+  `--subdir NAME`, and `--format webp|png` next to JPEG and TIFF. Every format carries the sRGB
+  profile.
+- **Shoot consistency for bursts** (`--consistency bursts`, `[run] consistency`). Shots taken
+  within 30 seconds of each other that repeat one framing (same orientation, and thumbnails that
+  match once the sky-over-ground layout is taken out) form a burst; a RAW file and its JPEG count
+  as one shot. Each burst photo is decided once without rendering and then nudged toward the
+  burst's median exposure and white balance, inside bounds (`[consistency]` in `rules.toml`). A
+  nudge never cuts below what the rules decided and never pushes a frame into clipping. The
+  default mode, `brightness`, is unchanged.
+- **User config layer** (`--profile DIR`, `AUTOEDIT_PROFILE`, `~/.config/autoedit`). A profile
+  folder holds TOML files with only your differences; they are merged key by key over the
+  packaged files, so changing one value no longer means copying a whole file. With no profile
+  nothing changes.
+- **`autoedit looks list | save | delete`**: manage your own looks in the profile, for example
+  `autoedit looks save warm --from natural --set vibrance_add=6`.
+- **`backend = "auto"`** (`--backend auto`): SAM 3 when it is installed and its weights are in the
+  local cache, the stub otherwise. `autoedit doctor` says which one that is. The default backend
+  is unchanged.
+- **Look flag `preserve_exposure`** in `looks.toml`: a look that is dark on purpose can opt out of
+  the "dark photo made darker" review flag, like the "moody" prompt words do. No packaged look
+  sets it.
+- Sidecars record `wb_bias` and the new output settings; `autoedit adjust` re-renders a photo
+  from a preset subfolder and reproduces burst nudges exactly.
+
+### Security and safety (found in review, fixed before release)
+- A file name pattern can only use the plain fields `{stem}`, `{style}` and `{n}`, and the filled
+  name must be a plain file name. Before, a style name such as `../../x` together with
+  `--name "{style}-{stem}"` wrote exports outside the output folder, also through a web request.
+- A run refuses to write an export over a source photo: its own or another input of the run,
+  compared by file identity, so that `IMG_1.JPG` on a case-insensitive disk and a sibling file of
+  another format are covered too. The photo concerned fails with a message; the rest of the
+  batch runs.
+- A subfolder that is a symlink leading out of the output folder is refused.
+- The LLM instruction translation never receives a clause that the local parser rejected as a
+  negation or an exclusion ("don't brighten the face"), and a value from the model that is not a
+  finite number is dropped.
+- `autoedit adjust` finds its run folder from the subfolder recorded in the sidecar instead of
+  guessing from the parent folder, which could re-render another run's photo over an export.
+- A profile look with a value that is not a finite number is rejected; it rendered a black image.
+- `backend = "auto"` only chooses SAM 3 when the installed Transformers has it and the weights
+  file is in the cache; before, it could choose a backend that then failed on every photo.
+- An explicit value in a run file wins over an export preset; `--export ""` switches a preset off.
+
+### Changed
+- `tests/run_all.py`: the stand-in used when pytest is not installed now also provides
+  `pytest.approx` and `.value` on `pytest.raises(...) as e`, and tests never read a developer's
+  own profile.
+
+## [Unreleased] — Image quality, three opt-in features (F5, F6, F7)
+
+Each of these changes how a photo looks, so each ships switched off and waits for a blind vote.
+A default run renders the same bytes as before.
+
+### Added
+- **Black and white point** (`--levels`, `[run] levels`). A new op pair `black_point` and
+  `white_point`: the op measures where the darkest and brightest tones of the frame sit after the
+  lifts and pulls them toward a true black and a clean white. It reshapes only the darkest and the
+  brightest tenth of the frame, so the body of the picture does not move and a dark photo cannot
+  come out darker; it adds no clipping. The effect is small (the black floor drops by 6 to 10
+  levels of 255 on washed frames). A rule drives the black point; the white point is available to
+  `autoedit adjust`.
+- **Highlight hold** (`--highlight-hold`, `[run] highlight_hold`). Where the source is near white
+  in all three channels, the edit may not darken the pixel, with a smooth ramp from 0.80 to 0.985.
+  A blown sky stays white instead of turning light grey (measured: 231 to 254 of 255).
+- **Noise reduction** (`--denoise`, `[run] denoise`). A new op `denoise`, chroma first, placed
+  before sharpening; a rule scales it with ISO (from 800, full from 6400) and with the exposure
+  lift. Both of its filters follow the grain measured on the frame, so a clean frame keeps its
+  fine detail. Measured at ISO 12,800 on a RAW file: colour noise in dark flat areas 24.7 to 0.1 levels,
+  luma noise 17.9 to 7.5 (the level of the source).
+- Opt-in rule sets in `rules.toml`: `[opt_in.NAME.<scene>.<block>]` tables join the rules only
+  when the run setting NAME is on, so a feature that is off cannot leak into a tool that reads
+  the rules file directly.
+- `scripts/tone_report.py --set KEY=VALUE`: run the tone gate with any run setting switched on.
+
+### Changed
+- With `denoise` active, the oversaturation gate compares the edit with the denoised source.
+  Against the raw source it stamped the source's colour noise back onto the result.
+
+### Known limits
+- With the highlight hold on, a frame whose source is more than 5 % blown is flagged for review:
+  the review gate counts clipping that the source already had.
+- Noise reduction keys on the EXIF ISO. A file without it gets none from the rule.
+
+## [Unreleased] — Throughput (F4)
+
+### Added
+- Per-pixel work runs on row strips in threads (`edit/par.py`). A 22 MP render went from 18 to
+  24 s down to 8 to 11 s on the development machine, with byte-identical output.
+- `--threads N` (`[performance] threads`, `AUTOEDIT_THREADS`): threads inside one render; 0, the
+  default, is one per core.
+- `--workers N` (`[performance] workers`): render processes for a batch; 0 picks half the cores,
+  at most 4. The default stays 1. With a model backend the parent segments each photo, one at a
+  time, into the mask cache, and the workers render from it without loading the model. Eight
+  22 MP photos: 136 s on one core, 70 s with threads, 44 s with two workers, 33 s with four.
+- `ops.STEPS`: the frozen op order as data.
+
+### Changed
+- The guarded global pass (skin or snow guard) computes the steps before the first guarded op
+  once instead of twice. Same pixels.
+- `run.json` records `workers`.
+
+## [Unreleased] — Per-photo adjustments (F3)
+
+### Added
+- `autoedit adjust <photo-or-sidecar> --set sky.exposure=-0.3 --edit "warm the grass a little"`:
+  renders one photo again with the settings of its run plus its own adjustments. `--reset` drops
+  them. A re-render without adjustments gives the bytes of the batch output.
+- A mask cache on disk (`<out>/.autoedit-masks/`, every backend except the stub; `--no-mask-cache`
+  or `[segment] mask_cache = false` turns it off): `adjust`, a resumed batch and a later run with
+  another style do not segment again. The cache is never unpickled.
+- Each sidecar records its run settings (`audit.run_config`, without file paths and without the
+  API key), the shoot-consistency nudge (`exposure_bias`), the exported file name and a digest of
+  the config files. Per-photo adjustments are stored with `scope: "photo"`.
+
+### Changed
+- `emit.write_outputs` replaces three copies of the write-image, note, write-sidecar sequence.
+- Every sidecar has an `adjustments` list, empty when nothing was directed.
+
+### Known limits
+- `adjust` finds the source photo through `run.json` in the output folder, or takes `--source`.
+  A sidecar never stores a folder path.
+- A run that used the LLM decider needs `--allow-cloud` for a re-render, and the model is asked
+  again, so the result can differ from the batch.
+- A full re-run renders every photo from the run settings; `--resume` keeps adjusted photos.
+
+## [Unreleased] — Region instructions (F2)
+
+### Added
+- `--edit "brighten the jacket, darken the sky slightly"` (`[run] edit` in a run file, `edit` in the
+  Studio API): plain-language instructions for named regions, parsed locally with no LLM. Any
+  concept the segmenter can find may be named, including one that has no rule block.
+- `configs/instructions.toml`: the vocabulary as data. Eight verbs (brighten, darken, warm, cool,
+  saturate, mute, soften, deepen) with their word forms, amount words (slightly, a little, much),
+  and a limit per op.
+- An instruction is a delta on top of the rule baseline. A named thing inside another region (a
+  jacket inside `subject`) keeps that region's settings and gets the delta on top. No pixel is
+  edited by two regions, and region policies apply to the sum.
+- The sidecar lists every instruction under `adjustments` with a status (`applied`, `clamped`,
+  `not_found`) and one line in `notes`. A clause that was not understood is named, never guessed.
+
+### Changed
+- `paths.config_path` falls back to the packaged file when the active configs folder does not
+  have it, so a local tuning copy made before a feature added a config file keeps working.
+
+### Known limits
+- The grammar is small: verb, optional amount, target, joined by "and" or commas. A negation
+  ("don't brighten the sky") is rejected.
+- Each instructed region costs one more full-frame pass at apply time.
+- A region edit runs before the global pass, so a global op that measures the whole frame
+  (dehaze) can shift far pixels by a small amount.
+- Without SAM 3 the stub segmenter finds a handful of concepts; everything else is reported as
+  not found.
+
 ## [Unreleased] — Export keeps camera data (F1)
 
 ### Added

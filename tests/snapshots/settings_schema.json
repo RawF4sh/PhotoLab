@@ -1,0 +1,581 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "key": "look",
+      "label": "Look"
+    },
+    {
+      "key": "direct",
+      "label": "Directed edits"
+    },
+    {
+      "key": "quality",
+      "label": "Image quality"
+    },
+    {
+      "key": "batch",
+      "label": "Batch"
+    },
+    {
+      "key": "output",
+      "label": "Output"
+    },
+    {
+      "key": "raw",
+      "label": "RAW development"
+    },
+    {
+      "key": "segmentation",
+      "label": "Regions"
+    },
+    {
+      "key": "llm",
+      "label": "AI assistant (optional, your own key)"
+    },
+    {
+      "key": "performance",
+      "label": "Performance"
+    }
+  ],
+  "settings": [
+    {
+      "key": "style",
+      "label": "Style",
+      "group": "look",
+      "type": "choice",
+      "default": "natural",
+      "choices": [
+        "natural",
+        "editorial",
+        "warm_film",
+        "dramatic",
+        "cinematic_preserved"
+      ],
+      "help": "The overall look: which regions are edited and how strongly.",
+      "advanced": false
+    },
+    {
+      "key": "look",
+      "label": "Look",
+      "group": "look",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        "natural",
+        "punchy",
+        "soft_portrait",
+        "dramatic",
+        "cinematic_preserved"
+      ],
+      "help": "Overrides how strong the edit is for this style, for example punchy or soft.",
+      "advanced": false
+    },
+    {
+      "key": "intensity",
+      "label": "Strength",
+      "group": "look",
+      "type": "float",
+      "default": 0.8,
+      "min": 0.0,
+      "max": 2.0,
+      "help": "How much of the edit is applied: below 1 is subtler, above 1 is stronger.",
+      "advanced": false
+    },
+    {
+      "key": "palette",
+      "label": "Colour grade",
+      "group": "look",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        "auto",
+        "off",
+        "cool_blue",
+        "teal_orange",
+        "warm_gold",
+        "forest_olive",
+        "muted_film"
+      ],
+      "help": "A colour mood such as cool blue or warm gold. Auto picks one from your words, off adds none.",
+      "advanced": false
+    },
+    {
+      "key": "palette_strength",
+      "label": "Colour grade strength",
+      "group": "look",
+      "type": "float",
+      "default": 0.8,
+      "min": 0.0,
+      "max": 1.0,
+      "help": "How strongly the colour grade tints the photo. 0 is none, 1 is the full grade.",
+      "advanced": false
+    },
+    {
+      "key": "reference",
+      "label": "Reference photo",
+      "group": "look",
+      "type": "string",
+      "default": null,
+      "help": "A photo whose colours and tones the result should move toward.",
+      "advanced": false
+    },
+    {
+      "key": "reference_strength",
+      "label": "Reference strength",
+      "group": "look",
+      "type": "float",
+      "default": 0.7,
+      "min": 0.0,
+      "max": 1.0,
+      "help": "How closely to follow the reference photo. 0 ignores it, 1 matches it fully.",
+      "advanced": false
+    },
+    {
+      "key": "prompt",
+      "label": "Intent",
+      "group": "direct",
+      "type": "string",
+      "default": null,
+      "help": "A few words about the mood you want, such as warm sunset or moody. It is read on your computer.",
+      "advanced": false
+    },
+    {
+      "key": "edit",
+      "label": "Edit instructions",
+      "group": "direct",
+      "type": "string",
+      "default": null,
+      "max_length": 400,
+      "help": "Plain-language changes to parts of the photo, for example brighten the jacket.",
+      "advanced": false
+    },
+    {
+      "key": "compose",
+      "label": "Vignette and sky gradient",
+      "group": "quality",
+      "type": "bool",
+      "default": true,
+      "help": "Allows gentle darkened edges and sky gradients that guide the eye to the subject.",
+      "advanced": false
+    },
+    {
+      "key": "vignette",
+      "label": "Vignette",
+      "group": "quality",
+      "type": "bool",
+      "default": true,
+      "help": "Darkens the edges slightly. Turn off for an even frame.",
+      "advanced": false
+    },
+    {
+      "key": "sharpen",
+      "label": "Sharpen",
+      "group": "quality",
+      "type": "bool",
+      "default": true,
+      "help": "Adds a little final sharpening to the export.",
+      "advanced": false
+    },
+    {
+      "key": "highlight_hold",
+      "label": "Keep blown highlights white",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Keeps areas that were pure white in the original from turning grey after the edit.",
+      "advanced": false
+    },
+    {
+      "key": "levels",
+      "label": "Set black and white point",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Stretches the tones so the darkest parts are properly black and the brightest properly white.",
+      "advanced": false
+    },
+    {
+      "key": "denoise",
+      "label": "Reduce noise",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Smooths grain in dark, high-ISO photos while keeping edges.",
+      "advanced": false
+    },
+    {
+      "key": "consistency",
+      "label": "Consistency",
+      "group": "batch",
+      "type": "choice",
+      "default": "brightness",
+      "choices": [
+        "brightness",
+        "bursts"
+      ],
+      "help": "Brightness evens out the whole shoot; bursts also evens out frames shot of the same scene.",
+      "advanced": false
+    },
+    {
+      "key": "out_format",
+      "label": "File format",
+      "group": "output",
+      "type": "choice",
+      "default": "jpeg",
+      "choices": [
+        "jpeg",
+        "jpg",
+        "tiff",
+        "webp",
+        "png"
+      ],
+      "help": "The file type of the finished photos.",
+      "advanced": false
+    },
+    {
+      "key": "out_long_edge",
+      "label": "Longest side (pixels)",
+      "group": "output",
+      "type": "int",
+      "default": null,
+      "min": 64,
+      "max": 20000,
+      "help": "Shrinks the export so its longest side is this many pixels. Empty keeps full size.",
+      "advanced": false
+    },
+    {
+      "key": "out_name",
+      "label": "File name",
+      "group": "output",
+      "type": "string",
+      "default": "{stem}",
+      "help": "Name of each exported file without the ending. Use {stem} for the original name, {style} and {n}.",
+      "advanced": false
+    },
+    {
+      "key": "out_subdir",
+      "label": "Subfolder",
+      "group": "output",
+      "type": "string",
+      "default": "",
+      "help": "Puts the exports in a subfolder of the output folder. Empty uses the output folder itself.",
+      "advanced": false
+    },
+    {
+      "key": "export",
+      "label": "Export preset",
+      "group": "output",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        "full",
+        "web",
+        "social",
+        "archive",
+        "webp"
+      ],
+      "help": "A saved bundle of output settings, such as web or print.",
+      "advanced": false
+    },
+    {
+      "key": "quality",
+      "label": "Quality",
+      "group": "output",
+      "type": "int",
+      "default": 95,
+      "min": 1,
+      "max": 100,
+      "help": "Picture quality of JPEG and WebP files. Higher is sharper and bigger.",
+      "advanced": false
+    },
+    {
+      "key": "metadata",
+      "label": "Photo information",
+      "group": "output",
+      "type": "choice",
+      "default": "shareable",
+      "choices": [
+        "keep",
+        "shareable",
+        "none"
+      ],
+      "help": "What camera data stays in the export: keep all, share without location and serial numbers, or none.",
+      "advanced": false
+    },
+    {
+      "key": "raw_mode",
+      "label": "RAW method",
+      "group": "raw",
+      "type": "choice",
+      "default": "none",
+      "choices": [
+        "none",
+        "libraw_auto",
+        "preview_ev",
+        "preview_ev_headroom",
+        "tone_target",
+        "linear_srgb"
+      ],
+      "help": "How RAW files are brightened when opened. None keeps the standard camera-style result.",
+      "advanced": true
+    },
+    {
+      "key": "raw_max_ev",
+      "label": "Largest brightening (stops)",
+      "group": "raw",
+      "type": "float",
+      "default": 2.5,
+      "min": 0.0,
+      "max": 5.0,
+      "help": "The most a RAW photo may be brightened when it is opened.",
+      "advanced": true
+    },
+    {
+      "key": "raw_clip_budget",
+      "label": "Allowed white area",
+      "group": "raw",
+      "type": "float",
+      "default": 0.005,
+      "min": 0.0,
+      "max": 0.1,
+      "help": "The share of the photo that may turn pure white while brightening a RAW file.",
+      "advanced": true
+    },
+    {
+      "key": "raw_tone_target_p50",
+      "label": "Target brightness",
+      "group": "raw",
+      "type": "float",
+      "default": 0.4,
+      "min": 0.0,
+      "max": 1.0,
+      "help": "The middle brightness a RAW photo is brightened toward in the tone target method.",
+      "advanced": true
+    },
+    {
+      "key": "raw_fallback_ev",
+      "label": "Brightening without preview (stops)",
+      "group": "raw",
+      "type": "float",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 5.0,
+      "help": "How much to brighten a RAW file that has no camera preview to compare with.",
+      "advanced": true
+    },
+    {
+      "key": "backend",
+      "label": "Region finder",
+      "group": "segmentation",
+      "type": "choice",
+      "default": "stub",
+      "choices": [
+        "stub",
+        "sam3",
+        "auto"
+      ],
+      "help": "How parts of the photo such as sky or skin are found. Stub finds none and needs no download.",
+      "advanced": false
+    },
+    {
+      "key": "concepts",
+      "label": "Regions to edit",
+      "group": "segmentation",
+      "type": "list",
+      "default": null,
+      "help": "Names of the parts to find and edit, such as sky or water. Empty list turns region editing off.",
+      "advanced": false
+    },
+    {
+      "key": "preset",
+      "label": "Region set",
+      "group": "segmentation",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        "generic",
+        "wedding",
+        "landscape"
+      ],
+      "help": "A ready-made list of regions, such as landscape or wedding. It replaces the style's own list.",
+      "advanced": false
+    },
+    {
+      "key": "decider",
+      "label": "Edit method",
+      "group": "llm",
+      "type": "choice",
+      "default": "rules",
+      "choices": [
+        "rules",
+        "llm",
+        "learned"
+      ],
+      "help": "Rules is the built-in method. LLM asks your AI assistant. Learned uses a model you trained.",
+      "advanced": false
+    },
+    {
+      "key": "allow_cloud",
+      "label": "Allow cloud assistant",
+      "group": "llm",
+      "type": "bool",
+      "default": false,
+      "help": "Gives permission to send a small preview and numbers, never the full photo, to your AI provider.",
+      "advanced": false
+    },
+    {
+      "key": "llm_mode",
+      "label": "Assistant role",
+      "group": "llm",
+      "type": "choice",
+      "default": "refine",
+      "choices": [
+        "refine",
+        "propose"
+      ],
+      "help": "Refine adjusts the built-in edit; propose lets the assistant suggest the edit itself.",
+      "advanced": false
+    },
+    {
+      "key": "llm_model",
+      "label": "Assistant model",
+      "group": "llm",
+      "type": "string",
+      "default": "claude-haiku-5-5",
+      "help": "The name of the AI model to ask.",
+      "advanced": false
+    },
+    {
+      "key": "llm_temperature",
+      "label": "Assistant variation",
+      "group": "llm",
+      "type": "float",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0,
+      "help": "0 gives the same answer each time; higher values vary more.",
+      "advanced": true
+    },
+    {
+      "key": "llm_translate_instructions",
+      "label": "Let the assistant read instructions",
+      "group": "llm",
+      "type": "bool",
+      "default": true,
+      "help": "Lets the assistant turn your edit instructions into changes when the built-in reader cannot.",
+      "advanced": false
+    },
+    {
+      "key": "llm_thumb_px",
+      "label": "Preview size (pixels)",
+      "group": "llm",
+      "type": "int",
+      "default": 512,
+      "min": 64,
+      "max": 1024,
+      "help": "The longest side of the small preview sent to the assistant.",
+      "advanced": true
+    },
+    {
+      "key": "llm_max_calls",
+      "label": "Most assistant calls",
+      "group": "llm",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "help": "Stops asking the assistant after this many photos. 0 means no limit.",
+      "advanced": true
+    },
+    {
+      "key": "llm_budget_usd",
+      "label": "Spending limit (USD)",
+      "group": "llm",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.0,
+      "help": "Stops asking the assistant once a run has cost this much. 0 means no limit.",
+      "advanced": true
+    },
+    {
+      "key": "llm_input_usd_per_mtok",
+      "label": "Price per million input tokens (USD)",
+      "group": "llm",
+      "type": "float",
+      "default": 0.1,
+      "min": 0.0,
+      "help": "What your model charges for what it reads. Used only to apply the spending limit.",
+      "advanced": true
+    },
+    {
+      "key": "llm_output_usd_per_mtok",
+      "label": "Price per million output tokens (USD)",
+      "group": "llm",
+      "type": "float",
+      "default": 0.5,
+      "min": 0.0,
+      "help": "What your model charges for what it writes. Used only to apply the spending limit.",
+      "advanced": true
+    },
+    {
+      "key": "recipe_model",
+      "label": "Trained model file",
+      "group": "llm",
+      "type": "string",
+      "default": null,
+      "help": "The model you trained, used when the edit method is learned.",
+      "advanced": true
+    },
+    {
+      "key": "workers",
+      "label": "Parallel photos",
+      "group": "performance",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 64,
+      "help": "How many photos are edited at the same time. 0 picks a sensible number for your computer.",
+      "advanced": true
+    },
+    {
+      "key": "threads",
+      "label": "Threads per photo",
+      "group": "performance",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 256,
+      "help": "How many processor threads one photo may use. 0 uses all of them.",
+      "advanced": true
+    },
+    {
+      "key": "analysis_long_edge",
+      "label": "Analysis size (pixels)",
+      "group": "performance",
+      "type": "int",
+      "default": 1536,
+      "min": 64,
+      "max": 8192,
+      "help": "The size the photo is shrunk to for analysis. Smaller is faster, larger is more exact.",
+      "advanced": true
+    },
+    {
+      "key": "device",
+      "label": "Processor",
+      "group": "performance",
+      "type": "string",
+      "default": "auto",
+      "help": "Which processor finds regions: auto, cpu, or a graphics card name such as cuda or mps.",
+      "advanced": true
+    },
+    {
+      "key": "mask_cache",
+      "label": "Remember regions",
+      "group": "performance",
+      "type": "bool",
+      "default": true,
+      "help": "Saves the found regions so that editing the same photos again is much faster.",
+      "advanced": true
+    }
+  ]
+}

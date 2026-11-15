@@ -14,20 +14,24 @@ import numpy as np
 from PIL import Image as PILImage
 
 from ..imageio import linear_to_srgb, luma, srgb_to_linear
+from . import par
 from .filters import box_min, gaussian_blur, guided_filter
 
 _EPS = 1e-6
 
 OP_NAMES = (
     "exposure", "highlight_rolloff", "shadows_ev", "contrast", "highlights", "shadows", "whites",
-    "blacks", "curve", "clarity", "vibrance", "saturation", "dehaze", "temp", "tint",
+    "blacks", "curve", "clarity", "black_point", "white_point", "vibrance", "saturation", "dehaze", "temp", "tint",
     # color grading (split-tone) — tint shadows/highlights independently
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
     # targeted HSL — adjust specific hue bands
     "hsl_skin_sat", "hsl_green_sat", "hsl_green_lum", "hsl_blue_sat",
-    # output sharpening (unsharp mask) — applied last
-    "sharpen",
+    # noise reduction (F7), then output sharpening (unsharp mask) — applied last
+    "denoise", "sharpen",
 )
+
+_GRADE_KEYS = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
+_HSL_KEYS = ("hsl_skin_sat", "hsl_green_sat", "hsl_green_lum", "hsl_blue_sat")
 
 OP_BOUNDS = {
     "exposure": (-3.0, 3.0),
@@ -40,6 +44,8 @@ OP_BOUNDS = {
     "blacks": (-100.0, 100.0),
     "curve": (-100.0, 100.0),
     "clarity": (-100.0, 100.0),
+    "black_point": (0.0, 100.0),
+    "white_point": (0.0, 100.0),
     "vibrance": (-100.0, 100.0),
     "saturation": (-100.0, 100.0),
     "dehaze": (-100.0, 100.0),
@@ -53,11 +59,33 @@ OP_BOUNDS = {
     "hsl_green_sat": (-100.0, 100.0),
     "hsl_green_lum": (-100.0, 100.0),
     "hsl_blue_sat": (-100.0, 100.0),
+    "denoise": (0.0, 100.0),
     "sharpen": (-100.0, 100.0),
 }
 
-_GRADE_KEYS = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
-_HSL_KEYS = ("hsl_skin_sat", "hsl_green_sat", "hsl_green_lum", "hsl_blue_sat")
+# Ops that read more than their own pixel: neighbours (blurs) or the whole frame (dehaze airlight).
+SPATIAL_OPS = frozenset({"dehaze", "clarity", "sharpen", "black_point", "white_point", "denoise"})
+
+# The frozen order as data: one tuple per step of apply_ops, in order. A settings bundle may be
+# cut between two steps and applied in two calls with the same result (apply.py relies on it).
+STEPS = (
+    ("temp", "tint", "exposure", "highlight_rolloff"),
+    ("shadows_ev",),
+    ("highlights", "shadows", "whites", "blacks"),
+    ("contrast",),
+    ("curve",),
+    ("dehaze",),
+    ("clarity",),
+    ("black_point", "white_point"),
+    ("vibrance", "saturation"),
+    _HSL_KEYS,
+    _GRADE_KEYS,
+    ("denoise",),
+    ("sharpen",),
+)
+_TONE_KEYS = frozenset(k for step in STEPS[:5] for k in step)
+_COLOUR_KEYS = frozenset(k for step in STEPS if {"vibrance", _HSL_KEYS[0], _GRADE_KEYS[0]} & set(step) for k in step)
+
 _DEHAZE_PROXY_EDGE = 1400
 
 
@@ -202,6 +230,51 @@ def sharpen(rgb: np.ndarray, amt: float) -> np.ndarray:
     return _scale_luma(rgb, l + (amt / 100.0) * 1.6 * detail, l)
 
 
+_DENOISE_FULL_GRAIN = 1.0 / 255.0   # measured grain from which the chroma filter works at full weight
+
+
+def _grain_sigma(l: np.ndarray) -> float:
+    """Robust estimate of the fine grain of a luma plane: 1.4826 times the median absolute
+    deviation of (luma - a 1 px blur), on every second pixel."""
+    s = l[::2, ::2] if min(l.shape) >= 64 else l
+    d = s - gaussian_blur(s, 1.0)
+    return float(1.4826 * np.median(np.abs(d - np.median(d))))
+
+
+def denoise(rgb: np.ndarray, amt: float) -> np.ndarray:
+    """Noise reduction, chroma first (F7). `amt` 0..100.
+
+    Colour noise is coarse and ugly, luma grain is fine and tolerable, so the two get different
+    treatment. Chroma (rgb - luma) is filtered at half resolution with the guided filter, guided
+    by a lightly blurred luma: colour stays inside real edges, and grain in the guide is not read
+    as an edge. Luma is filtered with the self-guided filter whose threshold follows the grain
+    measured on the input (`_grain_sigma`), at reduced weight from the mid-tones up. Both
+    filters follow that measurement: a clean frame measures a tiny grain and is left almost
+    alone, fine colour detail included. 0 is the identity."""
+    a = min(max(amt, 0.0), 100.0) / 100.0
+    if a == 0.0:
+        return rgb
+    l = luma(rgb)
+    h, w = l.shape
+    sigma = _grain_sigma(l)
+    small = (max(1, w // 2), max(1, h // 2))
+    guide = gaussian_blur(_resize_float(l, small), 1.0)
+    radius = max(2, int(round(0.0016 * max(h, w))))
+    # The chroma filter is full from a grain of one 8-bit level and fades out below it. Without
+    # this a clean frame lost its fine colour detail (measured: 3 px colour stripes of equal
+    # brightness lost 31 % of their chroma at strength 40).
+    weight_c = min(1.0, 1.6 * a) * min(1.0, sigma / _DENOISE_FULL_GRAIN)
+    out = np.empty(rgb.shape, dtype=np.float32)
+    for i in range(3):
+        c = rgb[..., i] - l
+        smooth = _resize_float(guided_filter(guide, _resize_float(c, small), radius, eps=0.05 * 0.05), (w, h))
+        out[..., i] = c + weight_c * (smooth - c)
+    l_smooth = guided_filter(l, l, 2, eps=max((2.0 * sigma) ** 2, 1e-7))
+    weight_l = a * (1.0 - 0.6 * np.clip((l - 0.30) / 0.40, 0.0, 1.0))
+    out += (l + weight_l * (l_smooth - l))[..., None]
+    return out
+
+
 def vibrance(rgb: np.ndarray, vib: float, sat: float) -> np.ndarray:
     l = luma(rgb)[..., None]
     chroma = rgb - l
@@ -271,12 +344,14 @@ def dehaze(rgb: np.ndarray, amt: float) -> np.ndarray:
     if work is not rgb:
         t = _resize_float(t, (w, h))
         blend = _resize_float(blend, (w, h))
-    t = np.clip(t, t0, 1.0)[..., None]
 
-    recovered = (rgb - A) / t + A                   # invert the scattering model
+    def invert(x, t_, blend_):                      # per pixel: runs on row strips, same values
+        t3 = np.clip(t_, t0, 1.0)[..., None]
+        recovered = (x - A) / t3 + A                # invert the scattering model
+        out = x + blend_[..., None] * (np.clip(recovered, 0.0, 1.0) - x)
+        return out.astype(np.float32)
 
-    out = rgb + blend[..., None] * (np.clip(recovered, 0.0, 1.0) - rgb)
-    return out.astype(np.float32)
+    return par.rows(invert, rgb, t, blend)
 
 
 def curve(rgb: np.ndarray, strength: float) -> np.ndarray:
@@ -285,6 +360,90 @@ def curve(rgb: np.ndarray, strength: float) -> np.ndarray:
     s = strength / 100.0
     smooth = l * l * l * (l * (l * 6.0 - 15.0) + 10.0)  # smootherstep(l)
     return _scale_luma(rgb, l + s * (smooth - l), l)
+
+
+# Black and white point (F5). The targets sit inside the clip levels the stats and the gates use
+# (a channel below 0.02 or above 0.98 counts as clipped), so the op cannot add clipping.
+_BLACK_FLOOR = 0.03
+_WHITE_CEIL = 0.94
+_LEVELS_PIVOT = 0.5      # the curve is the identity on the far side of mid-grey
+_LEVELS_TAIL = 0.1       # percent of the pixels allowed beyond a measured point
+_LEVELS_BODY = 10.0      # percent: only the darkest (brightest) tenth of the frame is reshaped
+_LEVELS_SLOPE = 0.3      # caps the amount so the slope at a measured point stays <= 1.6
+_CLIP_LO, _CLIP_HI = 0.0205, 0.9795
+_STAT_LO, _STAT_HI = 0.02, 0.98     # what stats.py counts as clipped
+
+
+def _levels_points(l: np.ndarray) -> tuple[float, float, float, float]:
+    """Measured points of a luma plane: black and white (the 0.1th and 99.9th percentile) and
+    where the body of the picture begins and ends (the 10th and 90th), on every fourth pixel in
+    both directions (1.4 M samples of a 22 MP frame)."""
+    s = l[::4, ::4] if l.ndim == 2 and min(l.shape) >= 256 else l
+    lo, hi, body_lo, body_hi = np.percentile(
+        s, (_LEVELS_TAIL, 100.0 - _LEVELS_TAIL, _LEVELS_BODY, 100.0 - _LEVELS_BODY))
+    return float(lo), float(hi), float(body_lo), float(body_hi)
+
+
+def _levels_curve(l: np.ndarray, f: float, b: float, w: float, a: float,
+                  p: float = _LEVELS_PIVOT, q: float = _LEVELS_PIVOT) -> np.ndarray:
+    """The luma map. Black side: remove `b` at the floor `f`, fading to nothing at the pivot `p`,
+    with a power toe below `f` that keeps 0 at 0. White side: add `a` at the white `w`, the mirror
+    image with its pivot `q` measured down from white. Monotonic, continuous slope, the identity
+    when b == a == 0."""
+    y = l
+    if b > 0.0:
+        yf, m = f - b, 1.0 + 2.0 * b / (p - f)
+        mid = l - b * np.square(np.clip((p - l) / (p - f), 0.0, None))
+        toe = yf * np.power(np.clip(l / f, 0.0, 1.0), m * f / yf)
+        y = np.where(l < f, toe, np.where(l < p, mid, l))
+    if a > 0.0:
+        u, uf = 1.0 - l, 1.0 - w
+        vf, m = uf - a, 1.0 + 2.0 * a / (q - uf)
+        mid = u - a * np.square(np.clip((q - u) / (q - uf), 0.0, None))
+        toe = vf * np.power(np.clip(u / uf, 0.0, 1.0), m * uf / vf)
+        y = np.where(u < uf, 1.0 - toe, np.where(u < q, 1.0 - mid, y))
+    return y.astype(np.float32)
+
+
+def _levels_apply(rgb: np.ndarray, f: float, b: float, w: float, a: float,
+                  p: float = _LEVELS_PIVOT, q: float = _LEVELS_PIVOT) -> np.ndarray:
+    l = luma(rgb)
+    ratio = (_levels_curve(l, f, b, w, a, p, q) + _EPS) / (l + _EPS)
+    lo, hi = rgb.min(axis=-1), rgb.max(axis=-1)
+    # A channel that is inside the levels the statistics count as clipped (0.02 and 0.98) stays
+    # inside, and so does the luma, which is what those statistics measure: a dark pixel with one
+    # channel already at 0 has no channel to hold it (measured: 0.06 % of a frame crossed).
+    # A lower bound is at most 1 and an upper bound at least 1, so they cannot contradict.
+    for v in (lo, l):
+        ratio = np.where(v >= _STAT_LO, np.maximum(ratio, np.minimum(1.0, _CLIP_LO / np.maximum(v, _EPS))), ratio)
+    for v in (hi, l):
+        ratio = np.where(v <= _STAT_HI, np.minimum(ratio, np.maximum(1.0, _CLIP_HI / np.maximum(v, _EPS))), ratio)
+    return (rgb * ratio[..., None]).astype(np.float32)
+
+
+def levels(rgb: np.ndarray, black: float = 0.0, white: float = 0.0) -> np.ndarray:
+    """Black and white point, each a strength 0..100. The op measures where the darkest and the
+    brightest 0.1 % of ITS INPUT begin and pulls those points toward a true black (0.03) and a
+    clean white (0.94). A frame that already has them is not touched; 0 and 0 is the identity.
+
+    Only the darkest and the brightest tenth of the frame are reshaped: the curve is the identity
+    between the frame's own 10th and 90th percentile. So the median of any area that covers a
+    quarter of the frame or more does not move at all, which is what keeps a dark photo from
+    coming out darker (measured: with the pivot at mid-grey the bottom third of dark photos lost
+    up to 0.03). A frame whose darkest tenth is flat (fog) has nothing to anchor and is left
+    alone.
+
+    The measurement reads the whole frame, so this op never runs on a strip or a crop; the
+    per-pixel map does."""
+    if black <= 0.0 and white <= 0.0:
+        return rgb
+    f, w, body_lo, body_hi = _levels_points(luma(rgb))
+    p, q = min(_LEVELS_PIVOT, body_lo), min(_LEVELS_PIVOT, 1.0 - body_hi)
+    b = max(0.0, min(min(black, 100.0) / 100.0 * (f - _BLACK_FLOOR), _LEVELS_SLOPE * (p - f))) if black > 0.0 else 0.0
+    a = max(0.0, min(min(white, 100.0) / 100.0 * (_WHITE_CEIL - w), _LEVELS_SLOPE * (q - (1.0 - w)))) if white > 0.0 else 0.0
+    if b <= 0.0 and a <= 0.0:
+        return rgb
+    return par.rows(lambda x: _levels_apply(x, f, b, w, a, p, q), rgb)
 
 
 def color_grade(rgb, sh_temp=0.0, sh_tint=0.0, hi_temp=0.0, hi_tint=0.0) -> np.ndarray:
@@ -345,9 +504,8 @@ def targeted_hsl(rgb, skin_sat=0.0, green_sat=0.0, green_lum=0.0, blue_sat=0.0) 
     return _hsv_to_rgb(h, np.clip(s, 0.0, 1.0), np.clip(v, 0.0, 1.0))
 
 
-def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
-    """Apply a settings bundle in the frozen order. Does not mutate the input."""
-    out = rgb
+def _tone_steps(out: np.ndarray, settings: dict) -> np.ndarray:
+    """The per-pixel steps before dehaze: light, shadow lift, tone, contrast, curve."""
     temp, tint = settings.get("temp", 0.0), settings.get("tint", 0.0)
     ev, rolloff = settings.get("exposure", 0.0), settings.get("highlight_rolloff", 0.0)
     if temp or tint or ev or rolloff:  # WB → exposure → knee, one linear pass (frozen order kept)
@@ -361,10 +519,11 @@ def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
         out = contrast(out, settings["contrast"])
     if settings.get("curve", 0.0):
         out = curve(out, settings["curve"])
-    if settings.get("dehaze", 0.0):
-        out = dehaze(out, settings["dehaze"])
-    if settings.get("clarity", 0.0):
-        out = clarity(out, settings["clarity"])
+    return out
+
+
+def _colour_steps(out: np.ndarray, settings: dict) -> np.ndarray:
+    """The per-pixel steps after clarity: vibrance and saturation, targeted HSL, split-tone."""
     if settings.get("vibrance", 0.0) or settings.get("saturation", 0.0):
         out = vibrance(out, settings.get("vibrance", 0.0), settings.get("saturation", 0.0))
     if any(settings.get(k, 0.0) for k in _HSL_KEYS):
@@ -373,6 +532,25 @@ def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
     if any(settings.get(k, 0.0) for k in _GRADE_KEYS):
         out = color_grade(out, settings.get("grade_shadows_temp", 0.0), settings.get("grade_shadows_tint", 0.0),
                           settings.get("grade_highlights_temp", 0.0), settings.get("grade_highlights_tint", 0.0))
+    return out
+
+
+def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
+    """Apply a settings bundle in the frozen order (`STEPS`). Does not mutate the input. The
+    per-pixel stretches run on row strips in threads (edit/par.py), which changes no value."""
+    out = rgb
+    if any(settings.get(k, 0.0) for k in _TONE_KEYS):
+        out = par.rows(lambda a: _tone_steps(a, settings), out)
+    if settings.get("dehaze", 0.0):
+        out = dehaze(out, settings["dehaze"])
+    if settings.get("clarity", 0.0):
+        out = clarity(out, settings["clarity"])
+    if settings.get("black_point", 0.0) or settings.get("white_point", 0.0):
+        out = levels(out, settings.get("black_point", 0.0), settings.get("white_point", 0.0))
+    if any(settings.get(k, 0.0) for k in _COLOUR_KEYS):
+        out = par.rows(lambda a: _colour_steps(a, settings), out)
+    if settings.get("denoise", 0.0):  # before sharpening, so the sharpener does not see the grain
+        out = denoise(out, settings["denoise"])
     if settings.get("sharpen", 0.0):  # output sharpening, last
         out = sharpen(out, settings["sharpen"])
     return out

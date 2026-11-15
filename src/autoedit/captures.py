@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image as PILImage
 
-from .imageio import _SUPPORTED, is_raw
+from .imageio import _SUPPORTED, is_raw, register_reader
 
 EXTENSIONS = frozenset(_SUPPORTED)
 
@@ -36,6 +36,7 @@ def metadata(path: Path) -> dict:
     out = {"camera": "", "captured_at": "", "exposure_bias": None,
            "camera_serial": "", "capture_unique_id": "", "capture_subseconds": ""}
     try:
+        register_reader(path)
         with PILImage.open(path) as im:
             exif = im.getexif()
             sub = exif.get_ifd(34665)

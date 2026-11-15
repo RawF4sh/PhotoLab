@@ -4,6 +4,8 @@
 #   contrast_mul, vibrance_add, saturation_add, clarity_mul, dehaze_mul
 # saturation_add is a uniform global lift (vibrance protects already-saturated pixels; this
 # doesn't) — global-only, so the skin-safe guard holds it off faces.
+# preserve_exposure = true: this look means to be dark; the darkness check of the review gate
+# does not apply to it (as for the prompt words "moody", "low key", ...).
 # Global-only finishing the look injects (applied once, to the whole image):
 #   curve_add (filmic S-curve), grade_{shadows,highlights}_{temp,tint} (split-tone)
 

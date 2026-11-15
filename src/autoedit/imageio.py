@@ -25,7 +25,9 @@ from PIL import ImageOps
 # Camera RAW formats — decoded via rawpy/libraw (the `accel` extra) at 16-bit.
 _RAW_EXT = {".dng", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".sr2", ".srf", ".raf",
             ".orf", ".rw2", ".pef", ".srw", ".raw", ".3fr", ".mrw", ".dcr", ".kdc"}
-_PIXEL_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp"}
+_HEIF_EXT = {".heic", ".heif"}
+_PIXEL_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp", ".avif"} | _HEIF_EXT
+_heif_ready = False
 _SUPPORTED = _PIXEL_EXT | _RAW_EXT
 _GRAY16 = {"I;16", "I;16B", "I;16L", "I"}  # Pillow's 16-bit single-channel modes
 
@@ -68,6 +70,29 @@ def is_raw(path: str) -> bool:
     return path.lower().endswith(tuple(_RAW_EXT))
 
 
+def _ensure_heif() -> None:
+    """Register the HEIC/HEIF reader of the optional `pillow-heif` package, once. Imported only
+    when such a file is opened, so the core install does not need it."""
+    global _heif_ready
+    if _heif_ready:
+        return
+    try:
+        from pillow_heif import register_heif_opener
+    except Exception as exc:
+        raise RuntimeError(
+            "HEIC and HEIF files need the pillow-heif package: pip install '.[heif]'") from exc
+    register_heif_opener()
+    _heif_ready = True
+
+
+def register_reader(path: str) -> None:
+    """Make Pillow able to open `path` with a plain `PILImage.open`: registers the HEIC reader for
+    a .heic/.heif file and does nothing for any other. Raises RuntimeError without pillow-heif;
+    callers that only read metadata catch it with the rest of their open errors."""
+    if os.path.splitext(str(path))[1].lower() in _HEIF_EXT:
+        _ensure_heif()
+
+
 def load_image(path: str, decode: dict | None = None) -> Image:
     """Decode any supported image to the working representation, preserving bit depth.
 
@@ -92,7 +117,15 @@ def load_image(path: str, decode: dict | None = None) -> Image:
         return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif,
                      decode_ev=ev, decode_info=decode_info)
 
-    pil = PILImage.open(path)
+    if os.path.splitext(path)[1].lower() in _HEIF_EXT:
+        _ensure_heif()
+    try:
+        pil = PILImage.open(path)
+    except PILImage.UnidentifiedImageError as exc:
+        if path.lower().endswith(".avif"):
+            raise RuntimeError(
+                "this Pillow cannot read AVIF; it needs Pillow 11.3 or later") from exc
+        raise
     exif = _read_exif(pil)
 
     # 1) 16-bit TIFF via tifffile (preserves 48-bit RGB that Pillow truncates to 24-bit).
@@ -463,6 +496,8 @@ def export_exif(source: str | None, mode: str, size: tuple[int, int],
     if mode == "none" or not source:
         return None
     try:
+        if os.path.splitext(source)[1].lower() in _HEIF_EXT:
+            _ensure_heif()
         with PILImage.open(source) as pil:
             src = pil.getexif()
             base = {t: src[t] for t in _EXIF_KEEP_IFD0 if t in src}
@@ -512,6 +547,20 @@ def downscale_long_edge(img: Image, long_edge: int) -> Image:
                  decode_ev=img.decode_ev, decode_info=dict(img.decode_info))
 
 
+def resize_long_edge(rgb: np.ndarray, long_edge: int) -> np.ndarray:
+    """Downscale a float RGB image so its long edge is `long_edge` (never upscales). Lanczos on
+    the float channels: an export wants a clean, sharp reduction; the analysis proxy keeps its
+    own bilinear `downscale_long_edge`."""
+    h, w = rgb.shape[:2]
+    if max(h, w) <= long_edge:
+        return rgb
+    scale = long_edge / max(h, w)
+    size = (max(1, round(w * scale)), max(1, round(h * scale)))
+    chans = [np.asarray(PILImage.fromarray(np.ascontiguousarray(rgb[..., c], dtype=np.float32), mode="F")
+                        .resize(size, PILImage.LANCZOS), dtype=np.float32) for c in range(3)]
+    return np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
+
+
 def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
                exif: bytes | None = None, icc_profile: bytes | None = None) -> None:
     """Write the working RGB (float, sRGB gamma, [0,1]) to disk.
@@ -530,6 +579,10 @@ def save_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
     extra = {k: v for k, v in (("exif", exif), ("icc_profile", icc_profile)) if v is not None}
     if fmt in ("jpg", "jpeg"):
         pil.save(tmp, quality=quality, subsampling=0, **extra)
+    elif fmt == "webp":
+        pil.save(tmp, quality=quality, method=4, **extra)
+    elif fmt == "png":
+        pil.save(tmp, compress_level=6, **extra)
     else:
         pil.save(tmp, **extra)
     os.replace(tmp, path)

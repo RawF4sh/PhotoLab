@@ -13,25 +13,27 @@ status column here whenever a feature moves.
 | ID | Feature | Size | Status |
 |---|---|---|---|
 | F1 | Export keeps metadata and colour profile | S | done |
-| F2 | Region instructions | L | planned |
-| F3 | Per-photo adjustments | M | planned |
-| F4 | Throughput | M | planned |
-| F5 | Black and white point | M | planned |
-| F6 | Highlights | M | planned |
-| F7 | Noise | M | planned, measure first |
-| F8 | Defaults | S | waiting for the owner |
-| F9 | Shoot consistency v2 | M | planned, measure first |
-| F10 | Export presets | S | planned |
-| F11 | User config layer | M | planned |
-| F12 | Taste calibration | L | planned |
-| F13 | Settings schema | S | planned |
-| F14 | Model manager | M | planned |
-| F15 | API contract | S | planned |
-| F16 | More input formats | S | planned, check demand |
-| F17 | LLM path refresh | S | planned |
+| F2 | Region instructions | L | done |
+| F3 | Per-photo adjustments | M | done |
+| F4 | Throughput | M | done |
+| F5 | Black and white point | M | done, off by default (`--levels`): safe, small effect |
+| F6 | Highlights | M | done, off by default (`--highlight-hold`); the RAW highlight option was measured and removed |
+| F7 | Noise | M | done, off by default (`--denoise`) |
+| F8 | Defaults | S | done: the mechanisms exist, no default changed; three decisions wait for the owner |
+| F9 | Shoot consistency v2 | M | done, off by default (`--consistency bursts`) |
+| F10 | Export presets | S | done |
+| F11 | User config layer | M | done |
+| F12 | Taste calibration | L | done as a tool; the owner's own calibration and blind test are open |
+| F13 | Settings schema | S | done |
+| F14 | Model manager | M | done; a real download was not made in the unattended run |
+| F15 | API contract | S | done |
+| F16 | More input formats | S | done for AVIF; HEIC needs one check with `pillow-heif` installed |
+| F17 | LLM path refresh | S | done as code; one real call with the owner's key is open |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
-subsystem. Status values: planned, spec, building, checking, done.
+subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
+unattended run of 2026-11-11 ([UNATTENDED_RUN.md](UNATTENDED_RUN.md)): `done, off by default` (built
+behind a setting that waits for the owner's blind vote) and `blocked` (with the reason).
 
 ## Before anything is built
 
@@ -252,6 +254,21 @@ Three config decisions, each a small change with a gate run once the owner has d
 
 - **Later:** lens corrections for RAW, Display P3 output, a watch folder, film grain for the
   cinematic look.
+- **Proposed by the unattended run of 2026-11-11** (each is a feature of its own, none is built):
+  - *RAW highlight recovery.* The RAW files hold cloud detail that the default decode clips to
+    flat white (seen with LibRaw's blend mode, [F6 result](plans/F6-highlights.md)). LibRaw's
+    own modes are not usable as they are: one darkens every frame, the other turns skies purple.
+    A recovery needs the exposure put back after the decode, with a shoulder.
+  - *Masks that reach the frame edge.* SAM 3 masks stop 1 to 12 proxy pixels short of the frame
+    edge on most photos, so a region edit leaves a thin unedited rim
+    ([F2 result](plans/F2-region-instructions.md)). An opt-in "snap masks to the frame edge".
+  - *A source-relative review check for white areas.* With the highlight hold on, a photo whose
+    source is more than 5 % white is flagged for review although the edit added no clipping. The
+    check lives in a protected file.
+  - *An exit code that reports failed photos.* `autoedit run` ends with 0 even when photos
+    failed (it always did); a script cannot tell. Exit 1 when any photo failed.
+  - *Depth on lifted dark photos.* The black point cannot give it (the quality gate protects the
+    body of a dark photo); it is a matter of the look. F12's calibration is the tool for it.
 - **Not now:** an XMP hand-off to Lightroom. AutoEdit's op math does not map onto Adobe's sliders.
 - **Not now:** the learned recipe predictor as a default. It needs evidence first.
 - **Never:** generative edits (sky replacement, object removal, inpainting) and retouching that
@@ -271,12 +288,40 @@ Three config decisions, each a small change with a gate run once the owner has d
 
 ## Decisions for the owner
 
-| Decision | Needed for |
-|---|---|
-| Result of the blind vote on the improvement loop | Everything in phase 3 |
-| Default for `metadata`: decided, `shareable` (no GPS, no camera or lens serial numbers) | F1 |
-| RAW development default | F8 |
-| May a moody look opt out of the darkness gate? | F8 |
-| Default backend `sam3` when installed? | F8 |
-| Gated SAM 3 flow, or a second segmenter? | F14 |
-| What should the website do first: showcase and download, or online editing? | After this plan |
+Open decisions. Each is a one-line change once it is made; the evidence is named.
+
+| Decision | Evidence | The change, if yes |
+|---|---|---|
+| Highlight hold on by default? | Blind gallery `out-features/galleries/highlight-hold/`; [F6 result](plans/F6-highlights.md) (cost: more photos flagged for review) | `highlight_hold = true` under `[run]` in `defaults.toml` |
+| Noise reduction on by default? | 100 % crops in `out-features/F7/`; [F7 result](plans/F7-noise.md) | `denoise = true` under `[run]` |
+| Black point on by default? | `out-features/F5/`; [F5 result](plans/F5-black-white-point.md). The run's recommendation: leave it off | `levels = true` under `[run]` |
+| RAW development default | Blind gallery `out-features/galleries/raw-mode/`; table in the [F8 result](plans/F8-defaults.md) | `raw_mode = "preview_ev_headroom"` under `[decode]` |
+| Default backend `sam3` when it is installed? | `autoedit models status`, `autoedit doctor` | `backend = "auto"` under `[segment]` |
+| May a moody look opt out of the darkness check? | [F8 spec](plans/F8-defaults.md) | `preserve_exposure = true` under the look in `looks.toml` |
+| Bursts mode as the default consistency? | [F9 result](plans/F9-shoot-consistency.md) | `consistency = "bursts"` under `[run]` |
+| Gated SAM 3 flow, or a second segmenter? | The candidate list in `ARCHITECTURE.md`, "Adding a segmenter" (licences unverified) | F14 follow-up |
+| What should the website do first: showcase and download, or online editing? | none yet | After this plan |
+
+Things only the owner can do, left open by the unattended run:
+
+- Vote in the two blind galleries (`out-features/galleries/HOW_TO_VOTE.txt`).
+- Calibrate a personal look on your own photos (`autoedit calibrate`) and blind-test it against
+  `natural`.
+- `pip install pillow-heif` and run the tests once, to verify HEIC input for real.
+- One real `autoedit models download` through the gated Hugging Face flow.
+- One real run of the LLM path with your own key (F17).
+
+Decisions the unattended run took without the owner are listed in each spec under "Decisions
+taken without the owner", with how to reverse them. The ones that changed something an earlier
+plan said:
+
+| Decision | Why | Reverse it by |
+|---|---|---|
+| `raw_highlight` (LibRaw's highlight modes) was removed after it was built | Measured: one mode darkens 109 of 110 photos, the other turns skies purple ([F6 result](plans/F6-highlights.md)) | Build the "RAW highlight recovery" proposal above |
+| The black point only reshapes the darkest tenth of a frame, at full strength | The first version made dark photos darker and tripped the safety check on 3 of 110 photos ([F5 result](plans/F5-black-white-point.md)) | `_LEVELS_BODY` in `edit/ops.py` and the rule in `rules.toml` |
+| The highlight hold starts at 0.80, not 0.94 | 0.94 gave stepped, blotchy skies | `[highlight_hold]` in `rules.toml` |
+| The calibration steps are about three times the size first specified | Smaller steps gave pairs nobody could tell apart | `configs/calibrate.toml` |
+| A run refuses to write an export over a source photo (its own or another input); that photo fails, the batch goes on | Found in two reviews: an output folder that is the input folder, `--subdir` pointing back at it, upper-case extensions on a case-insensitive disk, a sibling file of another format | none intended |
+| Bursts are repeats of ONE framing (same orientation, thumbnails alike without the sky-over-ground layout); RAW files and JPEGs are evened out separately | The first comparison grouped different pictures shot seconds apart ([F9 result](plans/F9-shoot-consistency.md)) | `[consistency]` in `rules.toml` |
+| The LLM translation of instructions never gets a clause that was rejected as a negation or an exclusion | Found in review: it could turn "don't brighten the face" around | none intended |
+| Already decided earlier: default for `metadata` is `shareable` (no GPS, no serial numbers) | F1 | `[output] metadata` |

@@ -17,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..imageio import luma
+from . import par
 
 
 def _chroma(rgb: np.ndarray) -> np.ndarray:
@@ -135,30 +136,63 @@ def chroma_guard(
 
     Returns (guarded_rgb, fraction_of_pixels_pulled_back).
     """
-    src_c = _chroma(source)
-    out_c = _chroma(edited)
-
     allowance = max(0.0, float(neutral_allowance))
-    ceiling = src_c * (1.0 + max_increase) + allowance
-    if protect is not None:
-        # Feathered protection: lerp toward the tight ceiling by the mask's alpha, so soft
-        # skin/snow edges tighten gradually instead of flipping at an arbitrary 0.5 cut.
-        p = np.clip(protect.astype(np.float32), 0.0, 1.0)
-        protected = np.minimum(ceiling, src_c * (1.0 + protect_increase) + 0.008)
-        ceiling = ceiling * (1.0 - p) + protected * p
+    arrays = (source, edited) if protect is None else (source, edited, protect)
 
-    hi = luma(edited) > highlight_lum
-    ceiling = np.where(hi, np.minimum(ceiling, src_c * 1.02 + 0.004), ceiling)
+    def ceiling_of(src, out, prot=None):
+        src_c = _chroma(src)
+        ceiling = src_c * (1.0 + max_increase) + allowance
+        if prot is not None:
+            # Feathered protection: lerp toward the tight ceiling by the mask's alpha, so soft
+            # skin/snow edges tighten gradually instead of flipping at an arbitrary 0.5 cut.
+            p = np.clip(prot.astype(np.float32), 0.0, 1.0)
+            protected = np.minimum(ceiling, src_c * (1.0 + protect_increase) + 0.008)
+            ceiling = ceiling * (1.0 - p) + protected * p
+        hi = luma(out) > highlight_lum
+        return np.where(hi, np.minimum(ceiling, src_c * 1.02 + 0.004), ceiling)
 
-    over = out_c > ceiling
-    if not over.any():
+    def measure(src, out, prot=None):
+        out_c = _chroma(out)
+        ceiling = ceiling_of(src, out, prot)
+        return int((out_c > ceiling).sum()), ceiling, out_c
+
+    def scale_down(out, ceiling, out_c):
+        over = out_c > ceiling
+        # Scale chroma down to the ceiling by pulling the pixel toward its own luma (gray axis),
+        # which preserves brightness and hue and only sheds the excess saturation.
+        l = luma(out)[..., None]
+        scale = np.ones_like(out_c)
+        np.divide(ceiling, out_c, out=scale, where=over)
+        scale = np.clip(scale, 0.0, 1.0)[..., None]
+        return np.clip(l + (out - l) * scale, 0.0, 1.0).astype(np.float32)
+
+    parts = par.each(measure, *arrays)
+    n_over = sum(p[0] for p in parts)
+    if n_over == 0:
         return edited.astype(np.float32), 0.0
+    ceiling = np.concatenate([p[1] for p in parts], axis=0)
+    out_c = np.concatenate([p[2] for p in parts], axis=0)
+    return (par.rows(scale_down, edited, ceiling, out_c),
+            n_over / float(edited.shape[0] * edited.shape[1]))
 
-    # Scale chroma down to the ceiling by pulling the pixel toward its own luma (gray axis),
-    # which preserves brightness and hue and only sheds the excess saturation.
-    l = luma(edited)[..., None]
-    scale = np.ones_like(out_c)
-    np.divide(ceiling, out_c, out=scale, where=over)
-    scale = np.clip(scale, 0.0, 1.0)[..., None]
-    guarded = l + (edited - l) * scale
-    return np.clip(guarded, 0.0, 1.0).astype(np.float32), float(over.mean())
+
+def highlight_hold(source: np.ndarray, edited: np.ndarray, start: float = 0.80,
+                   full: float = 0.985) -> tuple[np.ndarray, float]:
+    """Keep blown highlights white (F6).
+
+    A highlight that is clipped in the source has no detail to recover, so pulling it down only
+    turns it grey. Where the SOURCE is near white in all three channels, the edit may not darken
+    the pixel: the result is raised back toward the source, fully where the source's darkest
+    channel is at or above `full`, not at all below `start`, with a smoothstep between. Never
+    lowers a value; a pixel whose source is below `start` is not touched.
+
+    source/edited: float HxWx3 gamma RGB in [0,1]. Returns (rgb, fraction of pixels raised by more
+    than half an 8-bit level). When no source pixel is near white, `edited` is returned as is."""
+    lo = source.min(axis=-1)
+    if not (lo >= start).any():
+        return edited, 0.0
+    t = np.clip((lo - start) / max(full - start, 1e-6), 0.0, 1.0)
+    h = (t * t * (3.0 - 2.0 * t))[..., None]
+    out = (edited + h * np.maximum(source - edited, 0.0)).astype(np.float32)
+    raised = float(((out - edited).max(axis=-1) > 0.5 / 255.0).mean())
+    return out, raised

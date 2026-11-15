@@ -1,0 +1,163 @@
+{
+  "GET /": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/aesthetic/jobs/{job_id}": {
+    "path": [
+      "job_id"
+    ],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/curate/jobs/{job_id}": {
+    "path": [
+      "job_id"
+    ],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/groups": {
+    "path": [],
+    "query": [
+      "dir"
+    ],
+    "body": false
+  },
+  "GET /api/v1/jobs/{job_id}": {
+    "path": [
+      "job_id"
+    ],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/jobs/{job_id}/events": {
+    "path": [
+      "job_id"
+    ],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/list": {
+    "path": [],
+    "query": [
+      "dir"
+    ],
+    "body": false
+  },
+  "GET /api/v1/presets": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/review/labels": {
+    "path": [],
+    "query": [
+      "out_dir"
+    ],
+    "body": false
+  },
+  "GET /api/v1/settings/schema": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/styles": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/thumb": {
+    "path": [],
+    "query": [
+      "path",
+      "px"
+    ],
+    "body": false
+  },
+  "GET /api/v1/version": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "GET /classic": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "POST /api/v1/aesthetic/score": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/aesthetic/train": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/curate": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/curate/jobs": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/datasets/build": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/datasets/validate": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/jobs": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/jobs/{job_id}/control": {
+    "path": [
+      "job_id"
+    ],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/pick": {
+    "path": [],
+    "query": [
+      "kind"
+    ],
+    "body": false
+  },
+  "POST /api/v1/preview": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/review/labels": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/run": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/run-one": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/variants": {
+    "path": [],
+    "query": [],
+    "body": true
+  }
+}

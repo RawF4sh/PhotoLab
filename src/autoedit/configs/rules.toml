@@ -59,6 +59,20 @@
 [compat]
 omit_zero_global_ops = ["temp", "tint", "shadows_ev"]
 
+# Shoot consistency, mode "bursts" (F9, opt-in: `consistency = "bursts"`). A burst is a run of
+# consecutive shots at most max_gap_s apart that repeat one framing: same orientation, and their
+# thumbnails (with each row's mean removed, so that "sky over ground" alone does not count as
+# alike) correlate at min_similarity or more. A RAW file and its JPEG are one shot.
+# Inside a burst each frame is moved toward the burst's median: exposure by at most max_ev stops,
+# temp and tint by at most max_wb units. A burst never reaches more than max_span_s past its first
+# frame (a longer run is split), so a real change of light is not flattened.
+[consistency]
+max_gap_s = 30
+max_span_s = 120
+min_similarity = 0.8
+max_ev = 0.5
+max_wb = 4
+
 # ─────────────────────────── skin-safe guard ───────────────────────────
 # Global finishing ops that must NOT hit skin/face at full strength (pros reject over-clarified,
 # over-saturated, colour-graded faces fastest). The pipeline applies the global pass everywhere,
@@ -348,3 +362,43 @@ exposure   = "clamp(0.4 * max(0, mean_lum - region_lum) + 0.04, 0, 0.4)"
 clarity    = "8"
 contrast   = "5"
 shadows    = "6"
+
+# ─────────────────────────── highlight hold ───────────────────────────
+# Highlight hold (F6, opt-in: `highlight_hold` in the run settings). Where the SOURCE is near
+# white in all three channels, the edit may not darken the pixel: fully from `full` up, not at all
+# below `start`, a smoothstep between. The values are the darkest channel of the source pixel.
+[highlight_hold]
+start = 0.80
+full = 0.985
+
+# ─────────────────────────── opt-in rule sets ───────────────────────────
+# Rules for features that are off by default. `rules.load(path, enable=[...])` merges
+# [opt_in.NAME.<scene>.<block>] into [<scene>.<block>] only when the run setting NAME is on. A
+# default run, and every tool that reads this file directly, never sees these rules.
+
+# Black point (F5, run setting `levels`). A strength: the op measures the floor of the frame after
+# the lifts and pulls it toward a true black. Full strength on every photo with valid statistics:
+# the op protects the picture itself. It reshapes only the darkest tenth of the frame (so a dark
+# source cannot come out darker), limits its own slope, and does nothing on a frame that already
+# has a true black or whose dark end is flat. An earlier rule scaled the strength with the source
+# brightness and the exposure lift; with the op safe by construction that only made it weaker.
+[opt_in.levels.people.global]
+black_point = "if(pro_stats_valid > 0, 100, 0)"
+
+[opt_in.levels.landscape.global]
+black_point = "if(pro_stats_valid > 0, 100, 0)"
+
+[opt_in.levels.other.global]
+black_point = "if(pro_stats_valid > 0, 100, 0)"
+
+# Noise reduction (F7, run setting `denoise`). Nothing below ISO 800, full from ISO 6400; 40 % of
+# that for the ISO alone, the rest with the exposure lift, because the lift is what makes shadow
+# noise visible. The op measures the grain itself.
+[opt_in.denoise.people.global]
+denoise = "if(pro_stats_valid > 0, 100 * clamp((iso - 800) / 5600, 0, 1) * clamp(0.4 + 0.75 * planned_exposure, 0.4, 1), 0)"
+
+[opt_in.denoise.landscape.global]
+denoise = "if(pro_stats_valid > 0, 100 * clamp((iso - 800) / 5600, 0, 1) * clamp(0.4 + 0.75 * planned_exposure, 0.4, 1), 0)"
+
+[opt_in.denoise.other.global]
+denoise = "if(pro_stats_valid > 0, 100 * clamp((iso - 800) / 5600, 0, 1) * clamp(0.4 + 0.75 * planned_exposure, 0.4, 1), 0)"

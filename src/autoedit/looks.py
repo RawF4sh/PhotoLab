@@ -12,7 +12,7 @@ clipping. `curve_add` is unconditional; keep it small.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from .contract import Settings
 
@@ -25,6 +25,7 @@ class Look:
     clarity_mul: float = 1.0
     dehaze_mul: float = 1.0
     exposure_mul: float = 1.0  # < 1 holds back the rules' exposure LIFT (keeps a scene's own mood); never scales a cut
+    preserve_exposure: bool = False  # the look means to be dark: the review gate's darkness check is off
     curve_mul: float = 1.0     # scales the rules' own curve (depth that follows the lift) before curve_add
     # global-only finishing the style injects (split-tone + filmic curve)
     curve_add: float = 0.0
@@ -33,6 +34,8 @@ class Look:
     grade_highlights_temp: float = 0.0
     grade_highlights_tint: float = 0.0
 
+
+FIELDS = tuple(f.name for f in fields(Look))   # what a look table may contain (profile validation)
 
 _GRADE_FIELDS = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
 
@@ -52,6 +55,7 @@ def load(path: str) -> LookSet:
             clarity_mul=float(body.get("clarity_mul", 1.0)),
             dehaze_mul=float(body.get("dehaze_mul", 1.0)),
             exposure_mul=float(body.get("exposure_mul", 1.0)),
+            preserve_exposure=bool(body.get("preserve_exposure", False)),
             curve_mul=float(body.get("curve_mul", 1.0)),
             curve_add=float(body.get("curve_add", 0.0)),
             grade_shadows_temp=float(body.get("grade_shadows_temp", 0.0)),

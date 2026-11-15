@@ -82,7 +82,7 @@ def _safety(result) -> tuple[str, str]:
     return "finished", ""
 
 
-def start(input_dir, files, out_dir, opts, configs_dir=None) -> Job:
+def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None) -> Job:
     # An omitted selection means scan the folder; an explicit [] means no photos selected.
     srcs = list(files) if files is not None else _list_images(input_dir)
     if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
@@ -95,37 +95,29 @@ def start(input_dir, files, out_dir, opts, configs_dir=None) -> Job:
     with _LOCK:
         _JOBS[job.id] = job
         _prune_locked()
-    threading.Thread(target=_run, args=(job, configs_dir), daemon=True).start()
+    threading.Thread(target=_run, args=(job, configs_dir, profile), daemon=True).start()
     return job
 
 
-def _run(job: Job, configs_dir) -> None:
+def _run(job: Job, configs_dir, profile=None) -> None:
     try:
         from .service import INFERENCE_LOCK, build_pipeline, make_cfg  # local import avoids a cycle
 
-        cfg = make_cfg(job.opts, configs_dir)
+        cfg = make_cfg(job.opts, configs_dir, profile)
         os.makedirs(job.out_dir, exist_ok=True)
         pipe = build_pipeline(cfg)       # resident model, shared with the preview endpoint
+        pipe.use_mask_cache(job.out_dir)
 
-        # Shoot consistency (default on): pass 1 measures brightness → lighting groups + per-group
-        # target; pass 2 (the loop) nudges each photo a BOUNDED ±0.15 EV toward its group so a
-        # folder doesn't drift in brightness photo-to-photo. Mirrors the CLI batch path.
+        # Shoot consistency (default on): same plan as the CLI batch path.
         consistent = bool(job.opts.get("consistent", True))
-        groups: dict = {}
-        lums: dict = {}
-        if consistent and len(job.items) > 1:
-            measured = []
-            for it in job.items:
-                try:
-                    lm = consistency.quick_lum(it.src)
-                    lums[it.src] = lm
-                    measured.append((it.src, lm))
-                except Exception:
-                    continue
-            groups = consistency.plan_groups(measured)
+        biases = {}
+        if consistent:
+            with INFERENCE_LOCK:         # bursts mode runs the model on the frames it compares
+                biases = consistency.plan([it.src for it in job.items], cfg, pipe)
 
         durs: list[float] = []
         taken: set[str] = set()          # de-dupe same-stem outputs across the job's source list
+        sources = emit.source_ids(it.src for it in job.items)   # no export may land on an input
         for i, item in enumerate(job.items):
             if job.cancelled:
                 job.status = "cancelled"
@@ -139,18 +131,15 @@ def _run(job: Job, configs_dir) -> None:
             item.status = "editing"
             t0 = time.time()
             try:
-                gid, target = groups.get(item.src, ("", None))
-                bias = (consistency.exposure_bias(lums[item.src], target)
-                        if target is not None and item.src in lums else 0.0)
+                bias = biases.get(item.src, consistency.Bias())
                 with INFERENCE_LOCK:
-                    out_rgb, result = pipe.process_one(item.src, do_apply=True,
-                                                       exposure_bias=bias, batch_group=gid)
-                image_out, sidecar = emit.output_paths(job.out_dir, item.src, cfg.out_format, taken)
-                note = emit.write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
-                                        source=item.src, metadata=cfg.metadata)
-                if note:
-                    result.notes.append(note)
-                emit.write_sidecar(result, sidecar)
+                    out_rgb, result = pipe.process_one(item.src, do_apply=True, exposure_bias=bias.exposure,
+                                                       batch_group=bias.group, wb_bias=(bias.temp, bias.tint))
+                image_out, sidecar = emit.output_paths(
+                    job.out_dir, item.src, cfg.out_format, taken, name=cfg.out_name,
+                    subdir=cfg.out_subdir, fields={"style": cfg.style, "n": i + 1},
+                    sources=sources)
+                emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, item.src)
                 item.out, item.scene = image_out, result.scene
                 item.status, item.warn = _safety(result)
             except Exception as e:       # isolate per-image failures
