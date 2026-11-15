@@ -187,6 +187,15 @@
       "advanced": false
     },
     {
+      "key": "light_shaping",
+      "label": "Glow where the sun is",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Adds a soft warm glow around the sun or a bright light when the photo has a clear one.",
+      "advanced": false
+    },
+    {
       "key": "levels",
       "label": "Set black and white point",
       "group": "quality",

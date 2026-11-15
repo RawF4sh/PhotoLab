@@ -86,6 +86,11 @@ label = "Keep blown highlights white"
 group = "quality"
 help = "Keeps areas that were pure white in the original from turning grey after the edit."
 
+[setting.light_shaping]
+label = "Glow where the sun is"
+group = "quality"
+help = "Adds a soft warm glow around the sun or a bright light when the photo has a clear one."
+
 [setting.levels]
 label = "Set black and white point"
 group = "quality"

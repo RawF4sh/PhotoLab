@@ -1,8 +1,14 @@
 # AutoEdit instructions: plain-language region edits ("brighten the jacket"), parsed locally by
 # src/autoedit/instructions.py. This is data: add a verb or a word here, not in code.
 #
-# [verbs.NAME]  words = every surface form that selects the verb. The other keys are op deltas at
-#               amount 1.0, in the apply engine's units (exposure in EV, the rest about -100..100).
+# [verbs.NAME]  words = every surface form that selects the verb. place = the place a clause with
+#               this verb and no target of its own aims at. The other keys are op deltas at amount
+#               1.0, in the apply engine's units (exposure in EV, the rest about -100..100).
+# [places.NAME] a part of the frame (F18), not an object: words = every surface form, shape =
+#               gradient (angle, start, end) | oval (cx, cy, rx, ry, feather) | oval_outside
+#               (the same, a vignette) | glow (radius_scale, min_radius: a round light on the
+#               light the finder located). A place is one target per clause, never mixed with an
+#               object; it is blended on its own, like a vignette, and no region policy applies.
 # [amounts]     words that scale the deltas of their clause.
 # [limits]      ceiling (absolute value) for the SUM of instruction deltas on one target, per op.
 # [target]      gating for an instructed concept that has no [concept.X] entry in concepts.toml,
@@ -48,6 +54,69 @@ words = ["deepen", "deeper", "richer"]
 exposure = -0.12
 contrast = 8
 saturation = 6
+
+[verbs.glow]
+words = ["glow", "add a glow", "add glow", "warm glow", "add a warm glow", "sun glow"]
+place = "light"
+exposure = 0.15
+temp = 8
+
+[verbs.vignette]
+words = ["vignette", "add a vignette"]
+place = "edges"
+exposure = -0.25
+
+[places.top]
+words = ["top", "upper part", "upper half", "sky side"]
+shape = "gradient"
+angle = 0
+start = 0.0
+end = 0.45
+
+[places.bottom]
+words = ["bottom", "lower part", "lower half"]
+shape = "gradient"
+angle = 180
+start = 0.0
+end = 0.45
+
+[places.left]
+words = ["left", "left side", "left half"]
+shape = "gradient"
+angle = 270
+start = 0.0
+end = 0.45
+
+[places.right]
+words = ["right", "right side", "right half"]
+shape = "gradient"
+angle = 90
+start = 0.0
+end = 0.45
+
+[places.center]
+words = ["center", "centre", "middle"]
+shape = "oval"
+cx = 0.5
+cy = 0.5
+rx = 0.32
+ry = 0.36
+feather = 0.45
+
+[places.edges]
+words = ["edges", "corners", "sides", "border", "outside"]
+shape = "oval_outside"
+cx = 0.5
+cy = 0.5
+rx = 0.55
+ry = 0.55
+feather = 0.5
+
+[places.light]
+words = ["sun", "sunlight", "light source", "where the sun is", "where the light comes from"]
+shape = "glow"
+radius_scale = 4.0
+min_radius = 0.08
 
 [amounts]
 "slightly" = 0.5
@@ -118,7 +187,9 @@ joiners = ["and", "&", "+"]
 determiners = ["the", "a", "an", "my", "our", "his", "her", "their", "this", "that", "these", "those"]
 # Filler words, ignored.
 stop = ["make", "makes", "please", "it", "its", "to", "of", "be", "is", "are", "look", "looks",
-        "just", "up", "down", "in", "on", "at", "for", "bit", "little"]
+        "just", "up", "down", "in", "on", "at", "for", "bit", "little",
+        "with", "gradient", "graduated", "where", "comes", "from", "shines", "area", "part", "side",
+        "half"]
 # Words that reject the whole clause: a negation, an exclusion, or a word that turns the meaning
 # around. A rejected clause is reported in the sidecar and changes nothing.
 reject = ["not", "no", "don't", "dont", "never", "without", "avoid", "stop", "nor", "neither",

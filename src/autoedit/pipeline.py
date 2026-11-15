@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import (compose, emit, instructions, intent as intent_mod, looks as looks_mod, palette as palette_mod,
-               policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
+from . import (compose, emit, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
+               palette as palette_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
 from .concepts import load_concepts, meta_for
 from .contract import Adjustment, Result, RunConfig
 from .decide import DecisionContext, make_decider
@@ -101,6 +101,8 @@ class Pipeline:
     adjust_problems: list = field(default_factory=list)  # clauses of cfg.edit that were not understood
     config_digest: str = ""   # hash of the config files, stored in the sidecar for `adjust`
     highlight_hold: tuple[float, float] | None = None  # (start, full) of the F6 hold; None → off
+    light_cfg: dict = field(default_factory=dict)  # compose.toml [light]: thresholds of the light finder (F18)
+    place_light_cfg: dict = field(default_factory=dict)  # the same, loaded on the first instruction that asks for a light
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
@@ -108,7 +110,7 @@ class Pipeline:
         if cfg.backend == "auto":
             cfg = cfg.model_copy(update={"backend": segment_mod.resolve_backend(cfg.backend)})
         presets, meta = load_concepts(cfg.concepts_path)
-        moves = compose.load_compose(cfg.compose_path) if cfg.compose else []
+        moves = compose.load_compose(cfg.compose_path, cfg) if cfg.compose else []
         if not cfg.vignette:  # vignette is a toggleable subset of the compositional moves
             moves = [m for m in moves if "vignette" not in m.name]
         # Opt-in rule sets ([opt_in.<name>] in rules.toml) join the rules only when their run
@@ -153,6 +155,7 @@ class Pipeline:
             meta=meta,
             styles=load_styles(cfg.styles_path),
             compose_moves=moves,
+            light_cfg=compose.load_light_config(cfg.compose_path) if any(m.at == "light" for m in moves) else {},
             segmenter=make_segmenter(cfg.backend, cfg.device),
             decider=decider,
             guard_ops=guard_ops,
@@ -192,7 +195,7 @@ class Pipeline:
     def presegment(self, path: str) -> None:
         """Decode and segment one photo, nothing else: fills the mask cache for a render worker."""
         concepts = self.concepts_for(style_for(self.cfg.style, self.styles))
-        extra = instructions.extra_concepts(self.adjustments, concepts)
+        extra = self._with_light_concept(instructions.extra_concepts(self.adjustments, concepts), concepts)
         if concepts or extra:
             img = load_image(path, decode=raw_opts_from(self.cfg))
             self.segmenter.segment(downscale_long_edge(img, self.cfg.analysis_long_edge),
@@ -200,6 +203,26 @@ class Pipeline:
         if self.cfg.reference:
             # the reference's masks too, once per run: a render worker reads them from the cache
             self._reference_concept_features(concepts)
+
+    def _with_light_concept(self, extra: list[str], concepts: list[str]) -> list[str]:
+        """A move placed on the light (`at = "light"`) makes SAM look for the concept `sun` too."""
+        if self.light_cfg and "sun" not in extra and "sun" not in concepts:
+            return extra + ["sun"]
+        return extra
+
+    def _find_light(self, proxy_rgb: np.ndarray, raw: list, union: dict,
+                    asked: bool = False) -> light_mod.Light | None:
+        """The main light of the frame for the moves placed on it, or None (also when no move
+        wants one). `asked`: an instruction wants the light ("add a glow"), whether or not the
+        automatic glow is on. The `sun` mask joins the finder's input but not the regions."""
+        if asked and not (self.light_cfg or self.place_light_cfg):
+            self.place_light_cfg = compose.load_light_config(self.cfg.compose_path)
+        light_cfg = self.light_cfg or self.place_light_cfg
+        if not light_cfg:
+            return None
+        sun = next((r for r in raw if r.name == "sun" and r.mask.any()
+                    and r.score >= meta_for("sun", self.meta).min_score), None)
+        return light_mod.find_light(proxy_rgb, {**union, **({"sun": sun.mask} if sun else {})}, light_cfg)
 
     def concepts_for(self, style: Style) -> list[str]:
         """Resolution: explicit --concepts > --preset > the style's set > the generic preset."""
@@ -236,7 +259,7 @@ class Pipeline:
         proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
         adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
-        extra = instructions.extra_concepts(adjs, concepts)
+        extra = self._with_light_concept(instructions.extra_concepts(adjs, concepts), concepts)
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
@@ -355,9 +378,11 @@ class Pipeline:
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
         apply_regions, owners, adj_plan = resolved.regions, None, None
+        light = self._find_light(proxy.rgb, raw, resolved.union,
+                                 asked=any(a.target == instructions.LIGHT_TARGET for a in adjs))
         if adjs:
             adj_plan = instructions.plan(adjs, self.vocab(), raw, concepts, resolved,
-                                         region_settings, global_settings, self.meta)
+                                         region_settings, global_settings, self.meta, light=light)
             apply_regions, region_settings, owners = adj_plan.cells, adj_plan.settings, adj_plan.owners
         policy_notes = policies.enforce(region_settings, self.meta, owners=owners)
         if adj_plan is not None:
@@ -477,8 +502,14 @@ class Pipeline:
                 ref_feedback_note = f"reference feedback skipped ({e})"
 
         full_hw = (img.height, img.width)
-        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity)
+        if self.light_cfg:
+            notes_extra.append(
+                f"sun glow: light at {light.cx:.2f}, {light.cy:.2f} from the {light.source}" if light
+                else "sun glow: no light source found, none added")
+        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity, light)
         comp_settings.update(reference_comp_settings)
+        if adj_plan is not None:    # a place the user named is a layer of its own, like a vignette (F18)
+            comp_settings.update({instructions.LAYER + name: delta for name, delta in adj_plan.layers.items()})
 
         out_rgb = None
         gate_src = None   # the oversaturation gate's reference, when it is not the plain source
@@ -514,7 +545,10 @@ class Pipeline:
                     cm = meta_for(r.name, self.meta)
                     alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                     regions_apply.append((alpha, s))
-            comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity)
+            comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light)
+            if adj_plan is not None:
+                comp += [(instructions.LAYER + name, instructions.place_alpha(self.vocab().places[name], full_hw, light), delta)
+                         for name, delta in adj_plan.layers.items()]
             if "reference_sky_grad" in reference_comp_settings:
                 comp.append((
                     "reference_sky_grad",

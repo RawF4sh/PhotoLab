@@ -33,7 +33,7 @@ def _flatten(d: dict) -> dict:
         if src in dec:
             kw[dst] = dec[src]
     for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
-              "decider", "emit", "consistency", "levels", "denoise", "highlight_hold"):
+              "decider", "emit", "consistency", "levels", "denoise", "highlight_hold", "light_shaping"):
         if k in run:
             kw[k] = run[k]
     for k in ("backend", "device", "analysis_long_edge", "mask_cache"):
@@ -131,6 +131,7 @@ def load_run_config(args) -> RunConfig:
         "levels": getattr(args, "levels", None),
         "denoise": getattr(args, "denoise", None),
         "highlight_hold": getattr(args, "highlight_hold", None),
+        "light_shaping": getattr(args, "light_shaping", None),
     }
     for k, v in overrides.items():
         if v is not None:
@@ -195,6 +196,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="reduce colour and luma noise on high-ISO frames, chroma first (opt-in)")
     p.add_argument("--highlight-hold", dest="highlight_hold", action="store_true", default=None,
                    help="keep highlights that are blown in the source white instead of letting the edit grey them (opt-in)")
+    p.add_argument("--light-shaping", dest="light_shaping", action="store_true", default=None,
+                   help="add a soft warm glow where the sun is, when the photo has a clear light source (opt-in)")
     p.add_argument("--workers", type=int,
                    help="render processes for a batch (0 = half the cores, at most 4)")
     p.add_argument("--threads", type=int,

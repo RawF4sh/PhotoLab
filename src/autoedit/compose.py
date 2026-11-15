@@ -15,14 +15,15 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .contract import Settings
-from .edit import linear_alpha, radial_alpha
+from .edit import glow_alpha, linear_alpha, radial_alpha
+from .light import Light
 
 
 @dataclass
 class Move:
     name: str
     when: str
-    shape: str  # "radial" | "linear"
+    shape: str  # "radial" | "linear" | "glow"
     ops: Settings = field(default_factory=dict)
     target: str = "inside"  # radial: inside|outside
     feather: float = 0.18
@@ -30,17 +31,43 @@ class Move:
     frm: str = "top"  # linear: top|bottom|left|right
     coverage: float = 0.5
     min_coverage: float = 0.0  # the `when` concept must cover at least this frame fraction
+    at: str = ""  # "light": placed on the light finder's result, fires only when one is found
+    requires: str = ""  # RunConfig bool that must be true for the move to exist at all
+    min_radius: float = 0.0  # glow: floor of the radius (fraction of the long side)
 
 
-def load_compose(path: str) -> list[Move]:
+# Sections of compose.toml that are settings for the light finder, not moves.
+_NOT_MOVES = ("light",)
+
+
+def load_light_config(path: str) -> dict:
+    """The [light] thresholds of the light finder (light.find_light)."""
+    with open(path, "rb") as fh:
+        return dict(tomllib.load(fh).get("light", {}))
+
+
+def load_compose(path: str, run=None) -> list[Move]:
+    """The moves of compose.toml. A move with `requires` is left out unless that setting is true
+    on `run` (a RunConfig); without a `run` every such move is left out."""
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
     moves: list[Move] = []
     for name, body in data.items():
+        if name in _NOT_MOVES:
+            continue
         shape = str(body.get("shape", "radial"))
-        if shape not in ("radial", "linear"):
+        if shape not in ("radial", "linear", "glow"):
             # fail loudly: a typo'd shape would otherwise silently fall into the linear branch
-            raise ValueError(f"compose move {name!r}: unknown shape {shape!r} (radial | linear)")
+            raise ValueError(f"compose move {name!r}: unknown shape {shape!r} (radial | linear | glow)")
+        at = str(body.get("at", ""))
+        if at not in ("", "light") or (shape == "glow") != (at == "light"):
+            raise ValueError(f"compose move {name!r}: at = {at!r} must be \"light\", and only for a glow")
+        requires = str(body.get("requires", ""))
+        if requires:
+            if run is not None and not hasattr(run, requires):
+                raise ValueError(f"compose move {name!r}: requires {requires!r} is not a run setting")
+            if not (run is not None and getattr(run, requires, False) is True):
+                continue
         frm = str(body.get("from", "top"))
         if frm not in ("top", "bottom", "left", "right"):
             raise ValueError(f"compose move {name!r}: unknown from {frm!r} (top|bottom|left|right)")
@@ -56,6 +83,9 @@ def load_compose(path: str) -> list[Move]:
                 frm=frm,
                 coverage=float(body.get("coverage", 0.5)),
                 min_coverage=float(body.get("min_coverage", 0.0)),
+                at=at,
+                requires=requires,
+                min_radius=float(body.get("min_radius", 0.0)),
             )
         )
     return moves
@@ -73,21 +103,25 @@ def _bbox_norm(mask: np.ndarray) -> tuple[float, float, float, float]:
     return cx, cy, hx, hy
 
 
-def _triggers(m: Move, union: dict[str, np.ndarray]) -> bool:
+def _triggers(m: Move, union: dict[str, np.ndarray], light: Light | None = None) -> bool:
     """A move fires when its `when` concept is present (covering ≥ `min_coverage` of the frame),
-    or unconditionally for `when="always"`. A 3% sliver of sky must not earn a half-frame grad."""
+    or unconditionally for `when="always"`. A 3% sliver of sky must not earn a half-frame grad.
+    A move placed `at = "light"` also needs a light to have been found."""
+    if m.at == "light" and light is None:
+        return False
     if m.when == "always":
         return True
     mask = union.get(m.when)
     return mask is not None and (m.min_coverage <= 0.0 or float(mask.mean()) >= m.min_coverage)
 
 
-def settings_for(moves: list[Move], union: dict[str, np.ndarray], intensity: float) -> dict[str, Settings]:
+def settings_for(moves: list[Move], union: dict[str, np.ndarray], intensity: float,
+                 light: Light | None = None) -> dict[str, Settings]:
     """Just the (name -> settings) the moves would apply — cheap, no alpha (for sidecars/dry-run)."""
     return {
         m.name: {k: v * float(intensity) for k, v in m.ops.items()}
         for m in moves
-        if _triggers(m, union)
+        if _triggers(m, union, light)
     }
 
 
@@ -96,12 +130,15 @@ def plan(
     union: dict[str, np.ndarray],
     full_hw: tuple[int, int],
     intensity: float,
+    light: Light | None = None,
 ) -> list[tuple[str, np.ndarray, Settings]]:
     out: list[tuple[str, np.ndarray, Settings]] = []
     for m in moves:
-        if not _triggers(m, union):
+        if not _triggers(m, union, light):
             continue
-        if m.shape == "radial":
+        if m.shape == "glow":
+            alpha = glow_alpha(full_hw, light.cx, light.cy, max(m.min_radius, m.radius_scale * light.radius))
+        elif m.shape == "radial":
             # frame-centered for an unconditional move; otherwise derive from the region
             cx, cy, hx, hy = (0.5, 0.5, 0.5, 0.5) if m.when not in union else _bbox_norm(union[m.when])
             alpha = radial_alpha(

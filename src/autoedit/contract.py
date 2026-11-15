@@ -94,6 +94,7 @@ class RunConfig(BaseModel):
     sharpen: bool = True  # output sharpening (unsharp mask); off → no sharpen ops applied
     highlight_hold: bool = False  # keep source-blown highlights white (F6); off → the edit may grey them
     levels: bool = False  # black and white point (F5); off → the rule-driven black_point is dropped after decide
+    light_shaping: bool = False  # a soft warm glow where the sun is (F18); off → the sun glow move does not exist
     denoise: bool = False  # noise reduction (F7); off → the rule set is not loaded and the op is dropped after decide
 
     # paths to config assets — resolved to ./configs or the packaged configs (see paths.py)

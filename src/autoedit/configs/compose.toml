@@ -5,10 +5,13 @@
 # deterministic heuristic that works with the stub segmenter.
 #
 #   when         concept that must be present to trigger the move
-#   shape        "radial" | "linear"
+#   shape        "radial" | "linear" | "glow"
 #   ops          edit values applied through the generated mask (scaled by intensity)
 #   radial:  target ("inside"|"outside"), feather, radius_scale (× the region's half-extent)
 #   linear:  from ("top"|"bottom"|"left"|"right"), coverage (fraction of frame the ramp spans)
+#   glow:    at = "light" (placed on the light finder's result; no light, no move),
+#            radius_scale (× the core radius of the light), min_radius (fraction of the long side)
+#   requires a RunConfig bool; the move exists only when that setting is true
 
 # NOTE: these stack (subject + sky + frame can all fire on one photo) and each is scaled by
 # intensity, so keep them SUBTLE — three −0.2 EV moves read as "why is this so dark". The job
@@ -36,3 +39,28 @@ target = "outside"          # darken/desaturate the corners, centered on the fra
 feather = 0.45
 radius_scale = 1.1
 ops = { exposure = -0.03, saturation = -1 }
+
+# The light finder (light.py): where the main light of the frame is. Thresholds, measured on
+# the proxy.
+[light]
+# How the sun is found. SAM 3's concept "sun" first: on the Switzerland shoot it found the one
+# visible sun and nothing else. The brightness fallback marked snow and cloud edges as suns far
+# more often (7 hits in 152 photos, none a sun), so it is off.
+max_sun_coverage = 0.08     # a "sun" mask bigger than this is a bright sky, not the sun
+brightness_fallback = false # true: also look for the brightest compact spot touching the sky
+core_lum = 0.97             # a pixel this bright (and in the top 0.2% of the frame) is part of a core
+max_core_coverage = 0.04    # a bigger bright area is a bright sky or wall, not a light source
+max_core_width = 0.25       # widest a core may be, as a fraction of the frame width
+sky_touch_px = 3            # the core must be in or within this many proxy pixels of the sky
+ring_px = 12                # width of the ring around the core that must be darker than it
+ring_max_lum = 0.85         # median brightness of that ring; a blown sky or cloud is brighter
+
+# A soft warm lift where the sun is (F18). Off until the owner's blind vote.
+[sun_glow]
+when = "always"
+requires = "light_shaping"
+shape = "glow"
+at = "light"
+radius_scale = 4.0
+min_radius = 0.08
+ops = { exposure = 0.12, temp = 8, highlights = -6 }

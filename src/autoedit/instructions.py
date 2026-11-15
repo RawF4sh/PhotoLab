@@ -19,11 +19,21 @@ import numpy as np
 
 from .concepts import ConceptMeta
 from .contract import Adjustment, DetectedConcept, Settings
+from .edit import glow_alpha, gradient_alpha, radial_alpha
 from .edit.ops import OP_BOUNDS, OP_NAMES
 from .segment.base import RegionMask
 from .segment.resolve import ResolvedRegions, resolve
 
 GLOBAL = "global"
+PLACE = "place:"                # a target that is a part of the frame (F18), not an object
+LIGHT_TARGET = PLACE + "light"  # the one place that needs a segmented concept: the sun
+LIGHT_CONCEPT = "sun"
+LAYER = "instruction:"          # name of the compositional layer a place becomes
+_PLACE_SHAPES = ("gradient", "oval", "oval_outside", "glow")
+
+
+def is_place(target: str) -> bool:
+    return target.startswith(PLACE)
 
 
 def _toks(text: str) -> tuple[str, ...]:
@@ -44,6 +54,9 @@ def _toks(text: str) -> tuple[str, ...]:
 class Vocab:
     verbs: dict[str, Settings] = field(default_factory=dict)        # verb -> op deltas at amount 1
     verb_words: tuple = ()      # ((tokens, verb name), ...), longest phrase first
+    verb_place: dict[str, str] = field(default_factory=dict)  # verb -> place of a clause with no target
+    places: dict[str, dict] = field(default_factory=dict)     # place name -> shape and its numbers
+    place_words: tuple = ()     # ((tokens, place name), ...), longest phrase first
     amount_words: tuple = ()    # ((tokens, scale), ...), longest phrase first
     limits: Settings = field(default_factory=dict)
     stop: frozenset = frozenset()
@@ -69,9 +82,21 @@ def load_vocab(path: str) -> Vocab:
     except (FileNotFoundError, OSError):
         return Vocab()
     verbs: dict[str, Settings] = {}
+    verb_place: dict[str, str] = {}
     words = []
+    places: dict[str, dict] = {}
+    place_words = []
+    for name, body in data.get("places", {}).items():
+        if body.get("shape") not in _PLACE_SHAPES:
+            raise ValueError(f"instructions.toml: place {name!r} has no known shape {_PLACE_SHAPES}")
+        places[name] = {k: v for k, v in body.items() if k != "words"}
+        place_words += [(_toks(w), name) for w in body.get("words", [name])]
     for name, body in data.get("verbs", {}).items():
-        ops = {k: float(v) for k, v in body.items() if k != "words"}
+        if "place" in body:
+            if body["place"] not in places:
+                raise ValueError(f"instructions.toml: verb {name!r} aims at an unknown place {body['place']!r}")
+            verb_place[name] = str(body["place"])
+        ops = {k: float(v) for k, v in body.items() if k not in ("words", "place")}
         bad = sorted(k for k in ops if k not in OP_NAMES)
         if bad:
             raise ValueError(f"instructions.toml: verb {name!r} uses unknown ops {bad}")
@@ -91,6 +116,9 @@ def load_vocab(path: str) -> Vocab:
     return Vocab(
         verbs=verbs,
         verb_words=tuple(sorted(words, key=longest)),
+        verb_place=verb_place,
+        places=places,
+        place_words=tuple(sorted(place_words, key=longest)),
         amount_words=tuple(sorted(amounts, key=longest)),
         limits={k: float(v) for k, v in data.get("limits", {}).items()},
         stop=frozenset(parser.get("stop", [])),
@@ -187,20 +215,28 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
         if not seg_tokens:
             continue
         parts = []
-        rejected = many_amounts = False
+        rejected = many_amounts = many_places = place_and_object = False
         for chunk in (vocab.part_split.split(segment) if vocab.part_split else [segment]):
             tokens = list(_toks(chunk))
             verbs = _take(tokens, vocab.verb_words)
             amounts = _take(tokens, vocab.amount_words)
             many_amounts = many_amounts or len(amounts) > 1
+            places = _take(tokens, vocab.place_words)   # after the verbs: "sun glow" is a verb
+            many_places = many_places or len(places) > 1
             rest = [t for t in tokens if t is not None]
             # After the verb phrases are taken: "less saturated" is a verb, a stray "less" is not.
             rejected = rejected or bool(vocab.reject & set(rest))
             words = [t for t in rest if t not in vocab.stop and t not in vocab.determiners]
             det = any(t in vocab.determiners for t in rest)
-            if verbs or words or det:       # a part of filler words only is dropped
+            concept = " ".join(words)
+            if places:
+                # One target per clause: "the top of the frame" is a place, "the top of the
+                # mountain" is two targets and is not understood.
+                place_and_object = place_and_object or bool(concept and concept not in vocab.global_words)
+                concept = PLACE + places[0]
+            if verbs or concept or det:     # a part of filler words only is dropped
                 parts.append({"verbs": verbs, "amount": amounts[0] if amounts else None,
-                              "concept": " ".join(words), "det": det})
+                              "concept": concept, "det": det})
         if rejected:
             problems.append(f'not understood (negation or exclusion): "{segment}"')
             continue
@@ -214,6 +250,10 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             why = "more than one verb"
         elif many_amounts:
             why = "more than one amount"
+        elif many_places:
+            why = "more than one place"
+        elif place_and_object:
+            why = "a place and an object"
         elif any(ch.isdigit() for p in parts for ch in p["concept"]):
             why = "numbers are not supported"
         found: list[Adjustment] = []
@@ -229,7 +269,9 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             if not concept and part["det"]:      # "darken the": a target was announced, none came
                 why = "no target"
                 break
-            if not concept:  # "brighten and warm the jacket": the first part borrows the target
+            if not concept and part["verbs"] and vocab.verb_place.get(part["verbs"][0]):
+                concept = PLACE + vocab.verb_place[part["verbs"][0]]   # "add a glow": the verb's place
+            elif not concept:  # "brighten and warm the jacket": the first part borrows the target
                 after = [j for j in with_concept if j > i]
                 before = [j for j in with_concept if j < i]
                 concept = parts[after[0]]["concept"] if after else (
@@ -254,8 +296,9 @@ def extra_concepts(adjustments: list[Adjustment], concepts: list[str]) -> list[s
     """Instructed concepts the run does not segment yet, in first-mention order."""
     out: list[str] = []
     for a in adjustments:
-        if a.target != GLOBAL and a.target not in concepts and a.target not in out:
-            out.append(a.target)
+        target = LIGHT_CONCEPT if a.target == LIGHT_TARGET else a.target   # a glow needs the sun
+        if target != GLOBAL and not is_place(target) and target not in concepts and target not in out:
+            out.append(target)
     return out
 
 
@@ -272,10 +315,23 @@ class Plan:
     before: dict[str, Settings]             # settings as planned, before the policies ran
     present: set[str]                       # targets that have a mask in this photo
     touched: list[bool]                     # per group: a layer reached one of its cells
+    layers: dict[str, Settings] = field(default_factory=dict)  # place name -> delta, one compositional layer each (F18)
 
     @property
     def cells(self) -> list[RegionMask]:
         return [cell for group in self.groups for cell, _mask in group]
+
+
+def place_alpha(spec: dict, full_hw: tuple[int, int], light=None) -> np.ndarray:
+    """The full-size alpha of a place (instructions.toml [places.*]). A glow needs the `light`."""
+    shape = spec["shape"]
+    if shape == "gradient":
+        return gradient_alpha(full_hw, float(spec["angle"]), float(spec["start"]), float(spec["end"]))
+    if shape == "glow":
+        return glow_alpha(full_hw, light.cx, light.cy,
+                          max(float(spec["min_radius"]), float(spec["radius_scale"]) * light.radius))
+    return radial_alpha(full_hw, float(spec["cx"]), float(spec["cy"]), float(spec["rx"]), float(spec["ry"]),
+                        feather=float(spec["feather"]), inside=(shape == "oval"))
 
 
 def _policy_owners(target: str, meta: dict[str, ConceptMeta], vocab: Vocab) -> list[str]:
@@ -335,10 +391,12 @@ def _cell(src: RegionMask, name: str, mask: np.ndarray) -> RegionMask:
 
 def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], concepts: list[str],
          resolved: ResolvedRegions, region_settings: dict[str, Settings],
-         global_settings: Settings, meta: dict[str, ConceptMeta]) -> Plan:
+         global_settings: Settings, meta: dict[str, ConceptMeta], light=None) -> Plan:
     """Add the adjustments to one photo. `global_settings` is changed in place; the region side
     comes back as cells with their own settings. `raw` must hold the masks for the run's
-    concepts and for `extra_concepts(adjustments, concepts)`."""
+    concepts and for `extra_concepts(adjustments, concepts)`. A place target is no region: it
+    comes back in `layers` for the caller to blend on its own, and `light` (what the light finder
+    found, or None) decides whether the place "light" exists in this photo."""
     asked, limited = _summed(adjustments, vocab)
     hit: dict[str, list[str]] = {}
     if GLOBAL in asked:
@@ -363,8 +421,15 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
     feather = [r.name for r in resolved.regions]
     touched = [False] * len(groups)
     settings = {name: dict(s) for name, s in region_settings.items()}
+    layers: dict[str, Settings] = {}
     for target, delta in asked.items():
         if target == GLOBAL:
+            continue
+        if is_place(target):
+            name = target[len(PLACE):]
+            hit[target] = [] if target == LIGHT_TARGET and light is None else [LAYER + name]
+            if hit[target]:
+                layers[name] = dict(delta)
             continue
         hit[target] = []
         mask = union.get(target)
@@ -413,7 +478,7 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
                 owners={cell.name: own for group in groups for cell, _f, own in group},
                 detected=list(ext.detected) if ext else [], hit=hit, limited=limited,
                 before={name: dict(s) for name, s in settings.items()},
-                present={t for t in asked if t in union}, touched=touched)
+                present={t for t in asked if t in union}, touched=touched, layers=layers)
 
 
 def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]) -> list[str]:
@@ -424,9 +489,14 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
         label = f'instruction "{a.source}"' if a.source else "adjustment"
         asked = ", ".join(f"{op} {delta:+.2f}" for op, delta in a.ops.items())
         where = "the whole photo" if a.target == GLOBAL else a.target
+        if is_place(a.target):
+            where = "the " + a.target[len(PLACE):]
         cells = p.hit.get(a.target, [])
         if not cells:
             a.status = "not_found"
+            if a.target == LIGHT_TARGET:
+                notes.append(f"{label}: no light source found in this photo ({asked} not applied)")
+                continue
             why = "is too small in this photo" if a.target in p.present else "not found in this photo"
             notes.append(f"{label}: {a.target} {why} ({asked} not applied)")
             continue

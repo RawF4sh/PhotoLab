@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image as PILImage
 
+from . import par
 from .filters import gaussian_blur, guided_filter
 
 _GUIDE_CAP = 1600  # run the guided filter at ≤ this long edge for speed, then upsample the alpha
@@ -86,3 +87,49 @@ def linear_alpha(full_hw, frm="top", coverage=0.5) -> np.ndarray:
     else:  # right
         a = (xx - (1.0 - cov)) / cov
     return np.clip(a, 0.0, 1.0).astype(np.float32)
+
+
+def _smoothstep(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def gradient_alpha(full_hw, angle_deg: float, start: float, end: float) -> np.ndarray:
+    """Linear gradient at any angle. The ramp runs along the direction `angle_deg` (0 = from the
+    top down, 90 = from the right to the left, 180 = from the bottom up, 270 = from the left to
+    the right). Positions are fractions of the frame along that direction, measured from the
+    edge (or corner) the gradient starts at: alpha 1 before `start`, 0 after `end`, a smoothstep
+    between. `start == end` is a hard step.
+
+    Unlike `linear_alpha` the ramp is a smoothstep, not a straight line, and pixels are sampled at
+    their centres; so the two agree at both ends and the midpoint (within a pixel) but not between."""
+    h, w = full_hw
+    rad = np.deg2rad(angle_deg)
+    dx, dy = -np.sin(rad), np.cos(rad)            # unit direction of the ramp, x to the right, y down
+    extent = max(abs(dx) * w + abs(dy) * h, 1e-6)  # length of the frame along that direction
+    origin = min(0.0, dx * w) + min(0.0, dy * h)    # smallest projection: the start corner
+    span = max(end - start, 1e-6)
+
+    def strip(ys):
+        t = ((np.arange(w, dtype=np.float32)[None, :] + 0.5) * dx + (ys[:, :1] + 0.5) * dy - origin) / extent
+        return (1.0 - _smoothstep((t - start) / span)).astype(np.float32)
+
+    return par.rows(strip, np.broadcast_to(np.arange(h, dtype=np.float32)[:, None], (h, w)))
+
+
+def glow_alpha(full_hw, cx: float, cy: float, radius: float, falloff: float = 2.5) -> np.ndarray:
+    """A soft round light: 1 at the centre, a Gaussian-like falloff that reaches 0.5 at `radius`
+    (fraction of the frame's long side) and fades out by `falloff * radius`. Never a hard edge:
+    the Gaussian is eased to zero over its outer part with a smoothstep. `cx`, `cy` are fractions
+    of width and height and may lie outside the frame."""
+    h, w = full_hw
+    r_px = max(radius * max(h, w), 1.0)
+    fall = max(falloff, 1.5)                      # below this the 0.5-at-radius promise cannot hold
+
+    def strip(ys):
+        d = np.hypot((np.arange(w, dtype=np.float32)[None, :] + 0.5 - cx * w),
+                     (ys[:, :1] + 0.5 - cy * h)) / r_px
+        g = np.exp(-np.log(2.0) * d * d)
+        return (g * (1.0 - _smoothstep((d - 0.7 * fall) / (0.3 * fall)))).astype(np.float32)
+
+    return par.rows(strip, np.broadcast_to(np.arange(h, dtype=np.float32)[:, None], (h, w)))

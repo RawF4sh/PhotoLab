@@ -16,7 +16,7 @@ import threading
 import numpy as np
 from PIL import Image as PILImage
 
-from .. import batch, curate, emit, paths
+from .. import batch, curate, emit, instructions, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
 from ..imageio import downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
@@ -29,7 +29,7 @@ _ALLOWED = (
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
     "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "raw_mode",
-    "highlight_hold", "out_long_edge", "out_name", "out_subdir",
+    "highlight_hold", "light_shaping", "out_long_edge", "out_name", "out_subdir",
 )
 
 
@@ -260,6 +260,21 @@ def _mask_previews(resolved) -> list[dict]:
     return overlays
 
 
+MAX_PHOTO_EDIT = 2000        # characters of follow-up text for one photo (F19)
+
+
+def photo_adjustments(pipe: Pipeline, text) -> tuple[list, list[str]]:
+    """Parse one photo's follow-up text into photo-scope adjustments + the problem lines (F19)."""
+    if text is None or text == "":
+        return [], []
+    if not isinstance(text, str):
+        raise ValueError("photo_edit must be text")
+    if len(text) > MAX_PHOTO_EDIT:
+        raise ValueError(f"photo_edit is longer than {MAX_PHOTO_EDIT} characters")
+    adjs, problems = instructions.parse(text, pipe.vocab(), pipe.known_concepts())
+    return [a.model_copy(update={"scope": "photo"}) for a in adjs], problems
+
+
 def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560,
             profile: str | None = None) -> dict:
     """Render a single-image before/after preview + the decision sidecar.
@@ -273,19 +288,21 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     check_image(image_path)
     cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
+    photo_adjs, photo_problems = photo_adjustments(pipe, opts.get("photo_edit"))
     work = load_image(image_path, decode=raw_opts_from(cfg))
     if work.long_edge > 4096:                       # bound apply cost on very large files
         work = downscale_long_edge(work, 4096)
     overlays = []
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(
-            image_path, do_apply=True, image=work,
+            image_path, do_apply=True, image=work, adjustments=photo_adjs or None,
             on_resolved=lambda resolved: overlays.extend(_mask_previews(resolved)))
     return {
         "before": _img_b64(work.rgb, max_px, fmt="webp"),
         "after": _img_b64(out_rgb, max_px, fmt="webp"),
         "mask_overlays": overlays,
         "result": result.model_dump(),
+        "instruction_problems": [*pipe.adjust_problems, *photo_problems],
     }
 
 
@@ -440,8 +457,9 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
     cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
     pipe.use_mask_cache(out_dir)
+    photo_adjs, _ = photo_adjustments(pipe, opts.get("photo_edit"))
     with INFERENCE_LOCK:
-        out_rgb, result = pipe.process_one(image_path, do_apply=True)
+        out_rgb, result = pipe.process_one(image_path, do_apply=True, adjustments=photo_adjs or None)
     os.makedirs(out_dir, exist_ok=True)
     image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,
                                            subdir=cfg.out_subdir, fields={"style": cfg.style, "n": 1},

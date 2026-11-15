@@ -186,7 +186,7 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
                                    *(payload.get("files") or []))
             return jobs.snapshot(jobs.start(
                 payload.get("input_dir"), payload.get("files"), payload.get("out_dir"),
-                payload, configs_dir, profile))
+                payload, configs_dir, profile, photo_edits=payload.get("photo_edits")))
         return guard(go)
 
     @api.get("/jobs/{job_id}")

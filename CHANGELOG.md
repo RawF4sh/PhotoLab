@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Shaped light and follow-up edits (F18, F19)
+
+### Added
+- **Shapes by instruction:** `--edit` (and Studio) understand places, not only objects: "darken
+  the top with a gradient", "brighten the center", "warm the left side", "add a vignette", "add a
+  warm glow where the sun is". The sun is found by SAM 3; with no sun in the frame the glow is
+  reported as not found and nothing changes.
+- **Automatic sun glow** (`--light-shaping`, off by default): a soft warm lift around the sun.
+- **New mask shapes:** gradients at any angle and a soft round glow (`edit/mask.py`).
+- **Follow-up edits in Studio:** type a change under the preview and it is added on top of the
+  edit; each change is a chip you can remove, with Undo and Start over; the list is kept when the
+  page reloads and is used by the batch. A box "Instructions for every photo" applies to all.
+- **"What it did"** in Studio: a window with everything the current preview did, step by step.
+
 ## [Unreleased] — Personal style and interface groundwork (F12 to F17)
 
 A default run renders the same bytes as before.

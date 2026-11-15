@@ -29,6 +29,8 @@ status column here whenever a feature moves.
 | F15 | API contract | S | done |
 | F16 | More input formats | S | done for AVIF; HEIC needs one check with `pillow-heif` installed |
 | F17 | LLM path refresh | S | done as code; one real call with the owner's key is open |
+| F18 | Shaped light: gradients, ovals, a sun glow | M | done; the automatic glow is off by default |
+| F19 | Follow-up edits | M | done |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -249,6 +251,27 @@ Three config decisions, each a small change with a gate run once the owner has d
   LLM can only refine regions the rules produced.
 - **Build:** the current model id (read the Claude API reference first). Let the LLM translate a
   hard instruction into F2's structure. Sensible budget cap defaults.
+
+## Phase 7: editing like a person (added 2026-11-15)
+
+### F18. Shaped light (M)
+
+- **Why:** editors also mask by shape and place, not only by object: a graduated filter at an
+  angle, an oval, a warm glow where the sun comes in. AutoEdit placed three such moves on its
+  own and none on request.
+- **Build:** gradient and glow shapes, a light finder, places as instruction targets ("darken
+  the top with a gradient", "add a warm glow where the sun is"), and an automatic sun glow
+  behind `--light-shaping`, off by default. Spec: [F18](plans/F18-shaped-light.md).
+- **Done when:** the instruction examples work on real photos; the tone gate with the setting
+  on is at 0 and 0; a blind gallery for the owner's vote.
+
+### F19. Follow-up edits (M)
+
+- **Why:** after the edit, the owner wants to type what else should change and see it added on
+  top, step by step, with undo.
+- **Build:** a follow-up bar in Studio, a run-wide instruction field, per-photo follow-ups
+  carried into the batch as photo-scope adjustments. Spec: [F19](plans/F19-follow-up-edits.md).
+- **Done when:** the Studio walkthrough in the spec's acceptance checks passes in a browser.
 
 ## Later, or not planned
 
