@@ -1,7 +1,7 @@
 # F37. Point and tell
 
 Status: spec (2026-11-16), with a first measurement and its second reading (T0, done). The
-owner's decisions are made, except where F37 goes in the order (decision 3). Size L. Not yet in
+owner's decisions are all made: F37 is built next, before F21's open tasks. Size L. Not yet in
 [FEATURE_PLAN.md](../FEATURE_PLAN.md): other sessions had that file open while this was written.
 The proposed row is the last section.
 Builds on [F2](F2-region-instructions.md) (instructed things and their cells),
@@ -864,8 +864,7 @@ One after the other. F21's open tasks change the segmenters, `pipeline.py`, `web
 
 Every task ends with `PYTHONPATH=src python3 tests/run_all.py` and
 `PYTHONPATH=src .venv/bin/python tests/run_all.py`. T0 is done and says "build as specified". The
-owner's decisions are made, except the order (decision 3): T1 starts when the owner says where
-F37 goes in the plan.
+owner's decisions are all made, and F37 is next in the order (decision 3): T1 can start.
 
 ## Tests
 
@@ -956,26 +955,27 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 
 ## Decisions for the owner
 
-**Made on 2026-11-16.** Asked "Accept the spec's five proposed answers as they stand?", the owner
-answered "Yes, as proposed". Four of the five decisions had a proposed answer:
+**All made on 2026-11-16,** in two answers. Asked "Accept the spec's five proposed answers as
+they stand?", the owner answered "Yes, as proposed". That covered the four decisions that had a
+proposed answer. Decision 3 had none; asked "Build F37 before F21's open tasks?", the owner
+answered "Yes, F37 first".
 
 | Decision | The owner's answer | What follows |
 |---|---|---|
 | 1. The default: a name in the sentence means the thing, no name means the oval itself. The other choice was to let an unnamed oval guess a thing; measured, that guess is right on half the boxes and changes when the oval is redrawn | As specified | Nothing to change |
 | 2. Skin gets a tint limit. Until now nothing stopped a typed change from tinting skin: "make this guy more purple" would give his face a magenta cast, and F20's "make the skin pinker" does | Yes | `tint = 6` in `[concept.skin] max` in `concepts.toml`, built in T3 and pinned by test 24. No default render changes |
+| 3. Where F37 goes in the order: before or after F21's open tasks? They share files, so one after the other. F21's next tasks wait for the measurement on the owner's labelled photos, and F37 waits for nothing | F37 first | F37 is built next. F21's T2 onward start after F37 is closed |
 | 4. F18's named places protect skin and snow too. Until now "make the top pink" reached the skin and snow under the gradient with no region policy | Yes, as a small follow-up | T8, section 12, test 25 |
 | 5. This walk-through is enough until F29: the mask, the tools and amounts, a lesson on each, the change on and off. A picture before and after every single tool stays with F29 | Yes | Nothing to change |
 
-**Still open.** Decision 3 had no proposed answer, so the yes does not cover it:
-
-| Decision | Evidence | The change |
-|---|---|---|
-| 3. Where F37 goes in the order: before or after F21's open tasks? They share files, so one after the other. Proposed now: F37 first. F21's next tasks wait for the measurement on the owner's labelled photos, and F37 waits for nothing | "Tasks"; the F21 row of `FEATURE_PLAN.md` | The order in `FEATURE_PLAN.md` |
-
 ## Proposed plan entry
 
-For the table in `FEATURE_PLAN.md`:
+`FEATURE_PLAN.md` was not edited while this spec was written. Whoever starts the build adds the
+row to its table:
 
-`| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | spec, measured and decided; ready to build once its place in the order is set |`
+`| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | spec, measured and decided; built next, before F21's open tasks |`
 
-Under "Decisions for the owner" there, only decision 3 of this spec: the order.
+And one sentence to its introduction, beside the one on F36: F37 was added on 2026-11-16 and is
+built ahead of F21's open tasks at the owner's word ("Yes, F37 first"), because those tasks wait
+for the measurement on the owner's photos. Nothing of this spec is left to add under "Decisions
+for the owner" there.
