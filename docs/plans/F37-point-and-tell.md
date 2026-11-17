@@ -1,6 +1,7 @@
 # F37. Point and tell
 
-Status: spec (2026-11-16), with a first measurement. Size L. Not yet in
+Status: spec (2026-11-16), with a first measurement and its second reading (T0, done). Size L.
+Not yet in
 [FEATURE_PLAN.md](../FEATURE_PLAN.md): other sessions had that file open while this was written.
 The proposed row is the last section.
 Builds on [F2](F2-region-instructions.md) (instructed things and their cells),
@@ -122,8 +123,9 @@ In all three, only what has its centre in the box is kept.
 The image pass took 2.05 s (median; 1.4 to 2.7 s). No call failed.
 
 **Who judged.** The session, from sheets with panels of about 250 pixels. "Right" means the
-thing meant, whole, with at most a thin rim of anything else. This is one reader's count at a
-small size. T0 has a Checker judge the same sheets without seeing this count.
+thing meant, whole, with at most a thin rim of anything else. This is the first reader's count,
+at a small size. A second reader's blind count is under "T0, done" below; the two agree on the
+order of the routes.
 
 **What was seen:**
 
@@ -170,6 +172,61 @@ small size. T0 has a Checker judge the same sheets without seeing this count.
 | Is "bigger than the mark" set right? | With `inside_share = 0.6`, at least 11 of the 13 part boxes get no thing, and no whole box that was judged right loses its mask | Otherwise move the value once and say so |
 | Is it fast enough? | One pass on kept features under 1 s (median), with the load average written beside it | Otherwise report; nothing else changes |
 | Does skin fire where there is none? | "skin" inside a mark on a photo without people: at most 1 box of the 38 (the first run: none) | Otherwise raise `guard_min_share` once |
+
+### T0, done on 2026-11-16: a second reader
+
+The count above is one reader's, at a small size. T0 asked for a second one.
+
+- **The sheets.** The three routes were run a second time on the same boxes. All 153 masks came
+  back as in the first run: the same number of kept instances, the same coverage. They were
+  drawn as 17 blind sheets: panels of 380 pixels, no numbers, no route names, and the three
+  masks of a box in a shuffled order, numbered 1 to 3. The key to the order stayed in a file the
+  reader did not open.
+- **The reader.** A Checker (Opus, high) judged all 51 rows with the definitions above, without
+  the first count. It kept "partly" and "wrong" apart by one line: a mask that holds all of the
+  thing plus extra is partly; it is wrong when the thing is about a quarter of the mask or less.
+  It saw crops of the analysis picture, not the photos at full size.
+
+| Whole boxes (37): first reader / Checker | A: box alone | B: box and word | C: word alone |
+|---|---|---|---|
+| Right | 19 / 18 | 26 / 24 | 28 / 29 |
+| Partly | 14 / 11 | 10 / 11 | 8 / 7 |
+| Wrong | 4 / 8 | 1 / 2 | 0 / 0 |
+| Nothing | 0 / 0 | 0 / 0 | 1 / 1 |
+
+The two readers gave the same verdict on 94 of the 111 masks.
+
+| Part boxes (13): the Checker | A: box alone | B: box and word | C: word alone |
+|---|---|---|---|
+| No mask | 0 | 0 | 2 |
+| The bigger thing itself, running on past the box | 1 | 8 | 11 |
+| A patch inside the box | 12 | 5 | 0 |
+
+- **Where the readers differ.** The larger panels changed the hut: the masks hold the hut alone,
+  and the Checker calls all three right. The Checker is harder on the box routes: where a box
+  alone returned a blob of water with the whale in it, or the bridge deck with the tower as a
+  hole, the first reader said partly and the Checker says wrong. On the word-alone route they
+  differ on three boxes: the hut and one mountain (the Checker: right), and one glacier (the
+  Checker: partly, because the mask also takes the snow above and beside it).
+- **The misdrawn box.** The Checker flagged it without being told: the box holds mostly slope,
+  with the trees in a thin band at its bottom. Counted in, nothing changes (29 of 38 for the
+  word alone).
+- **Unsure.** The Checker marked nine rows as unsure. Two of them are "right" calls for the
+  word-alone route (a tower, a mountain). With both counted as partly, that route is right on
+  27 of 37.
+
+**The rules, applied to the Checker's count:**
+
+| Question | Result | So |
+|---|---|---|
+| Is the word-alone route good enough to build? | Right on 29 of the 37 whole boxes (78 %). 22 were needed | Build as specified |
+| Does the box help after all? | Box and word: 24. It needed 33, which is 4 above the word alone | No box pass |
+| Is "bigger than the mark" set right? | 12 of the 13 part boxes get no thing (11 were needed). No mask the Checker calls right is lost: the lowest share inside the box among them is 0.86 | `inside_share = 0.6` stays |
+| Is it fast enough? | 0.40 s per pass (median) at a load average of 5 to 14. Under 1 s was needed | Yes |
+| Does skin fire where there is none? | In none of the 38 boxes on photos without people | `guard_min_share = 0.03` stays |
+
+The blind sheets, the key, the Checker's verdicts and the masks are scratch files in `out-f37/`,
+beside those of the first run.
 
 ## Decisions taken without the owner
 
@@ -324,9 +381,8 @@ In `plan`, an area mark is handled where places are: `layers[target] = delta`,
 
 ### 4. The thing: the word, then the oval (`segment/sam3.py`)
 
-The loop over the concepts gets one branch. It sits in `segment`, or in `_segment` once F36's
-lock (T4) is in, which was being built while this spec was written. Everything else stays, the
-kept image features of F36 included.
+The loop over the concepts in `segment` gets one branch. Everything else stays, the kept image
+features of F36 included.
 
 ```python
         for concept in concepts:
@@ -691,8 +747,9 @@ What F37 needs from F36, and must keep:
    asks for. So the kept image features and both mask caches apply, and nothing new is kept: no
    second copy of the features, no cache beside the two that exist.
 3. **No pass of its own.** F37 never encodes an image and never touches `_kept`.
-4. With F36's T4 (one SAM 3 job at a time, across programs), a preview with a mark waits while
-   another program segments a photo. Nothing to build for that here.
+4. F36's lock for SAM 3 jobs (T4) was built, measured and dropped on 2026-11-16. So two programs
+   that segment at the same time still slow each other, a preview with a mark included. Nothing
+   to build for that here.
 
 Target, on the development machine with the load average written beside it: the segment stage of
 a preview that adds one named mark stays under 1.5 s (median) once the photo has had a preview.
@@ -767,7 +824,7 @@ One after the other. F21's open tasks change the segmenters, `pipeline.py`, `web
 
 | Task | Tier | Content | Proving command |
 |---|---|---|---|
-| T0 | Checker (Opus, high), then the session | The Checker judges the sheets `out-f37/first-run-sheet-*.jpg` row by row (right, partly, wrong, nothing) before reading the session's count in `out-f37/judged-by-session.md`. The session applies "The numbers that decide" and writes both counts into this file | The two counts side by side |
+| T0 | Checker (Opus, high), then the session | Done on 2026-11-16. The Checker judged blind sheets of the first run's masks row by row, without the session's count. The session applied "The numbers that decide" and wrote both counts into this file | "T0, done": the two counts side by side |
 | T1 | Builder (Sonnet, medium) | Sections 1 to 3; tests 1 to 4 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_instructions.py tests/test_instruction_words.py tests/test_shaped_light.py tests/test_follow_up.py -q` |
 | T2 | Builder (Sonnet, medium) | Section 4; tests 5 to 7 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_sam3_glue.py tests/test_segment_cache.py -q` |
 | T3 | Builder (Sonnet, high) | Sections 5 to 7; tests 8 to 17 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_instructions.py tests/test_adjust.py tests/test_apply_groups.py tests/test_policies.py tests/test_guard.py tests/test_pipeline.py -q`, then `PYTHONPATH=src python3 tests/run_all.py` |
@@ -778,8 +835,8 @@ One after the other. F21's open tasks change the segmenters, `pipeline.py`, `web
 | Check | Checker (Opus, high) | The diff against this spec and the invariants of `CLAUDE.md`; the definition of done; the privacy check | Findings as `file:line` |
 
 Every task ends with `PYTHONPATH=src python3 tests/run_all.py` and
-`PYTHONPATH=src .venv/bin/python tests/run_all.py`. T0 needs no code and can run at any time; the
-tasks after it wait for its result and for the owner's decisions.
+`PYTHONPATH=src .venv/bin/python tests/run_all.py`. T0 is done and says "build as specified". The
+tasks after it wait for the owner's decisions.
 
 ## Tests
 
@@ -877,6 +934,6 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 
 For the table in `FEATURE_PLAN.md`:
 
-`| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | spec with a first measurement; waits for the owner's decisions |`
+`| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | spec, measured and read twice (T0 done); waits for the owner's decisions |`
 
 And under "Decisions for the owner" there, rows 2 and 4 of the table above.
