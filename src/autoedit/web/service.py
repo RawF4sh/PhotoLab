@@ -16,11 +16,12 @@ import threading
 import numpy as np
 from PIL import Image as PILImage
 
-from .. import batch, curate, emit, instructions, paths
+from .. import batch, curate, emit, instructions, lessons, paths
 from ..concepts import load_concepts
 from ..contract import RunConfig
 from ..imageio import downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
 from ..pipeline import Pipeline
+from ..segment.base import parse_mark
 from ..styles import load_styles
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
@@ -279,6 +280,80 @@ def photo_adjustments(pipe: Pipeline, text) -> tuple[list, list[str]]:
     return [a.model_copy(update={"scope": "photo"}) for a in adjs], problems
 
 
+MAX_PHOTO_MARKS = 20         # marks on one photo (F37)
+_RANK = ["not_found", "blocked", "clamped", "applied"]
+
+
+def check_marks(marks, vocab) -> list[dict]:
+    """One photo's marks, checked one by one (F37). None is no marks."""
+    if marks is None:
+        return []
+    if not isinstance(marks, list):
+        raise ValueError("photo_marks must be a list of marks")
+    if len(marks) > MAX_PHOTO_MARKS:
+        raise ValueError(f"a photo takes at most {MAX_PHOTO_MARKS} marks")
+    return [instructions.check_mark(m, vocab) for m in marks]
+
+
+def mark_adjustments(pipe: Pipeline, marks: list[dict]) -> tuple[list, list[dict]]:
+    """Checked marks -> photo-scope adjustments + one fact per mark: {index, targets, problems}.
+    Without SAM 3 every mark is an area. A mark's sentence never goes to the cloud."""
+    vocab = pipe.vocab()
+    adjs, facts = [], []
+    for i, m in enumerate(marks):
+        kind = m["kind"] if getattr(pipe.segmenter, "open_vocabulary", False) else "area"
+        mark = (m["box"], kind)
+        got, problems = instructions.parse(m["edit"], vocab, (), mark=mark)
+        got, problems = instructions.translate_problems(
+            problems, vocab, (), cfg=pipe.cfg, allow_cloud=False, adjustments=got)
+        got = [instructions.to_mark(a, mark, vocab).model_copy(update={"scope": "photo"}) for a in got]
+        adjs += got
+        facts.append({"index": i, "targets": list(dict.fromkeys(a.target for a in got)), "problems": problems})
+    return adjs, facts
+
+
+def _png_alpha(alpha: np.ndarray) -> str:
+    img = PILImage.new("RGBA", (alpha.shape[1], alpha.shape[0]), (255, 255, 255, 0))
+    img.putalpha(PILImage.fromarray(alpha))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _mark_answer(facts, seen, shape, vocab) -> tuple[list[dict], list[dict]]:
+    """The preview's `marks` and `mark_overlays` from the mark facts and what the render reported."""
+    if not facts:
+        return [], []
+    adjs, plan, _before, _after = seen if seen else ([], None, None, None)
+    cells = {c.name: c for c in plan.cells} if plan else {}
+    marks, overlays = [], []
+    for f in facts:
+        things = [t for t in f["targets"] if (parse_mark(t) or ("",))[0] == "thing"]
+        found = bool(plan) and any(plan.hit.get(t) for t in f["targets"])
+        why = ""
+        if plan and not found:
+            why = next((plan.why[t] for t in things if plan.why.get(t)), "")
+        det = next((d for t in things for d in plan.detected if d.name == t), None) if plan else None
+        got = [a.status for a in adjs if a.target in f["targets"] and a.status in _RANK]
+        marks.append({
+            "index": f["index"], "kind": "thing" if things else "area" if f["targets"] else "",
+            "word": parse_mark(things[0])[2] if things else "", "targets": f["targets"],
+            "found": found, "why": why,
+            "score": float(det.score) if det else None, "coverage": float(det.coverage) if det else None,
+            "status": min(got, key=_RANK.index) if got else "", "problems": f["problems"]})
+        for t in f["targets"]:
+            if t in things:
+                hit = [cells[c].mask for c in plan.hit.get(t, []) if c in cells]
+                if not hit:
+                    continue
+                alpha = np.logical_or.reduce(hit).astype(np.uint8) * 255
+            else:
+                alpha = (np.clip(instructions.place_alpha(instructions.layer_spec(t, vocab), shape), 0, 1)
+                         * 255 + 0.5).astype(np.uint8)
+            overlays.append({"target": t, "alpha": _png_alpha(alpha)})
+    return marks, overlays
+
+
 def translator_status(configs_dir: str | None = None, profile: str | None = None) -> dict:
     """Whether the local instruction reader can run now: {available, model} (F20)."""
     from .. import translate_local
@@ -300,20 +375,36 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
     photo_adjs, photo_problems = photo_adjustments(pipe, opts.get("photo_edit"))
+    vocab = pipe.vocab()
+    mark_adjs, facts = mark_adjustments(pipe, check_marks(opts.get("photo_marks"), vocab))
+    photo_adjs = photo_adjs + mark_adjs
     work = load_image(image_path, decode=raw_opts_from(cfg))
     if work.long_edge > 4096:                       # bound apply cost on very large files
         work = downscale_long_edge(work, 4096)
-    overlays = []
+    overlays, seen, walk, shape = [], [], [], [(0, 0)]
+
+    def _resolved(resolved):
+        overlays.extend(_mask_previews(resolved))
+        shape[0] = resolved.shape
+
+    def _planned(*args):        # made here: later steps may still change the settings it reads
+        seen.append(args)
+        walk.extend(lessons.walk(*args, vocab, lessons.load(
+            paths.config_path("lessons.toml", packaged_fallback=True))))
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(
             image_path, do_apply=True, image=work, adjustments=photo_adjs or None,
-            on_resolved=lambda resolved: overlays.extend(_mask_previews(resolved)))
+            on_resolved=_resolved, on_plan=_planned)
+    marks, mark_overlays = _mark_answer(facts, seen[0] if seen else None, shape[0], vocab)
     return {
         "before": _img_b64(work.rgb, max_px, fmt="webp"),
         "after": _img_b64(out_rgb, max_px, fmt="webp"),
         "mask_overlays": overlays,
         "result": result.model_dump(),
         "instruction_problems": [*pipe.adjust_problems, *photo_problems],
+        "walkthrough": walk,
+        "mark_overlays": mark_overlays,
+        "marks": marks,
     }
 
 
@@ -469,6 +560,7 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
     pipe = build_pipeline(cfg)
     pipe.use_mask_cache(out_dir)
     photo_adjs, _ = photo_adjustments(pipe, opts.get("photo_edit"))
+    photo_adjs += mark_adjustments(pipe, check_marks(opts.get("photo_marks"), pipe.vocab()))[0]
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True, adjustments=photo_adjs or None)
     os.makedirs(out_dir, exist_ok=True)

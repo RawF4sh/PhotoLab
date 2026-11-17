@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from autoedit.imageio import Image
+from autoedit.segment.base import mark_name
 from autoedit.segment.cache import pixel_digest
 from autoedit.segment.sam3 import Sam3Segmenter
 
@@ -27,7 +28,12 @@ class _Inputs(dict):
 class _Proc:
     """Mimics Sam3Processor's surface used by _encode and _run_concept."""
 
+    def __init__(self):
+        self.texts = []
+
     def __call__(self, images=None, text=None, return_tensors=None):
+        if text is not None:
+            self.texts.append(text)
         if images is not None:
             return _Inputs(pixel_values=np.zeros((1, 3, 8, 8), np.float32),
                            original_sizes=np.array([[6, 6]]))
@@ -169,3 +175,24 @@ def test_on_mps_unused_gpu_memory_is_handed_back_after_each_photo():
         regions = s.segment(_img(), ["snow", "sky"])
     assert len(regions) == 2
     assert calls == [1]   # once per photo, not once per concept
+
+
+def test_a_thing_mark_is_its_name_inside_the_box():
+    s = _seg()
+    snow = mark_name("thing", (0, 0, 0.5, 0.5), "snow")
+    assert snow == "mark:thing:0.0000,0.0000,0.5000,0.5000:snow"
+    nowhere = mark_name("thing", (0.3, 0.3, 0.5, 0.5), "snow")      # holds neither centre
+    area = mark_name("area", (0, 0, 0.5, 0.5))
+    regions = _segment(s, [snow, nowhere, area, "snow"])
+    assert [r.name for r in regions] == [snow, "snow"]
+    r = regions[0]
+    assert s._processor.texts == ["snow", "snow", "snow"]   # the word, never the mark name
+    assert int(r.mask.sum()) == 9 and r.mask[:3, :3].all()  # only the top-left instance
+    assert r.instance_count == 1
+    assert abs(r.score - 0.81) < 1e-6
+    assert int(regions[1].mask.sum()) == 18 and regions[1].instance_count == 2
+    assert len(s._model.calls) == 3                         # the area made no model call
+    for kw in s._model.calls:
+        assert kw["vision_embeds"] == "vision-marker"
+        assert "pixel_values" not in kw
+    assert s._model.encoder_calls == 1

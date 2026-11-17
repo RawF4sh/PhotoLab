@@ -2,7 +2,8 @@
 
 Commands:
   autoedit run INPUT_DIR [OUT_DIR] [flags]   batch-edit a folder
-  autoedit adjust PHOTO [--set T.OP=V] [--edit TEXT] [--reset]   re-render one photo
+  autoedit adjust PHOTO [--set T.OP=V] [--edit TEXT] [--mark X0,Y0,X1,Y1 [--mark-kind K]] [--explain] [--reset]
+                                             re-render one photo
   autoedit curate INPUT_DIR OUT_DIR          copy a diverse subset for review/training
   autoedit doctor                            report device + backend availability
   autoedit models status|download|remove     SAM 3 weights
@@ -244,8 +245,18 @@ def _cmd_run(args) -> int:
 def _cmd_adjust(args) -> int:
     from . import adjust
 
+    mark = None
+    if args.mark is not None:
+        try:
+            mark = [float(v) for v in args.mark.split(",")]
+            if len(mark) != 4:
+                raise ValueError
+        except ValueError:
+            print("--mark needs four numbers: X0,Y0,X1,Y1 (shares of the frame)", file=sys.stderr)
+            return 2
     try:
         r = adjust.rerender(args.target, sets=args.set, edit=args.edit, reset=args.reset,
+                            mark=mark, mark_kind=args.mark_kind, explain=args.explain,
                             source=args.source, configs_dir=args.configs_dir,
                             reference=args.reference, recipe_model=args.recipe_model,
                             allow_cloud=args.allow_cloud, profile=args.profile)
@@ -261,6 +272,8 @@ def _cmd_adjust(args) -> int:
         print(f"  instruction {problem}")
     for warning in r.get("warnings", []):
         print(f"warning: {warning}")
+    if args.explain:
+        print("\n".join(adjust.explain_lines(r["walkthrough"])))
     return 0
 
 
@@ -693,6 +706,12 @@ def main(argv: list[str] | None = None) -> int:
     adj_p.add_argument("--set", action="append", default=[], metavar="TARGET.OP=VALUE",
                        help="direct delta, e.g. sky.exposure=-0.3 (repeatable)")
     adj_p.add_argument("--edit", help='plain-language instruction, e.g. "warm the grass a little"')
+    adj_p.add_argument("--mark", metavar="X0,Y0,X1,Y1",
+                       help="an oval on the photo, as shares of the frame; --edit is then about the mark")
+    adj_p.add_argument("--mark-kind", dest="mark_kind", choices=["auto", "area"], default="auto",
+                       help="auto: a named thing follows its outline; area: the oval itself (default: auto)")
+    adj_p.add_argument("--explain", action="store_true",
+                       help="print how this photo's own changes were made")
     adj_p.add_argument("--reset", action="store_true", help="drop this photo's earlier adjustments")
     adj_p.add_argument("--source", help="source photo (default: found through run.json)")
     adj_p.add_argument("--reference", help="reference photo, if the run used one")

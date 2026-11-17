@@ -1,0 +1,96 @@
+# What each tool does, when editors reach for it, and what to watch for. F37 starts this file
+# with what a typed change can use. F29 (teaching mode) completes it for every op.
+#
+# [op.NAME]     one entry per op a typed change can set (the ops in [limits] of instructions.toml).
+# [mask.KIND]   how the change found its place: thing (a named thing inside an oval), area (the
+#               oval itself), named (a region found by its name), place (a named part of the
+#               frame), photo (the whole photo).
+# [guard.KIND]  what can hold a change back: policy (a region's own limits), limit (the ceiling
+#               for typed changes), gate (the checks on the whole photo after the edit).
+#
+# Every entry has four lines: name, does, when, watch. This file is not a run input: changing it
+# changes no pixel, only what the walk-through says.
+
+[op.exposure]
+name = "Exposure"
+does = "Makes this part brighter or darker, as more or less light would."
+when = "A face in shade, a foreground that sits too dark, a sky that pulls the eye."
+watch = "Bright parts turn flat white quickly, and a lifted shadow shows its noise."
+
+[op.temp]
+name = "Temperature"
+does = "Shifts the colour between blue and yellow: cooler or warmer."
+when = "Shade that looks too blue, evening light that should feel warm."
+watch = "Too warm turns skin orange and snow yellow. Too cool turns skin grey."
+
+[op.tint]
+name = "Tint"
+does = "Shifts the colour between green and magenta."
+when = "To take a colour cast off, or to push a mood: pink dusk, purple shade."
+watch = "Skin and snow show a tint first. That is why they keep their own limits."
+
+[op.saturation]
+name = "Saturation"
+does = "Makes every colour in this part stronger or weaker by the same amount."
+when = "A dull jacket, a flat meadow, or a colour that shouts and should step back."
+watch = "Colours that were strong already lose their detail and start to look painted."
+
+[op.clarity]
+name = "Clarity"
+does = "Raises or lowers the contrast of mid-size detail, so texture stands out or smooths over."
+when = "Rock, bark and clouds gain bite. Less of it calms skin and water."
+watch = "Bright rims along edges (halos), and skin that turns rough."
+
+[op.contrast]
+name = "Contrast"
+does = "Moves the bright and the dark tones of this part further apart, or closer together."
+when = "A part that looks flat and grey, or one that looks too harsh."
+watch = "Shadows close up and highlights wash out at the same time."
+
+[mask.thing]
+name = "Object mask"
+does = "The change follows the outline of the thing you named, the one inside your oval."
+when = "The change should stop at an edge: a jacket, a tree, a rock."
+watch = "Hair, fur and fine branches. Look at the edge at full size."
+
+[mask.area]
+name = "Oval (radial filter)"
+does = "The change is strongest inside the oval and fades out across its line."
+when = "Light, not things: a brighter face, a darker corner, a warm spot."
+watch = "A patch that shows means the oval is too small or the change too strong."
+
+[mask.named]
+name = "Named region"
+does = "The change goes to everything in the photo that matches the name you typed."
+when = "One kind of thing should change wherever it is: the sky, the grass, the water."
+watch = "It takes every match. To change only one of them, draw an oval around it."
+
+[mask.place]
+name = "Part of the frame"
+does = "The change covers a fixed part of the frame, such as the top or the centre, and fades out at its edge."
+when = "A sky that should darken towards the top, a foreground that needs lifting, a vignette."
+watch = "It does not follow outlines: a peak that reaches into the top is darkened with the sky."
+
+[mask.photo]
+name = "Whole photo"
+does = "The change goes to every pixel."
+when = "The photo as a whole is too dark, too cool or too flat."
+watch = "It also moves the parts that were right already."
+
+[guard.policy]
+name = "Protected region"
+does = "Skin, snow and other protected regions keep their own limits inside your mark."
+when = "Always. A shift that suits a jacket makes skin look ill and snow look dirty."
+watch = "If part of your mark changed less, it was held back here."
+
+[guard.limit]
+name = "Limit for typed changes"
+does = "All typed changes on one target add up, and the sum stops at a ceiling for each tool."
+when = "Always. It keeps a request that is repeated from stacking up into a broken picture."
+watch = "A second \"more\" on the same thing can add little or nothing."
+
+[guard.gate]
+name = "Checks after the edit"
+does = "After all changes, checks on the whole photo pull back colour that grew too strong, keep blown highlights white and look for banding."
+when = "Always, on every photo."
+watch = "A note in \"What it did\" says when one of them stepped in."

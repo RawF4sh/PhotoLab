@@ -32,6 +32,8 @@ sky, a frame vignette), placed automatically and never on request. This feature 
 | Shapes combined with objects ("brighten the trees on the left") | Out of scope: one target per clause, a place OR an object | A later feature |
 | Size and strength of each shape | Data in `instructions.toml` `[places.*]` and `compose.toml` | Edit the files |
 
+The row "Region policies on an instructed shape" was reversed for skin and snow on 2026-11-16, at the owner's word, by [F37](F37-point-and-tell.md), task T8: under a named place, skin and snow that the run found get the change after their policy; every other region gets it in full, and a change the policies leave alone renders as before.
+
 ## Design
 
 ### 1. Shapes (`edit/mask.py`)

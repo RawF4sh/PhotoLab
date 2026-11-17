@@ -27,7 +27,7 @@ from .notes import build_notes
 from .segment import ResolvedRegions, make_segmenter, resolve
 from . import segment as segment_mod
 from .segment import MASK_CACHE_DIR, DiskMaskCache
-from .segment.base import Segmenter
+from .segment.base import Segmenter, parse_mark
 from .styles import Style, combine_brief, load_styles, style_for
 
 def _config_digest(cfg: RunConfig) -> str:
@@ -230,6 +230,7 @@ class Pipeline:
                     on_resolved: Callable[[ResolvedRegions], None] | None = None,
                     on_stage=None,
                     adjustments: list[Adjustment] | None = None,
+                    on_plan=None,
                     ) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
@@ -249,6 +250,10 @@ class Pipeline:
         concepts = self.concepts_for(style)
         adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
         extra = self._with_light_concept(instructions.extra_concepts(adjs, concepts), concepts)
+        if getattr(self.segmenter, "open_vocabulary", False) and any(
+                (parse_mark(a.target) or ("",))[0] == "thing" for a in adjs):
+            # A thing mark keeps the limits of skin and snow inside it, also where the run found none (F37).
+            extra += [n for n, cm in self.meta.items() if cm.guard_global and n not in concepts and n not in extra]
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
@@ -375,7 +380,10 @@ class Pipeline:
             apply_regions, region_settings, owners = adj_plan.cells, adj_plan.settings, adj_plan.owners
         policy_notes = policies.enforce(region_settings, self.meta, owners=owners)
         if adj_plan is not None:
+            policy_notes += self._hold_layers(adj_plan, resolved, light)
             policy_notes += instructions.report(adjs, adj_plan, region_settings, local_model=cfg.local_model)
+            if on_plan is not None:
+                on_plan(adjs, adj_plan, adj_plan.before, region_settings)
         policy_notes += [f"instruction {p}" for p in self.adjust_problems]
 
         # Shoot-consistency: a bounded exposure nudge toward this image's batch group target,
@@ -499,6 +507,7 @@ class Pipeline:
         comp_settings.update(reference_comp_settings)
         if adj_plan is not None:    # a place the user named is a layer of its own, like a vignette (F18)
             comp_settings.update({instructions.LAYER + name: delta for name, delta in adj_plan.layers.items()})
+            comp_settings.update({instructions.LAYER + name + "/guarded": g[0] for name, g in adj_plan.guarded.items()})
 
         out_rgb = None
         gate_src = None   # the oversaturation gate's reference, when it is not the plain source
@@ -535,9 +544,20 @@ class Pipeline:
                     alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                     regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light)
+            guard_mask, guard_pct, held = self._build_guard(
+                resolved.union, full_hw, global_settings, guide,
+                always=bool(adj_plan is not None and adj_plan.guarded))
             if adj_plan is not None:
-                comp += [(instructions.LAYER + name, instructions.place_alpha(self.vocab().places[name], full_hw, light, adj_plan.sizes.get(name, 1.0)), delta)
-                         for name, delta in adj_plan.layers.items()]
+                for name, delta in adj_plan.layers.items():
+                    alpha = instructions.place_alpha(instructions.layer_spec(name, self.vocab()), full_hw, light,
+                                                     adj_plan.sizes.get(name, 1.0))
+                    if name in adj_plan.guarded and guard_mask is not None:   # the guarded part holds the limits
+                        comp += [(instructions.LAYER + name, alpha * (1.0 - guard_mask), delta),
+                                 (instructions.LAYER + name + "/guarded", alpha * guard_mask, adj_plan.guarded[name][0])]
+                    else:
+                        comp.append((instructions.LAYER + name, alpha, delta))
+            if not held:        # the mask was made only for the layers: the global pass gets none
+                guard_mask = None
             if "reference_sky_grad" in reference_comp_settings:
                 comp.append((
                     "reference_sky_grad",
@@ -562,7 +582,6 @@ class Pipeline:
                     _vertical_band_alpha(full_hw, top=0.30, peak=0.47, bottom=0.66),
                     reference_comp_settings["reference_mountain_highlight"],
                 ))
-            guard_mask, guard_pct, held = self._build_guard(resolved.union, full_hw, global_settings, guide)
             gate_report: dict = {}
             # What the oversaturation gate compares against. With noise reduction on, that is the
             # denoised source (see apply_image). It is the same for every render of this photo
@@ -869,13 +888,39 @@ class Pipeline:
             self.ref_feats = {}
         return self.ref_feats
 
+    def _hold_layers(self, adj_plan, resolved: ResolvedRegions, light) -> list[str]:
+        """The part of every instruction layer (an area mark or a named place) that lies on a guarded
+        region the run found (skin, snow) gets the change after that region's policy (F37). Fills
+        `adj_plan.guarded`; returns the policy notes. A layer the policies leave alone stays one layer."""
+        vocab, notes = self.vocab(), []
+        names = [n for n, m in resolved.union.items() if meta_for(n, self.meta).guard_global and m.any()]
+        if not vocab.shape_guard or not names:
+            return notes
+        for name, delta in adj_plan.layers.items():
+            alpha = instructions.place_alpha(instructions.layer_spec(name, vocab), resolved.shape, light,
+                                             adj_plan.sizes.get(name, 1.0))
+            # Only the regions the layer reaches: a face keeps the skin limits, not those of snow elsewhere.
+            # A weight of 1e-4 is what apply_image treats as nothing for a whole layer; the same floor is used
+            # here per region, so the far tail of a glow does not count as reaching it.
+            under = [n for n in names if alpha[resolved.union[n]].max() > 1e-4]
+            if not under:
+                continue
+            held, key = dict(delta), instructions.LAYER + name + "/guarded"
+            enforced = policies.enforce({key: held}, self.meta, owners={key: under})
+            if enforced:
+                on_guarded = np.logical_or.reduce([resolved.union[n] for n in under])
+                adj_plan.guarded[name] = (held, float(alpha[on_guarded].sum() / alpha.sum()), under)
+                notes += enforced
+        return notes
+
     def _build_guard(self, union: dict, full_hw: tuple[int, int], global_settings: dict,
-                     guide: np.ndarray | None = None):
+                     guide: np.ndarray | None = None, always: bool = False):
         """Feathered alpha over the union of guard concepts (skin/face), upsampled to full res.
         Returns (mask | None, coverage_fraction, held_op_names). None when nothing to guard —
-        no guard concept present, or the global pass touches none of the guarded ops."""
+        no guard concept present, or the global pass touches none of the guarded ops (`always`:
+        the mask is returned anyway, with no held ops, for the guarded part of a layer)."""
         held = sorted(self.guard_ops & set(global_settings))
-        if not held:
+        if not held and not always:
             return None, 0.0, []
         mask = None
         for name, m in union.items():

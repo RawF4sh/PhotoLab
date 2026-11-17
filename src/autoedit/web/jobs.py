@@ -50,6 +50,7 @@ class Job:
     avg_ms: float = 0.0
     created: float = 0.0
     photo_edits: dict | None = None  # abspath of a photo -> its follow-up text (F19)
+    photo_marks: dict | None = None  # abspath of a photo -> its checked marks (F37)
 
 
 _JOBS: dict[str, Job] = {}
@@ -109,18 +110,43 @@ def _check_photo_edits(photo_edits, srcs) -> dict[str, str]:
     return out
 
 
-def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo_edits=None) -> Job:
+def _check_photo_marks(photo_marks, srcs, opts, configs_dir, profile) -> dict[str, list]:
+    """Validate the per-photo marks map: {path of one of the job's photos: list of marks} (F37)."""
+    if photo_marks in (None, {}):
+        return {}
+    from .. import instructions
+    from .service import check_marks, make_cfg
+    if not isinstance(photo_marks, dict):
+        raise ValueError("photo_marks must be an object of path to marks")
+    if len(photo_marks) > MAX_PHOTO_EDITS:
+        raise ValueError(f"photo_marks has more than {MAX_PHOTO_EDITS} entries")
+    known = {os.path.abspath(s) for s in srcs}
+    vocab = instructions.load_vocab(make_cfg(opts, configs_dir, profile).instructions_path)
+    out: dict[str, list] = {}
+    for path, marks in photo_marks.items():
+        if not isinstance(path, str) or os.path.abspath(path) not in known:
+            raise ValueError(f"photo_marks names a photo that is not in the job: {path}")
+        checked = check_marks(marks, vocab)
+        if checked:
+            out[os.path.abspath(path)] = checked
+    return out
+
+
+def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo_edits=None,
+          photo_marks=None) -> Job:
     # An omitted selection means scan the folder; an explicit [] means no photos selected.
     srcs = list(files) if files is not None else _list_images(input_dir)
     if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
         raise ValueError("no supported images found to process")
     edits = _check_photo_edits(photo_edits, srcs)
+    marks = _check_photo_marks(photo_marks, srcs, opts, configs_dir, profile)
     if not out_dir:
         base = input_dir or os.path.dirname(srcs[0])
         out_dir = os.path.join(base, "AutoEdit Exports")
     job = Job(id=uuid.uuid4().hex[:12], out_dir=out_dir, opts=dict(opts),
               items=[Item(name=os.path.basename(s), src=s) for s in srcs], created=time.time())
     job.photo_edits = edits
+    job.photo_marks = marks
     with _LOCK:
         _JOBS[job.id] = job
         _prune_locked()
@@ -130,7 +156,7 @@ def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo
 
 def _run(job: Job, configs_dir, profile=None) -> None:
     try:
-        from .service import INFERENCE_LOCK, build_pipeline, make_cfg, photo_adjustments  # local import avoids a cycle
+        from .service import INFERENCE_LOCK, build_pipeline, make_cfg, mark_adjustments, photo_adjustments  # local import avoids a cycle
 
         cfg = make_cfg(job.opts, configs_dir, profile)
         os.makedirs(job.out_dir, exist_ok=True)
@@ -161,7 +187,9 @@ def _run(job: Job, configs_dir, profile=None) -> None:
             t0 = time.time()
             try:
                 bias = biases.get(item.src, consistency.Bias())
-                photo_adjs, _ = photo_adjustments(pipe, (job.photo_edits or {}).get(os.path.abspath(item.src)))
+                key = os.path.abspath(item.src)
+                photo_adjs, _ = photo_adjustments(pipe, (job.photo_edits or {}).get(key))
+                photo_adjs += mark_adjustments(pipe, (job.photo_marks or {}).get(key, []))[0]
                 with INFERENCE_LOCK:
                     out_rgb, result = pipe.process_one(item.src, do_apply=True, exposure_bias=bias.exposure,
                                                        batch_group=bias.group, wb_bias=(bias.temp, bias.tint),

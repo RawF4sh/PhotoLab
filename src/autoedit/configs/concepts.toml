@@ -36,7 +36,7 @@ feather_px = 0.004
 rule_region = "skin"
 guard_global = true     # skin-safe guard: hold aggressive global ops (see [guard] in rules.toml) off faces
 forbidden = ["dehaze", "hsl_green_sat", "hsl_blue_sat", "grade_shadows_temp", "grade_highlights_temp"]
-max = { clarity = 6, saturation = 4, vibrance = 4, temp = 6, contrast = 6 }
+max = { clarity = 6, saturation = 4, vibrance = 4, temp = 6, tint = 6, contrast = 6 }
 
 [concept.flowers]
 priority = 80

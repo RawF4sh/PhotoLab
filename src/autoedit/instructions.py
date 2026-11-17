@@ -21,7 +21,7 @@ from .concepts import ConceptMeta
 from .contract import Adjustment, DetectedConcept, Settings
 from .edit import glow_alpha, gradient_alpha, radial_alpha
 from .edit.ops import OP_BOUNDS, OP_NAMES
-from .segment.base import RegionMask
+from .segment.base import MARK, RegionMask, mark_name, parse_mark
 from .segment.resolve import ResolvedRegions, resolve
 
 GLOBAL = "global"
@@ -51,6 +51,15 @@ def _toks(text: str) -> tuple[str, ...]:
     return tuple(t for t in out if t)
 
 
+_MARK_DEFAULTS = {"feather": 0.35, "min_side": 0.01, "min_score": 0.45, "min_coverage": 0.0001,
+                  "min_cell_coverage": 0.0001, "inside_share": 0.6, "guard_min_share": 0.03,
+                  "area_words": ("area", "part", "spot", "patch", "corner", "region", "zone"),
+                  "pointing_words": ("thing", "one", "object", "stuff", "bit", "here", "there",
+                                     "circle", "oval", "mark", "selection",
+                                     "give", "gives", "turn", "turns", "let", "get", "change", "paint",
+                                     "colour", "color", "tint", "tone", "hue", "feel")}
+
+
 @dataclass(frozen=True)
 class Vocab:
     verbs: dict[str, Settings] = field(default_factory=dict)        # verb -> op deltas at amount 1
@@ -73,6 +82,8 @@ class Vocab:
     min_score: float = 0.45
     min_coverage: float = 0.003
     min_cell_coverage: float = 0.002
+    marks: dict = field(default_factory=lambda: dict(_MARK_DEFAULTS))   # [marks] (F37)
+    shape_guard: bool = True                                           # guard under [shapes]
 
 
 def load_vocab(path: str) -> Vocab:
@@ -108,6 +119,9 @@ def load_vocab(path: str) -> Vocab:
     sizes = [(_toks(w), float(v)) for w, v in data.get("sizes", {}).items()]
     longest = lambda item: -len(item[0])  # noqa: E731
     parser, target = data.get("parser", {}), data.get("target", {})
+    marks = dict(_MARK_DEFAULTS)
+    for k, v in data.get("marks", {}).items():
+        marks[k] = tuple(str(w).lower() for w in v) if isinstance(v, list) else float(v)
 
     def alternation(words):                 # a word needs \b on both sides, a symbol does not
         return "|".join(rf"\b{re.escape(w)}\b" if w[:1].isalnum() else re.escape(w) for w in words)
@@ -137,6 +151,8 @@ def load_vocab(path: str) -> Vocab:
         min_score=float(target.get("min_score", 0.45)),
         min_coverage=float(target.get("min_coverage", 0.003)),
         min_cell_coverage=float(target.get("min_cell_coverage", 0.002)),
+        marks=marks,
+        shape_guard=bool(data.get("shapes", {}).get("guard", True)),
     )
 
 
@@ -219,7 +235,8 @@ def _doubtful(adj: Adjustment, known: set[str]) -> bool:
     """A target the word list made up from leftover words: not the whole photo, not a place, not a
     known concept, and more than one word ("can you sky", "shadows trees", "give hour feel")."""
     t = adj.target
-    return t != GLOBAL and not t.startswith(PLACE) and t not in known and len(t.split()) > 1
+    return (t != GLOBAL and not t.startswith(PLACE) and not t.startswith(MARK)
+            and t not in known and len(t.split()) > 1)
 
 
 def translate_problems(problems: list[str], vocab: Vocab, known, *, decider=None, cfg=None,
@@ -266,9 +283,83 @@ def translate_problems(problems: list[str], vocab: Vocab, known, *, decider=None
     return done(extra, [p for p in problems if clause_of(p) not in read])
 
 
-def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], list[str]]:
+def _mark_target(concept: str, area: bool, mark, vocab: Vocab) -> str | None:
+    """The mark as the target of one part. `concept` is what the part names ("guy", "", "thing").
+    `area`: the part says "area", or its verb brings a glow. None when the name is too long.
+    The name stays as typed: "tree" is not turned into the known concept "trees", because the
+    user pointed at one."""
+    box, kind = mark
+    m = vocab.marks
+    drop = {*m["pointing_words"], *m["area_words"]}
+    word = " ".join(t for t in concept.split() if t not in drop)
+    if len(word) > vocab.max_target_chars or len(word.split()) > vocab.max_target_words:
+        return None
+    if word and word not in vocab.global_words and kind == "auto" and not area:
+        return mark_name("thing", box, word)
+    return mark_name("area", box)
+
+
+def to_mark(adj: Adjustment, mark, vocab: Vocab) -> Adjustment:
+    """An adjustment read by a model, made to aim at the mark: the model's target becomes the
+    name when it is a thing ("person"), and is dropped when it is a place or the whole photo."""
+    if adj.target.startswith(MARK):     # the word list read it: it aims at the mark already
+        return adj
+    concept = "" if adj.target == GLOBAL or is_place(adj.target) else adj.target
+    target = _mark_target(concept, False, mark, vocab) or mark_name("area", mark[0])
+    return adj.model_copy(update={"target": target, "size": 1.0})
+
+
+def mark_spec(box, feather: float) -> dict:
+    """The oval of an area mark as a place for `place_alpha`. The drawn line is where the change
+    is at half strength, so the oval on the screen is a true picture of what happens."""
+    x0, y0, x1, y1 = box
+    k = 1.0 + feather / 2.0
+    return {"shape": "oval", "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2,
+            "rx": (x1 - x0) / 2 / k, "ry": (y1 - y0) / 2 / k, "feather": feather}
+
+
+MAX_MARK_EDIT = 300     # characters of the sentence of one mark (F37)
+
+
+def check_mark(mark, vocab: Vocab) -> dict:
+    """One mark of a request, checked: {"box": (x0, y0, x1, y1), "kind": "auto" | "area", "edit": text}.
+    Raises ValueError with a short plain message for anything else."""
+    if not isinstance(mark, dict):
+        raise ValueError("a mark must be an object")
+    if set(mark) - {"box", "kind", "edit"}:
+        raise ValueError("a mark has only box, kind and edit")
+    box = mark.get("box")
+    if (not isinstance(box, (list, tuple)) or len(box) != 4
+            or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in box)):
+        raise ValueError("a mark's box must be four numbers")
+    if not all(0 <= v <= 1 for v in box):       # before float(): a huge integer overflows there; NaN fails here
+        raise ValueError("a mark's box must hold numbers from 0 to 1")
+    x0, y0, x1, y1 = (float(v) for v in box)
+    side = vocab.marks["min_side"] - 1e-9
+    if x1 - x0 < side or y1 - y0 < side or x0 >= x1 or y0 >= y1:
+        raise ValueError("a mark's box must have x0 < x1 and y0 < y1, and no side shorter than "
+                         f"{vocab.marks['min_side']:g}")
+    kind = mark.get("kind", "auto")
+    if kind not in ("auto", "area"):
+        raise ValueError("a mark's kind must be auto or area")
+    edit = mark.get("edit")
+    if not isinstance(edit, str) or not edit.strip():
+        raise ValueError("a mark needs text that says what changes")
+    if len(edit.strip()) > MAX_MARK_EDIT:
+        raise ValueError(f"a mark's text is longer than {MAX_MARK_EDIT} characters")
+    return {"box": (x0, y0, x1, y1), "kind": kind, "edit": edit.strip()}
+
+
+def layer_spec(name: str, vocab: Vocab) -> dict:
+    """The shape of an instruction layer: a named place, or the oval of an area mark."""
+    mark = parse_mark(name)
+    return mark_spec(mark[1], vocab.marks["feather"]) if mark else vocab.places[name]
+
+
+def parse(text: str | None, vocab: Vocab, known=(), mark=None) -> tuple[list[Adjustment], list[str]]:
     """Text -> (adjustments, problems). A clause is taken whole or not at all: anything the
-    grammar does not cover is reported in `problems` and changes nothing."""
+    grammar does not cover is reported in `problems` and changes nothing. With `mark`
+    (`(box, kind)`, kind auto or area) every clause is about the oval the user drew (F37)."""
     if not text or not text.strip():
         return [], []
     known = set(known)
@@ -299,15 +390,18 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             words = [t for t in rest if t not in vocab.stop and t not in vocab.determiners]
             det = any(t in vocab.determiners for t in rest)
             concept = " ".join(words)
-            if places:
+            area_word = bool(mark and set(vocab.marks["area_words"]) & set(rest))
+            if places and not mark:
                 # One target per clause: "the top of the frame" is a place, "the top of the
                 # mountain" is two targets and is not understood.
                 place_and_object = place_and_object or bool(concept and concept not in vocab.global_words)
                 concept = PLACE + places[0]
-            if verbs or concept or det:     # a part of filler words only is dropped
+            # A part of filler words only is dropped. With a mark a place is not a concept, and a
+            # part that is only a place ("... and top") must stay, to be refused below.
+            if verbs or concept or det or (mark and places):
                 parts.append({"verbs": verbs, "amount": amounts[0] if amounts else None,
-                              "size": sizes[0] if sizes else None,
-                              "concept": concept, "det": det})
+                              "size": sizes[0] if sizes else None, "concept": concept, "det": det,
+                              "places": places, "area": area_word or "light" in places})
         if rejected:
             problems.append(f'not understood (negation or exclusion): "{segment}"')
             continue
@@ -321,11 +415,17 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
             why = "more than one verb"
         elif many_amounts:
             why = "more than one amount"
+        elif mark and n_sizes:
+            why = "a mark has the size you drew"
+        elif mark and any(
+                any(pl != "light" for pl in p["places"]) or p["concept"] in vocab.global_words
+                or (p["verbs"] and vocab.verb_place.get(p["verbs"][0], "light") != "light") for p in parts):
+            why = "the sentence names another place than the mark"
         elif n_sizes > 1:
             why = "more than one size"
-        elif many_places:
+        elif many_places and not mark:
             why = "more than one place"
-        elif place_and_object:
+        elif place_and_object and not mark:
             why = "a place and an object"
         elif any(ch.isdigit() for p in parts for ch in p["concept"]):
             why = "numbers are not supported"
@@ -340,6 +440,24 @@ def parse(text: str | None, vocab: Vocab, known=()) -> tuple[list[Adjustment], l
                 verbs = donor["verbs"]
                 amount = donor["amount"] if amount is None else amount
                 size = donor["size"] if size is None else size
+            if mark:
+                area = part["area"] or vocab.verb_place.get(verbs[0]) == "light"
+                if not concept and not part["det"] and not area:   # borrow the donor's name
+                    after = [j for j in with_concept if j > i]
+                    before = [j for j in with_concept if j < i]
+                    donor = parts[after[0] if after else before[-1]] if after or before else None
+                    if donor:
+                        concept, area = donor["concept"], donor["area"]
+                target = _mark_target(concept, area, mark, vocab)
+                if target is None:
+                    why = "target too long"
+                    break
+                adj = Adjustment(target=target, source=segment, size=1.0,
+                                 ops={op: delta * (1.0 if amount is None else amount)
+                                      for op, delta in vocab.verbs[verbs[0]].items()})
+                if not any(f.target == adj.target and f.ops == adj.ops for f in found):
+                    found.append(adj)
+                continue
             if not concept and part["verbs"] and vocab.verb_place.get(part["verbs"][0]):
                 concept = PLACE + vocab.verb_place[part["verbs"][0]]   # "a wider glow": the verb's place
             elif not concept and part["det"]:    # "darken the": a target was announced, none came
@@ -374,6 +492,9 @@ def extra_concepts(adjustments: list[Adjustment], concepts: list[str]) -> list[s
     out: list[str] = []
     for a in adjustments:
         target = LIGHT_CONCEPT if a.target == LIGHT_TARGET else a.target   # a glow needs the sun
+        mark = parse_mark(target)
+        if mark and mark[0] == "area":      # an area is a shape: it needs no mask
+            continue
         if target != GLOBAL and not is_place(target) and target not in concepts and target not in out:
             out.append(target)
     return out
@@ -394,6 +515,10 @@ class Plan:
     touched: list[bool]                     # per group: a layer reached one of its cells
     layers: dict[str, Settings] = field(default_factory=dict)  # place name -> delta, one compositional layer each (F18)
     sizes: dict[str, float] = field(default_factory=dict)      # place name -> size factor of its layer (F20); the last adjustment on the place wins
+    why: dict[str, str] = field(default_factory=dict)          # thing mark -> why nothing was applied: "nothing", "small" or "bigger" (F37)
+    asked: dict[str, Settings] = field(default_factory=dict)   # target -> the summed change, after [limits] and the op bounds (F37)
+    inside: dict[str, dict[str, float]] = field(default_factory=dict)   # thing mark -> {guarded concept: share of the mark with its own cells} (F37)
+    guarded: dict[str, tuple] = field(default_factory=dict)    # layer -> (held settings, share on guarded regions, concepts); the pipeline fills it (F37)
 
     @property
     def cells(self) -> list[RegionMask]:
@@ -471,6 +596,20 @@ def _cell(src: RegionMask, name: str, mask: np.ndarray) -> RegionMask:
                       instance_count=src.instance_count)
 
 
+def mark_found(rm: RegionMask | None, box, shape: tuple[int, int], vocab: Vocab) -> str:
+    """"" when the mask of a thing mark can be used, else why not: "nothing" (no mask, under the
+    score, or empty), "small" (under the coverage), "bigger" (it lies mostly outside the box)."""
+    m = vocab.marks
+    if rm is None or rm.score < m["min_score"] or not rm.mask.any():
+        return "nothing"
+    if float(rm.mask.mean()) < m["min_coverage"]:
+        return "small"
+    h, w = shape
+    x0, y0, x1, y1 = box
+    inside = int(rm.mask[round(y0 * h):round(y1 * h), round(x0 * w):round(x1 * w)].sum())
+    return "bigger" if inside < m["inside_share"] * int(rm.mask.sum()) else ""
+
+
 def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], concepts: list[str],
          resolved: ResolvedRegions, region_settings: dict[str, Settings],
          global_settings: Settings, meta: dict[str, ConceptMeta], light=None) -> Plan:
@@ -490,6 +629,10 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
     gate = {**meta, **{c: ConceptMeta(name=c, rule_region=c, min_score=vocab.min_score,
                                       min_coverage=vocab.min_coverage)
                        for c in extra if c not in meta}}
+    for c in extra:                     # a thing the user pointed at may be far smaller than one found by name
+        if parse_mark(c):
+            gate[c] = ConceptMeta(name=c, rule_region=c, min_score=vocab.marks["min_score"],
+                                  min_coverage=vocab.marks["min_coverage"])
     ext = resolve(raw, extra, gate, resolved.shape) if extra else None
     union = {**resolved.union, **(ext.union if ext else {})}
     by_name = {rm.name: rm for rm in raw}
@@ -505,8 +648,16 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
     settings = {name: dict(s) for name, s in region_settings.items()}
     layers: dict[str, Settings] = {}
     sizes: dict[str, float] = {}
+    why: dict[str, str] = {}
+    inside: dict[str, dict[str, float]] = {}
     for target, delta in asked.items():
         if target == GLOBAL:
+            continue
+        mark = parse_mark(target)
+        if mark and mark[0] == "area":       # an oval of the user's: a layer of its own, like a place
+            hit[target] = [LAYER + target]
+            layers[target] = dict(delta)
+            sizes[target] = 1.0
             continue
         if is_place(target):
             name = target[len(PLACE):]
@@ -516,53 +667,89 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
                 sizes[name] = [a.size for a in adjustments if a.target == target][-1]
             continue
         hit[target] = []
-        mask = union.get(target)
-        if mask is None:
-            continue
-        own_t = _policy_owners(target, meta, vocab)
-        rest = mask.copy()
-        for gi, group in enumerate(groups):
-            nxt = []
-            for cell, fmask, own in group:
-                inside = cell.mask & mask
-                rest &= ~cell.mask
-                if int(inside.sum()) < min_px:
-                    nxt.append((cell, fmask, own))
-                    continue
-                outside = cell.mask & ~mask
-                if int(outside.sum()) < min_px:      # the layer covers the whole cell: keep its name
-                    settings[cell.name] = _add(settings.get(cell.name, {}), delta)
-                    nxt.append((cell, fmask, own + own_t))
-                    hit[target].append(cell.name)
+        px = min_px
+        if mark:                             # a thing mark (F37): its word finds it, the oval picks which
+            reason = mark_found(by_name.get(target), mark[1], (h, w), vocab)
+            if reason:
+                why[target] = reason
+                continue
+            mask = by_name[target].mask
+            px = max(1, int(vocab.marks["min_cell_coverage"] * h * w))
+            own_t = _policy_owners(mark[2], meta, vocab) + [target]
+        else:
+            mask = union.get(target)
+            if mask is None:
+                continue
+            own_t = _policy_owners(target, meta, vocab)
+        leftover: list = []     # the cells no region owns: one group, so the cuts between them lose no edit
+
+        def lay(m, prefix, own, left):
+            """Cut every cell of every group by `m`; the part of `m` no region owns joins `left`."""
+            rest = m.copy()
+            for gi, group in enumerate(groups):
+                nxt = []
+                for cell, fmask, own_c in group:
+                    inside_px = cell.mask & m
+                    rest &= ~cell.mask
+                    if int(inside_px.sum()) < px:
+                        nxt.append((cell, fmask, own_c))
+                        continue
+                    outside = cell.mask & ~m
+                    if int(outside.sum()) < px:      # the layer covers the whole cell: keep its name
+                        settings[cell.name] = _add(settings.get(cell.name, {}), delta)
+                        nxt.append((cell, fmask, own_c + own))
+                        hit[target].append(cell.name)
+                        touched[gi] = True
+                        continue
+                    name = f"{prefix}@{cell.name}"
+                    settings[name] = _add(settings.get(cell.name, {}), delta)
+                    nxt.append((_cell(cell, name, inside_px), fmask & m, own_c + own))
+                    nxt.append((_cell(cell, cell.name, outside), fmask & ~m, own_c))
+                    hit[target].append(name)
                     touched[gi] = True
-                    continue
-                name = f"{target}@{cell.name}"
-                settings[name] = _add(settings.get(cell.name, {}), delta)
-                nxt.append((_cell(cell, name, inside), fmask & mask, own + own_t))
-                nxt.append((_cell(cell, cell.name, outside), fmask & ~mask, own))
+                group[:] = nxt
+            if int(rest.sum()) >= px:                # the part of the layer no region owns
+                taken = {c.name for g in groups for c, _f, _o in g} | {c.name for c, _f, _o in left}
+                name = prefix if prefix not in taken else f"{prefix}@background"
+                settings[name] = dict(delta)
+                src = by_name.get(target)
+                cell = RegionMask(name=name, mask=rest, score=src.score if src else 0.0,
+                                  coverage=float(rest.mean()),
+                                  instance_count=src.instance_count if src else 1)
+                # Feather the whole layer, not the leftover: claim compositing keeps it off the
+                # regions, and the delta then has no dip where the layer crosses a region's outline.
+                left.append((cell, m, list(own)))
                 hit[target].append(name)
-                touched[gi] = True
-            group[:] = nxt
-        if int(rest.sum()) >= min_px:                # the part of the layer no region owns
-            taken = {cell.name for group in groups for cell, _f, _o in group}
-            name = target if target not in taken else f"{target}@background"
-            settings[name] = dict(delta)
-            src = by_name.get(target)
-            cell = RegionMask(name=name, mask=rest, score=src.score if src else 0.0,
-                              coverage=float(rest.mean()),
-                              instance_count=src.instance_count if src else 1)
-            # Feather the whole layer, not the leftover: claim compositing keeps it off the
-            # regions, and the delta then has no dip where the layer crosses a region's outline.
-            groups.append([(cell, mask, list(own_t))])
+
+        if mark:
+            # Skin or snow the run did not find as a region keeps its limits inside the mark.
+            left_of = mask.copy()
+            for g, cm in meta.items():
+                graw = by_name.get(g)
+                if not cm.guard_global or g in resolved.union or g in own_t or graw is None or graw.score < cm.min_score:
+                    continue
+                part = left_of & graw.mask
+                share = int(part.sum()) / int(mask.sum())
+                if part.any() and share >= vocab.marks["guard_min_share"]:
+                    lay(part, f"{target}/{g}", [g, *own_t], leftover)
+                    left_of &= ~part
+                    inside.setdefault(target, {})[g] = share
+            lay(left_of, target, own_t, leftover)
+            if not hit[target]:
+                why[target] = "small"
+        else:
+            lay(mask, target, own_t, leftover)
+        if leftover:
+            groups.append(leftover)
             feather.append(target)
             touched.append(True)
-            hit[target].append(name)
     return Plan(groups=[[(cell, fmask) for cell, fmask, _own in group] for group in groups],
                 feather=feather, settings=settings,
                 owners={cell.name: own for group in groups for cell, _f, own in group},
                 detected=list(ext.detected) if ext else [], hit=hit, limited=limited,
                 before={name: dict(s) for name, s in settings.items()},
-                present={t for t in asked if t in union}, touched=touched, layers=layers, sizes=sizes)
+                present={t for t in asked if t in union}, touched=touched, layers=layers, sizes=sizes,
+                why=why, asked=asked, inside=inside)
 
 
 def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings],
@@ -577,9 +764,21 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
         where = "the whole photo" if a.target == GLOBAL else a.target
         if is_place(a.target):
             where = "the " + a.target[len(PLACE):]
+        mark = parse_mark(a.target)
+        if mark:
+            where = "the marked area" if mark[0] == "area" else "the marked " + mark[2]
         cells = p.hit.get(a.target, [])
         if not cells:
             a.status = "not_found"
+            if a.target in p.why:
+                word = mark[2]
+                notes.append({
+                    "nothing": f"{label}: no {word} found in the mark ({asked} not applied)",
+                    "small": f"{label}: the {word} is too small in this photo ({asked} not applied)",
+                    "bigger": f"{label}: the {word} is bigger than the mark; nothing was applied. "
+                              "Use the oval, or type it without a mark",
+                }[p.why[a.target]])
+                continue
             if a.target == LIGHT_TARGET:
                 notes.append(f"{label}: no light source found in this photo ({asked} not applied)")
                 continue
@@ -596,6 +795,9 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
         clamped = any((a.target, op) in p.limited for op in a.ops) or any(
             settings.get(c, {}).get(op, 0.0) != p.before.get(c, {}).get(op, 0.0)
             for c in regions for op in a.ops)
+        layer = a.target[len(PLACE):] if is_place(a.target) else a.target
+        if layer in p.guarded and cells == [LAYER + layer]:     # the part of the layer on guarded regions
+            clamped = clamped or any(p.guarded[layer][0].get(op) != p.layers[layer].get(op) for op in a.ops)
         a.status = "clamped" if clamped else "applied"
         tail = ", held back by a limit or the region policy" if clamped else ""
         notes.append(f"{label}: applied to {where} ({asked}){tail}")
@@ -605,4 +807,7 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
         if a.via:
             notes[i] += " \u2014 read by " + (f"{local_model or 'the local model'} on this computer" if a.via == "local"
                                               else "the cloud model")
+    for target, parts in p.inside.items():      # a thing mark that holds skin or snow the run did not find
+        notes += [f"mark: {g} inside it ({share * 100:.0f} % of the mark) keeps the {g} limits"
+                  for g, share in parts.items()]
     return notes

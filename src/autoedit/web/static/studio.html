@@ -29,6 +29,7 @@
   --accent-ink:#cfe0f6;
   --accent-dim:rgba(91,143,214,.14);
   --ok:#5cc08a; --warn:#e0a23c; --danger:#e06a5e; --info:#5bb0d6;
+  --mark:#c58bf0;         /* the one colour of a mark: its oval, its tint, its cells */
   --r:7px; --r-lg:10px;
   --ease:cubic-bezier(.4,0,.2,1);
   --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -164,6 +165,14 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .mask-ov.show{opacity:.45}
 .mask-region{position:absolute;inset:0;mask-size:contain;mask-repeat:no-repeat;mask-position:center;
   -webkit-mask-size:contain;-webkit-mask-repeat:no-repeat;-webkit-mask-position:center}
+/* the Mark tool (F37): the oval being drawn, the oval of a chip under the pointer, what it caught */
+.ba[data-marking]{cursor:crosshair;touch-action:none}
+.mark-ov{position:absolute;inset:0;pointer-events:none;z-index:4}
+.mark-tint{position:absolute;inset:0;mix-blend-mode:screen;opacity:.45}
+.mark-oval{position:absolute;border:2px solid #fff;border-radius:50%;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.55),inset 0 0 0 1px rgba(0,0,0,.35)}
+.mark-oval.ghost{border-color:var(--mark)}
+.mark-oval[hidden]{display:none}
 /* generating */
 .genov{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;
   background:rgba(10,10,11,.55);backdrop-filter:blur(2px);color:#fff;font-size:12px;font-weight:550;z-index:6}
@@ -257,6 +266,9 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 /* follow-up bar under the preview (F19) */
 .fu{margin-top:12px;padding-top:11px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
 .fu-h{font-size:11.5px;color:var(--ink-2)}
+.fu-hrow{display:flex;align-items:center;gap:7px}
+.fu-tag{font-size:9.5px;line-height:1.5;padding:0 6px;border:1px solid var(--mark);border-radius:99px;color:var(--mark)}
+.fu-tag[hidden]{display:none}
 .fu-row{display:flex;gap:6px;align-items:center}
 .fu-row .minibtn{flex:1}
 .minibtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -266,6 +278,36 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
 .fu-chips .chip .via{font-size:9.5px;line-height:1.5;padding:0 5px;border:1px solid currentColor;border-radius:99px;opacity:.8}
 .fu-chips .chip button{background:none;border:0;color:inherit;cursor:pointer;font-size:13px;line-height:1;padding:0}
 .minibtn:disabled{opacity:.4;cursor:default}
+/* a mark's chip: oval glyph, sentence, one line of state, buttons */
+.fu-chips .chip.mark{display:flex;flex-direction:column;align-items:stretch;gap:5px;width:100%;border-radius:var(--r);padding:6px 9px}
+.fu-chips .chip.mark .mk-top{display:flex;align-items:center;gap:7px}
+.mk-glyph{width:15px;height:10px;border:1.5px solid var(--mark);border-radius:50%;flex:none}
+.mk-txt{flex:1;min-width:0;overflow-wrap:anywhere}
+.mk-state{font-size:10.5px;color:var(--ink-3)}
+.fu-chips .chip.bad .mk-state{color:var(--warn)}
+.mk-btns{display:flex;flex-wrap:wrap;gap:5px}
+.fu-chips .chip .mkb{font-size:10.5px;line-height:1.4;padding:2px 8px;border:1px solid var(--line-2);border-radius:99px;
+  background:var(--elev);color:var(--ink-2)}
+.fu-chips .chip .mkb:hover:not(:disabled){color:var(--ink);border-color:#3d3d46}
+.fu-chips .chip .mkb[aria-pressed="true"]{border-color:var(--mark);color:var(--ink);background:rgba(197,139,240,.14)}
+.fu-chips .chip .mkb:disabled{opacity:.4;cursor:default}
+.fu-chips .chip button.how{font-size:10px;text-decoration:underline;opacity:.85}
+
+/* "How it was done" (F37) */
+.how-top{position:sticky;top:0;z-index:2;background:#17171a;margin:-16px -18px 12px;padding:12px 18px 8px;text-align:center;
+  border-bottom:1px solid var(--line)}
+.how-ph{position:relative;display:inline-block;line-height:0;max-width:100%}
+.how-ph img{display:block;max-width:100%;max-height:34vh;width:auto;height:auto}
+.how-cap{font-size:11px;color:var(--ink-3);margin-top:6px}
+.how-blk{margin-bottom:20px}
+.how-blk+.how-blk{border-top:1px solid var(--line);padding-top:14px}
+.how-blk h4{font-size:13.5px;margin-bottom:2px}
+.how-les{margin:6px 0 2px;padding:2px 0 2px 10px;border-left:2px solid var(--line-2);font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.how-les .how-name{font-weight:600;color:var(--ink)}
+.how-tool{margin:8px 0 10px}
+.how-tn{font-weight:600}
+.how-tool ul{margin:3px 0}
+.how-sw{display:flex;align-items:center;gap:10px;margin-top:6px}
 
 /* small input */
 .tinput{width:100%;height:30px;background:var(--elev);border:1px solid var(--line-2);color:var(--ink);border-radius:var(--r);
@@ -405,6 +447,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <button data-v="split" class="on">Split</button><button data-v="side">Side</button></div>
     <button class="tbtn" id="maskBtn" aria-label="Toggle mask overlay" aria-pressed="false" title="Show resolved region masks before edge feathering" style="display:none">
       <svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>Masks</button>
+    <button class="tbtn" id="markBtn" type="button" aria-label="Mark" aria-pressed="false" title="Drag an oval on the photo, then say what should change there" style="display:none">
+      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>Mark</button>
     <button class="tbtn" id="variantsBtn" aria-label="Generate variants" title="Render several recipes for this photo, scored + ranked; apply the best" style="display:none">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Variants</button>
     <button class="tbtn" id="reportBtn" aria-label="What it did" title="Everything this edit did to the photo, step by step" style="display:none">
@@ -458,6 +502,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <div class="layer before"><img id="baBefore" alt="Before"></div>
           <div class="layer after"><img id="baAfter" alt="After (AutoEdit)"></div>
           <div class="mask-ov" id="maskOv"></div>
+          <div class="mark-ov" id="markOv"><div class="mark-tint" id="markTint"></div>
+            <div class="mark-oval ghost" id="markGhost" hidden></div><div class="mark-oval" id="markPend" hidden></div></div>
           <div class="handle"></div>
           <div class="knob"><svg viewBox="0 0 24 24"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg></div>
           <span class="tag l">BEFORE</span><span class="tag r">AFTER</span>
@@ -477,7 +523,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
             <span class="state" id="previewState">No photo</span>
           </div>
           <div class="fu" id="fuBar" style="display:none">
-            <label class="fu-h" for="fuInput">Edit this version</label>
+            <div class="fu-hrow"><label class="fu-h" for="fuInput">Edit this version</label>
+              <span class="fu-tag" id="fuTag" hidden>for the mark</span></div>
             <input class="tinput" id="fuInput" maxlength="300" aria-label="Edit this version"
               placeholder="e.g. a bit warmer, darken the top, add a glow on the sun"/>
             <div class="fu-row">
@@ -640,6 +687,13 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
     <div class="modal-b rep" id="reportBody"></div>
   </div></div>
 
+  <!-- ===== "How it was done" (F37) ===== -->
+  <div class="scrim" id="howScrim"><div class="modal" style="width:min(820px,94vw)" role="dialog" aria-modal="true" aria-labelledby="howTitle">
+    <div class="modal-h"><h3 id="howTitle">How it was done</h3>
+      <button class="minibtn" type="button" id="howClose">Close</button></div>
+    <div class="modal-b rep" id="howBody"></div>
+  </div></div>
+
   <!-- ===== settings modal ===== -->
   <div class="scrim" id="settingsScrim"><div class="modal" style="width:min(640px,92vw)">
     <div class="modal-h"><h3>Settings</h3><button class="minibtn" id="settingsClose">Done</button></div>
@@ -725,6 +779,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
    ========================================================================== */
 const $ = s => document.querySelector(s);
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
+/* like el, but the text goes in through textContent: for anything that came from the server or the user */
+const T = (t,c,s)=>{const e=document.createElement(t);if(c)e.className=c;if(s!=null)e.textContent=s;return e};
 
 const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural',intensity:0.8,preview:null,loading:false,
   previewDirty:false, previewToken:0,
@@ -762,12 +818,19 @@ const editOptions=()=>({
   ...(STATE.translator?{translator:STATE.translator}:{})
 });
 /* ---- follow-up edits (F19) ---- */
-const FU_KEY='autoedit.followups.v1',FU_MAX=2000;
+const FU_KEY='autoedit.followups.v1',FU_MAX=2000,FU_MARKS=20;
+/* A follow-up entry is a sentence (string) or a mark {box:[x0,y0,x1,y1] in shares of the frame, kind:'auto'|'area', edit} */
+const isMark=e=>!!e&&typeof e==='object';
+const okMark=x=>isMark(x)&&Array.isArray(x.box)&&x.box.length===4&&x.box.every(v=>typeof v==='number'&&isFinite(v)&&v>=0&&v<=1)
+  &&x.box[2]-x.box[0]>=0.01&&x.box[3]-x.box[1]>=0.01&&(x.kind==='auto'||x.kind==='area')
+  &&typeof x.edit==='string'&&x.edit.trim()!==''&&x.edit.length<=300;
 try{const raw=localStorage.getItem(FU_KEY);if(raw){const o=JSON.parse(raw);
-  if(o&&typeof o==='object')for(const k in o)if(Array.isArray(o[k]))STATE.followups[k]=o[k].filter(x=>typeof x==='string');}}catch(e){}
+  if(o&&typeof o==='object')for(const k in o)if(Array.isArray(o[k]))STATE.followups[k]=o[k]
+    .filter(x=>typeof x==='string'||okMark(x)).map(x=>typeof x==='string'?x:{box:[...x.box],kind:x.kind,edit:x.edit});}}catch(e){}
 function fuSave(){try{localStorage.setItem(FU_KEY,JSON.stringify(STATE.followups));}catch(e){}}
 const fuList=path=>STATE.followups[path]||[];
-const fuText=list=>list.map(c=>c.trim().replace(/[.\s]+$/,'')).filter(Boolean).join('. ');
+const fuText=list=>list.filter(c=>!isMark(c)).map(c=>c.trim().replace(/[.\s]+$/,'')).filter(Boolean).join('. ');
+const fuMarks=list=>list.filter(isMark).map(m=>({box:m.box,kind:m.kind,edit:m.edit}));
 
 /* Build a filmstrip item from an /api/groups entry. A RAW+JPEG pair is ONE item that edits a
    single chosen source (RAW preferred). The thumbnail always uses the JPEG when present (fast —
@@ -789,7 +852,14 @@ const STYLES=[
   ['Warm Film','Golden, soft','warm_film'],['Dramatic','Deep, cinematic','dramatic']];
 const CCOL={sky:'#5b8fd6',mountain:'#9b8cff',rock:'#9b8cff',snow:'#86d4ec',foliage:'#5cc08a',trees:'#5cc08a',
   grass:'#a9c34a',water:'#36b5d8',skin:'#e0908a',subject:'#e0a35a',background:'#8a8d96'};
-const ccol=n=>CCOL[String(n).toLowerCase()]||'#8a8d96';
+const MARK_COL='#c58bf0';   /* one colour for every mark and its cells (the CSS variable --mark) */
+const ccol=n=>String(n).includes('mark:')?MARK_COL:(CCOL[String(n).toLowerCase()]||'#8a8d96');
+/* What a person reads for a mark's name: `mark:thing:<box>:guy/skin@subject` -> "marked guy · skin · subject" */
+const MARK_NAME=/mark:(thing|area):(?:\d(?:\.\d+)?,){3}\d(?:\.\d+)?(?::([^/@]*))?(?:\/([^@]*))?(?:@(.*))?$/;
+function niceName(n){const s=String(n),m=MARK_NAME.exec(s);if(!m)return s;
+  const bits=['marked '+(m[1]==='thing'&&m[2]?m[2]:'area')];
+  if(m[3])bits.push(m[3]==='guarded'?'protected part':m[3]);if(m[4])bits.push(m[4]);
+  return bits.join(' · ');}
 const QMAP={waiting:'wait',editing:'run',finished:'done',review:'review',failed:'fail'};
 const BMAP={wait:['b-wait','Waiting'],run:['b-run','Editing'],done:['b-done','Done'],review:['b-review','Review'],fail:['b-fail','Failed']};
 const badge=s=>{const[c,l]=BMAP[s]||BMAP.wait;return`<span class="bdg ${c}"><i></i>${l}</span>`};
@@ -879,7 +949,7 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
   const p=STATE.files[i];
   $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
-  syncRun();$('#variantsBtn').style.display='';$('#reportBtn').style.display='none';
+  syncRun();$('#variantsBtn').style.display='';$('#reportBtn').style.display='none';$('#markBtn').style.display='none';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
   showSourceOnly(true);$('#fuBar').style.display='none';renderFollow();}
@@ -890,12 +960,47 @@ function setView(v){const ba=$('#ba');ba.className='ba mode-'+v+(ba.classList.co
   $('#viewseg').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
   updateMaskButton();}
 $('#viewseg').addEventListener('click',e=>{const b=e.target.closest('[data-v]');if(b)setView(b.dataset.v);});
+let markTool=false,pending=null;   /* the Mark tool is on; the oval drawn and not yet sent (a box) */
 (function splitDrag(){const ba=$('#ba');let drag=false;
   const set=e=>{if(!ba.classList.contains('mode-split'))return;const r=ba.getBoundingClientRect();
     const x=Math.max(1,Math.min(99,((e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width*100));
     ba.style.setProperty('--split',x+'%');};
-  ba.addEventListener('pointerdown',e=>{drag=true;set(e);});
+  ba.addEventListener('pointerdown',e=>{if(markTool)return;drag=true;set(e);});
   window.addEventListener('pointermove',e=>drag&&set(e));window.addEventListener('pointerup',()=>drag=false);})();
+/* ---- the Mark tool (F37): drag an oval, say what should change there ---- */
+const MARK_PH='e.g. make this guy more purple, brighten this a little',FU_PH=$('#fuInput').placeholder;
+const okPNG=u=>/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(u);
+function placeOval(node,box){node.style.left=box[0]*100+'%';node.style.top=box[1]*100+'%';
+  node.style.width=(box[2]-box[0])*100+'%';node.style.height=(box[3]-box[1])*100+'%';}
+function tintLayer(parent,alpha){if(!okPNG(alpha))return;const l=T('div','mask-region');l.style.backgroundColor=MARK_COL;
+  l.style.maskImage=l.style.webkitMaskImage=`url("${alpha}")`;parent.appendChild(l);}
+function setPending(box){pending=box;placeOval($('#markPend'),box);$('#markPend').hidden=false;
+  $('#fuTag').hidden=false;$('#fuInput').placeholder=MARK_PH;$('#fuInput').focus();}
+function clearPending(){pending=null;$('#markPend').hidden=true;$('#fuTag').hidden=true;$('#fuInput').placeholder=FU_PH;}
+function setMarkTool(on){if(on===markTool)return;markTool=on;
+  const b=$('#markBtn');b.classList.toggle('primary',on);b.setAttribute('aria-pressed',String(on));
+  $('#ba').toggleAttribute('data-marking',on);
+  if(on)setView('after');else{clearPending();setView('split');}}
+function markHover(c,k){const info=STATE.preview?.marks?.[k],ts=info?.targets||[];
+  placeOval($('#markGhost'),c.box);$('#markGhost').hidden=false;
+  const t=$('#markTint');t.replaceChildren();
+  (STATE.preview?.mark_overlays||[]).filter(o=>ts.includes(o.target)).forEach(o=>tintLayer(t,o.alpha));}
+function markUnhover(){$('#markGhost').hidden=true;$('#markTint').replaceChildren();}
+function markReset(){clearPending();markUnhover();setMarkTool(false);}
+$('#markBtn').onclick=()=>{if(STATE.loading)return;setMarkTool(!markTool);};
+(function markDrag(){const ba=$('#ba');let a=null;
+  const pt=e=>{const r=$('#baSizer').getBoundingClientRect();if(!(r.width>0&&r.height>0))return null;
+    return [Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),Math.min(1,Math.max(0,(e.clientY-r.top)/r.height))];};
+  const boxOf=(p,q)=>[Math.min(p[0],q[0]),Math.min(p[1],q[1]),Math.max(p[0],q[0]),Math.max(p[1],q[1])];
+  ba.addEventListener('pointerdown',e=>{if(!markTool||e.button!==0||ba.classList.contains('gen'))return;
+    const p=pt(e);if(!p)return;e.preventDefault();clearPending();a=p;
+    try{ba.setPointerCapture(e.pointerId);}catch(_){}});
+  ba.addEventListener('pointermove',e=>{if(!a)return;const q=pt(e);if(!q)return;
+    placeOval($('#markPend'),boxOf(a,q));$('#markPend').hidden=false;});
+  ba.addEventListener('pointerup',e=>{if(!a)return;const q=pt(e)||a,box=boxOf(a,q).map(v=>Math.round(v*1e4)/1e4);a=null;
+    if(box[2]-box[0]<0.01||box[3]-box[1]<0.01)clearPending();else setPending(box);});   /* under 1 % on a side: a slip */
+  ba.addEventListener('pointercancel',()=>{a=null;clearPending();});})();
+
 let maskOn=false;
 function renderMaskOverlay(){
   const overlay=$('#maskOv');overlay.replaceChildren();
@@ -923,6 +1028,7 @@ function setPreviewState(text, cls){
   const b=$('#genPreviewBtn'); if(b)b.disabled=!real()||!STATE.served||STATE.loading;
 }
 function markPreviewStale(){
+  markReset();
   STATE.preview=null; STATE.previewDirty=true; STATE.previewToken++;
   $('#previewError').textContent='';
   renderMaskOverlay();updateMaskButton();renderConcepts();
@@ -940,7 +1046,7 @@ function showSourceOnly(markDirty){
   STATE.loading=false;$('#previewError').textContent='';
   const src=thumbURL(STATE.files[STATE.sel].thumbPath,1100);
   $('#baSizer').src=src;$('#baBefore').src=src;$('#baAfter').src=src;
-  $('#ba').classList.remove('gen');setView('before');
+  $('#ba').classList.remove('gen');markReset();setView('before');
   $('#globals').innerHTML='<div class="tip">No preview generated.</div>';
   $('#regions').innerHTML='<div class="tip">No region edits yet.</div>';
   $('#why').innerHTML='<div class="tip">No notes yet.</div>';
@@ -956,15 +1062,19 @@ function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].thumbPath,11
   setPreviewState('Generating…','busy');
   renderConcepts();}
 
+/* the body of a preview request for photo `p` with the follow-up list `list` (sentences as photo_edit, marks as photo_marks) */
+function previewBody(p,list){
+  const opts=editOptions(); delete opts.out_format; delete opts.consistent;
+  const fu=fuText(list);if(fu)opts.photo_edit=fu;
+  const mk=fuMarks(list);if(mk.length)opts.photo_marks=mk;
+  return JSON.stringify({file:p.path,...opts});}
 async function loadPreview(){
   if(STATE.loading||!real()||!STATE.served){if(!STATE.served)standaloneNote();return;}
   const token=++STATE.previewToken;
   STATE.loading=true;previewLoading();
   try{const p=STATE.files[STATE.sel];
-    const opts=editOptions(); delete opts.out_format; delete opts.consistent;
-    const fu=fuText(fuList(p.path));if(fu)opts.photo_edit=fu;
     const res=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({file:p.path,...opts})})).json();
+      body:previewBody(p,fuList(p.path))})).json();
     if(token!==STATE.previewToken)return;
     if(res.error){$('#previewError').textContent=res.error;$('#ba').classList.remove('gen');}
     else{STATE.preview=res;applyPreview(res);}
@@ -1003,12 +1113,12 @@ function applyPreview(res){const r=res.result||{};const ba=$('#ba');
     const desc=Object.entries(ops).filter(([k,v])=>v).slice(0,4).map(([k,v])=>`${k} ${fmtVal(k,v)}`).join(' · ')||'—';
     const cov=m.coverage?` · ${Math.round(m.coverage*100)}%`:'';
     rg.appendChild(el('div','region',`<span class="bar" style="background:${ccol(m.target)}"></span>
-      <div><div class="nm">${esc(m.target)}${cov}</div><div class="ds">${esc(desc)}</div></div>`));});
+      <div><div class="nm">${esc(niceName(m.target))}${cov}</div><div class="ds">${esc(desc)}</div></div>`));});
 
   // why
   const notes=r.notes||[];
   $('#why').innerHTML=notes.length?'<ul>'+notes.map(w=>`<li>${esc(w)}</li>`).join('')+'</ul>':'<div class="tip">No notes.</div>';
-  $('#reportBtn').style.display='';$('#fuBar').style.display='';
+  $('#reportBtn').style.display='';$('#fuBar').style.display='';$('#markBtn').style.display='';
   renderFollow();
 }
 
@@ -1152,23 +1262,65 @@ $('#cullRun').onclick=async()=>{
 };
 
 /* ---- follow-up bar: add, undo, remove, start over ---- */
-function fuNote(chip,problems){const t=chip.trim().toLowerCase().replace(/\s+/g,' ');
+function fuNote(chip,problems){if(isMark(chip))return '';const t=chip.trim().toLowerCase().replace(/\s+/g,' ');
   return problems.find(p=>{const a=p.indexOf('"'),b=p.lastIndexOf('"');return a>=0&&b>a&&t.includes(p.slice(a+1,b));})||'';}
 /* A clause the local model read: the chip says so (F20). Only text from our own server, shown via textContent. */
-function fuVia(chip){const t=chip.trim().toLowerCase().replace(/\s+/g,' ');
+function fuVia(chip){if(isMark(chip))return false;const t=chip.trim().toLowerCase().replace(/\s+/g,' ');
   return (STATE.preview?.result?.adjustments||[]).some(a=>a.via==='local'&&a.source&&t.includes(a.source));}
+/* The walk-through entries of a chip: a mark's own targets (k-th mark of the list), or the sentences that contain its source. */
+function walkOf(c,k){const w=STATE.preview?.walkthrough||[];
+  if(isMark(c)){const ts=STATE.preview?.marks?.[k]?.targets||[];return w.filter(x=>ts.includes(x.target));}
+  const t=c.trim().toLowerCase().replace(/\s+/g,' ');
+  return w.filter(x=>!String(x.target).startsWith('mark:')&&(x.sources||[]).some(s=>s&&t.includes(s)));}
+/* The one line of state under a mark's chip, from the preview's answer for it. */
+function markState(c,info){
+  if(!info)return {};
+  const pr=info.problems||[];
+  if(pr.length){const m=/^not understood \((.*?)\): "/.exec(pr[0]);return {text:m?m[1]:'not understood',bad:true};}
+  const w=info.word||'thing',held={clamped:' · held back in part',blocked:' · held back'}[info.status]||'';
+  if(info.kind==='thing'){
+    if(info.found)return {text:'the '+w+(held||(info.status==='applied'?' · applied':''))};
+    return {text:info.why==='bigger'?'That is part of something bigger':info.why==='small'?'The '+w+' is too small here':'No '+w+' found in the oval',useOval:true};}
+  /* an oval over skin or snow is held back there: say so, "Show me how" has the detail */
+  if(info.kind==='area')return {text:'the oval'+held+(c.kind==='auto'?'. Name the thing to follow its outline: this jacket':'')};
+  return {};}
+function markChip(p,list,c,i,k){
+  const st=markState(c,STATE.preview?.marks?.[k]);
+  const chip=T('div','chip mark'+(st.bad?' bad':'')),top=T('div','mk-top'),glyph=T('span','mk-glyph');
+  glyph.setAttribute('aria-hidden','true');
+  const x=T('button',null,'×');x.type='button';x.setAttribute('aria-label','Remove: '+c.edit);
+  x.onclick=()=>{list.splice(i,1);fuChanged(p.path,list);};
+  top.append(glyph,T('span','mk-txt',c.edit),x);chip.appendChild(top);
+  if(st.text)chip.appendChild(T('div','mk-state',st.text));
+  const row=T('div','mk-btns'),btn=(t,f)=>{const b=T('button','mkb',t);b.type='button';b.onclick=f;row.appendChild(b);return b;};
+  const only=btn('Oval only',()=>{c.kind=c.kind==='area'?'auto':'area';fuChanged(p.path,list);});
+  only.setAttribute('aria-pressed',String(c.kind==='area'));
+  if(st.useOval)btn('Use the oval',()=>{c.kind='area';fuChanged(p.path,list);});
+  const ws=walkOf(c,k),how=btn('Show me how',()=>openHow(p,list,i,ws));
+  if(!ws.length){how.disabled=true;how.title='Generate a preview first';}
+  chip.appendChild(row);
+  const on=()=>markHover(c,k);
+  chip.addEventListener('mouseenter',on);chip.addEventListener('focusin',on);
+  chip.addEventListener('mouseleave',markUnhover);chip.addEventListener('focusout',markUnhover);
+  return chip;}
 function renderFollow(){
   const p=STATE.files[STATE.sel];if(!p)return;
-  const list=fuList(p.path),problems=STATE.preview?.instruction_problems||[],box=$('#fuChips');box.innerHTML='';
-  const used=new Set();
-  list.forEach((c,i)=>{const why=fuNote(c,problems);if(why)used.add(why);
+  const list=fuList(p.path),problems=STATE.preview?.instruction_problems||[],box=$('#fuChips');box.innerHTML='';markUnhover();
+  const used=new Set();let k=0;
+  list.forEach((c,i)=>{
+    if(isMark(c)){box.appendChild(markChip(p,list,c,i,k++));return;}
+    const why=fuNote(c,problems);if(why)used.add(why);
     const chip=el('span','chip'+(why?' bad':''));
     const t=el('span');t.textContent=why?c+' (not understood)':c;if(why)chip.title=why;
     const x=el('button');x.type='button';x.textContent='×';x.setAttribute('aria-label','Remove: '+c);
     x.onclick=()=>{list.splice(i,1);fuChanged(p.path,list);};
+    const ws=walkOf(c),how=ws.length?T('button','how','Show me how'):null;
+    if(how){how.type='button';how.onclick=()=>openHow(p,list,i,ws);}
     if(fuVia(c)){const m=el('span','via');m.textContent='local model';
-      m.title='Read by '+(STATE.translatorInfo?.model||'the local model')+' on this computer';chip.append(t,m,x);}
-    else chip.append(t,x);
+      m.title='Read by '+(STATE.translatorInfo?.model||'the local model')+' on this computer';chip.append(t,m);}
+    else chip.append(t);
+    if(how)chip.append(how);
+    chip.append(x);
     box.appendChild(chip);});
   $('#fuUndo').disabled=$('#fuReset').disabled=!list.length;
   const rest=problems.filter(q=>!used.has(q));
@@ -1177,7 +1329,12 @@ function fuChanged(path,list){
   if(list.length)STATE.followups[path]=list;else delete STATE.followups[path];
   fuSave();markPreviewStale();renderFollow();loadPreview();}
 function fuApply(){const p=STATE.files[STATE.sel],inp=$('#fuInput'),t=inp.value.trim();if(!p||!t)return;
-  const list=[...fuList(p.path),t];
+  const old=fuList(p.path);
+  if(pending){
+    if(fuMarks(old).length>=FU_MARKS){$('#previewError').textContent='Too many marks on this photo; remove one first.';return;}
+    const box=pending;markReset();inp.value='';
+    fuChanged(p.path,[...old,{box,kind:'auto',edit:t}]);return;}
+  const list=[...old,t];
   if(fuText(list).length>FU_MAX){$('#previewError').textContent='Too many changes on this photo; remove one first.';return;}
   inp.value='';fuChanged(p.path,list);}
 $('#fuApply').onclick=fuApply;
@@ -1200,8 +1357,9 @@ function startRun(){if(!real()||!STATE.served)return;
   // Always send explicit source paths (one per group) so a RAW+JPEG pair is edited ONCE, on the
   // chosen source — never both. Only checked photos are processed.
   body.files=items.map(f=>f.path);
-  const pe={};items.forEach(f=>{const t=fuText(fuList(f.path));if(t)pe[f.path]=t;});
+  const pe={},pm={};items.forEach(f=>{const l=fuList(f.path),t=fuText(l),m=fuMarks(l);if(t)pe[f.path]=t;if(m.length)pm[f.path]=m;});
   if(Object.keys(pe).length)body.photo_edits=pe;
+  if(Object.keys(pm).length)body.photo_marks=pm;
   fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{if(j.error){alert(j.error);return;}JOB=j;renderQueue(j);pollJob();})
     .catch(e=>alert('Could not start job: '+e));}
@@ -1405,15 +1563,15 @@ function renderReport(){
   out.push('<h5>Edits to the whole photo</h5>'+(g?`<table>${g}</table>`:'<div class="tip">None.</div>'));
   // regions
   const ms=r.masks||[];
-  out.push('<h5>Edits to regions</h5>'+(ms.length?ms.map(m=>`<div style="margin:8px 0 2px"><b>${esc(m.target)}</b> · covers ${pct(m.coverage)} of the photo${m.confidence?` · found with ${pct(m.confidence)} confidence`:''}</div><table>${opRows(m.ops)||'<tr><td class="tip">no change</td></tr>'}</table>`).join(''):'<div class="tip">None.</div>'));
+  out.push('<h5>Edits to regions</h5>'+(ms.length?ms.map(m=>`<div style="margin:8px 0 2px"><b>${esc(niceName(m.target))}</b> · covers ${pct(m.coverage)} of the photo${m.confidence?` · found with ${pct(m.confidence)} confidence`:''}</div><table>${opRows(m.ops)||'<tr><td class="tip">no change</td></tr>'}</table>`).join(''):'<div class="tip">None.</div>'));
   const cm=r.composition||[];
-  if(cm.length)out.push('<h5>Light shaping (vignette, gradients)</h5>'+cm.map(m=>`<div style="margin:8px 0 2px"><b>${esc(m.target.startsWith('instruction:')?'your instruction: the '+m.target.slice(12):m.target.replace(/_/g,' '))}</b></div><table>${opRows(m.ops)}</table>`).join(''));
+  if(cm.length)out.push('<h5>Light shaping (vignette, gradients)</h5>'+cm.map(m=>`<div style="margin:8px 0 2px"><b>${esc(m.target.includes('mark:')?'your instruction: the '+niceName(m.target):m.target.startsWith('instruction:')?'your instruction: the '+m.target.slice(12):m.target.replace(/_/g,' '))}</b></div><table>${opRows(m.ops)}</table>`).join(''));
   // instructions
   const ad=r.adjustments||[];
-  if(ad.length)out.push('<h5>Your instructions</h5><table>'+ad.map(x=>`<tr><td>${esc(x.source||'(direct)')} <span class="tip">${x.scope==='photo'?'this photo':'every photo'}${x.via?' · read by the '+esc(x.via)+' model':''}</span></td><td>${esc(x.target)}: ${Object.entries(x.ops||{}).map(([k,v])=>esc(opName(k)+' '+signed(k,v))).join(', ')}</td><td class="n ${x.status==='applied'?'pos':x.status?'neg':''}">${esc(x.status||'')}</td></tr>`).join('')+'</table>');
+  if(ad.length)out.push('<h5>Your instructions</h5><table>'+ad.map(x=>`<tr><td>${esc(x.source||'(direct)')} <span class="tip">${x.scope==='photo'?'this photo':'every photo'}${x.via?' · read by the '+esc(x.via)+' model':''}</span></td><td>${esc(niceName(x.target))}: ${Object.entries(x.ops||{}).map(([k,v])=>esc(opName(k)+' '+signed(k,v))).join(', ')}</td><td class="n ${x.status==='applied'?'pos':x.status?'neg':''}">${esc(x.status||'')}</td></tr>`).join('')+'</table>');
   // regions found
   const cs=r.concepts||[];
-  if(cs.length)out.push('<h5>What it looked for</h5><table>'+cs.map(c=>`<tr><td>${esc(c.name)}</td><td class="n">${c.present?'found':'not found'}</td><td class="n">${c.present?pct(c.score)+' sure':''}</td><td class="n">${c.present?pct(c.coverage)+' of frame':''}</td></tr>`).join('')+'</table>');
+  if(cs.length)out.push('<h5>What it looked for</h5><table>'+cs.map(c=>`<tr><td>${esc(niceName(c.name))}</td><td class="n">${c.present?'found':'not found'}</td><td class="n">${c.present?pct(c.score)+' sure':''}</td><td class="n">${c.present?pct(c.coverage)+' of frame':''}</td></tr>`).join('')+'</table>');
   // consistency
   const wb=r.wb_bias||[0,0];
   if(r.batch_group||r.exposure_bias||wb[0]||wb[1])out.push(`<h5>Batch consistency</h5><div class="lead">Group ${esc(r.batch_group||'—')}: exposure nudged ${signed('exposure',r.exposure_bias||0)}, white balance ${num(wb[0],1)} / ${num(wb[1],1)}.</div>`);
@@ -1425,6 +1583,76 @@ function renderReport(){
   if(tm.length)out.push('<h5>Time per step</h5><table>'+tm.map(([k,v])=>`<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="n">${(v/1000).toFixed(2)} s</td></tr>`).join('')+'</table>');
   out.push(`<h5>Full record</h5><details><summary class="tip">Show everything as JSON (the same record a batch run writes next to each photo)</summary><pre>${esc(JSON.stringify(r,null,2))}</pre></details>`);
   b.innerHTML=out.join('');
+}
+/* ---- "Show me how" (F37): what one follow-up entry did, step by step ---- */
+const HOW={tok:0,opener:null};
+function closeHow(){HOW.tok++;$('#howScrim').classList.remove('open');
+  if(HOW.opener&&HOW.opener.isConnected)HOW.opener.focus();HOW.opener=null;}
+$('#howClose').onclick=closeHow;
+/* the lesson lines of a mask, a tool or a guard (any may be missing): name, does, when, watch */
+function lessonBox(o,withName){const d=T('div','how-les');
+  if(withName&&o.name)d.appendChild(T('div','how-name',o.name));
+  [['does','What it does'],['when','When to use it'],['watch','Watch for']].forEach(([k,l])=>{if(!o[k])return;
+    const r=T('div');r.append(T('b',null,l+': '),document.createTextNode(o[k]));d.appendChild(r);});
+  return d.childNodes.length?d:null;}
+function howBlock(w){
+  const s=T('section','how-blk'),mk=w.mask||{},h=t=>s.appendChild(T('h5',null,t));
+  s.appendChild(T('h4',null,w.label||niceName(w.target)));
+  h('What you pointed at');
+  if(mk.line)s.appendChild(T('div','lead',mk.line));
+  const ml=lessonBox(mk,true);if(ml)s.appendChild(ml);
+  if(mk.found===false){s.appendChild(T('div','tip','Nothing was applied.'));return s;}
+  if((w.parts||[]).length>1){h('What is inside it');
+    const ul=T('ul');w.parts.forEach(q=>ul.appendChild(T('li',null,pct(q.share)+' '+q.label)));s.appendChild(ul);}
+  h('One step per tool');
+  if(!(w.tools||[]).length)s.appendChild(T('div','tip','No tool was applied.'));
+  (w.tools||[]).forEach(t=>{const d=T('div','how-tool');
+    d.appendChild(T('div','how-tn',t.name||opName(t.op)));
+    if(typeof t.asked==='number')d.appendChild(T('div',null,'Asked for '+signed(t.op,t.asked)+'.'));
+    const ap=t.applied||[];
+    if(!ap.length)d.appendChild(T('div','tip','Nothing was applied.'));
+    else{const ul=T('ul');ap.forEach(a=>ul.appendChild(T('li',null,
+      (typeof a.value==='number'?signed(t.op,a.value):'no change')+' on '+a.part
+      +(a.state==='held'?' — held back':a.state==='blocked'?' — not applied':'')
+      +(a.shared?' — together with another change':''))));d.appendChild(ul);}
+    const l=lessonBox(t,false);if(l)d.appendChild(l);
+    s.appendChild(d);});
+  h('What was held back');
+  if((w.held||[]).length){const ul=T('ul');w.held.forEach(x=>ul.appendChild(T('li',null,x)));s.appendChild(ul);}
+  else s.appendChild(T('div','tip','Nothing was held back.'));
+  (w.guards||[]).forEach(g=>{const d=T('div','how-tool');d.appendChild(T('div','how-tn',g.name||g.kind||''));
+    if(g.does)d.appendChild(T('div',null,g.does));s.appendChild(d);});
+  return s;}
+/* p: the photo; list: its follow-ups; i: the entry's place in it; ents: its walk-through entries */
+function openHow(p,list,i,ents){
+  const tok=++HOW.tok,res=STATE.preview,body=$('#howBody');body.replaceChildren();
+  HOW.opener=document.activeElement;$('#howScrim').classList.add('open');$('#howClose').focus();
+  if(!res||!ents.length){body.appendChild(T('div','tip','There is no walk-through for this entry yet. Generate a preview first.'));return;}
+  // the photo, with the mask tinted on it and the oval's outline
+  const top=T('div','how-top'),ph=T('div','how-ph'),img=T('img');img.alt='The photo after the edit';img.src=res.after;
+  const tint=T('div','mark-tint'),targets=new Set(ents.map(w=>w.target)),ovals=[];
+  (res.mark_overlays||[]).filter(o=>targets.has(o.target)).forEach(o=>tintLayer(tint,o.alpha));
+  ents.forEach(w=>{const b=w.mask?.box;if(Array.isArray(b)&&b.length===4){const o=T('div','mark-oval');placeOval(o,b);ovals.push(o);}});
+  ph.append(img,tint,...ovals);
+  const cap=T('div','how-cap','With this change');top.append(ph,cap);body.appendChild(top);
+  ents.forEach(w=>body.appendChild(howBlock(w)));
+  if(!ents.some(w=>w.mask?.found!==false))return;
+  // step: this change on and off (a second preview without this entry, asked for the first time the switch is used)
+  const sec=T('section','how-blk'),sw=T('div','how-sw'),btn=T('button','minibtn','Show without this change'),stat=T('span','tip');
+  btn.type='button';btn.setAttribute('aria-pressed','false');sw.append(btn,stat);
+  sec.append(T('h5',null,'This change on and off'),T('div','tip','Shows the photo as it would be without this entry.'),sw);body.appendChild(sec);
+  let off=null,showing=false;
+  const sync=()=>{img.src=showing?off:res.after;btn.textContent=showing?'Show with this change':'Show without this change';
+    btn.setAttribute('aria-pressed',String(showing));cap.textContent=showing?'Without this change':'With this change';
+    tint.hidden=showing;ovals.forEach(o=>o.hidden=showing);};
+  btn.onclick=async()=>{
+    if(showing){showing=false;sync();return;}
+    if(!off){const rest=[...list];rest.splice(i,1);btn.disabled=true;stat.textContent='Rendering…';
+      try{const r=await(await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:previewBody(p,rest)})).json();
+        if(r.error)throw new Error(r.error);off=r.after;}
+      catch(e){if(tok===HOW.tok){stat.textContent='Could not render the photo without this change: '+(e.message||e);btn.disabled=false;}return;}
+      if(tok!==HOW.tok)return;stat.textContent='';btn.disabled=false;}
+    showing=true;sync();};
 }
 $('#reportBtn').onclick=()=>{renderReport();$('#reportScrim').classList.add('open');};
 $('#reportClose').onclick=()=>$('#reportScrim').classList.remove('open');
@@ -1484,7 +1712,10 @@ $('#fmtSeg').addEventListener('click',e=>{const b=e.target.closest('[data-fmt]')
 $('#runFmtSeg').addEventListener('click',e=>{const b=e.target.closest('[data-fmt]');if(b)setOutputFormat(b.dataset.fmt);});
 
 /* ---- keyboard ----------------------------------------------------------- */
-window.addEventListener('keydown',e=>{if(!real()||e.target.matches('input,textarea'))return;
+window.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){if($('#howScrim').classList.contains('open')){e.preventDefault();closeHow();}
+    else if(pending){e.preventDefault();clearPending();}return;}
+  if(!real()||e.target.matches('input,textarea')||e.target.closest?.('#howScrim,#fuChips'))return;
   if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();selectPhoto(Math.min(STATE.sel+1,STATE.files.length-1));}
   if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();selectPhoto(Math.max(STATE.sel-1,0));}
   if(e.key==='\\')setView($('#ba').classList.contains('mode-before')?'after':'before');

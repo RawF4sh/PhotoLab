@@ -26,7 +26,7 @@ import os
 import numpy as np
 
 from ..imageio import Image
-from .base import RegionMask
+from .base import RegionMask, parse_mark
 from .cache import pixel_digest
 
 # Must be set before torch initialises the MPS backend; harmless elsewhere.
@@ -66,8 +66,17 @@ def pick_device(requested: str = "auto") -> str:
     return "cpu"
 
 
+def _centre_in(mask: np.ndarray, box) -> bool:
+    """Does the middle of a mask (the mean position of its pixels) lie in a box given in shares
+    of the frame?"""
+    ys, xs = np.nonzero(mask)
+    cx, cy = xs.mean() / mask.shape[1], ys.mean() / mask.shape[0]
+    return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
+
+
 class Sam3Segmenter:
     name = "sam3"
+    open_vocabulary = True
 
     def __init__(self, model_id: str = "facebook/sam3", device: str = "auto",
                  score_threshold: float = 0.4, mask_threshold: float = 0.5):
@@ -128,7 +137,12 @@ class Sam3Segmenter:
             vision, sizes = self._encode(img.rgb)   # the image encoder: once per photo
             self._kept = (key, vision, sizes)
         for concept in concepts:
-            instances = self._run_concept(vision, sizes, concept)
+            mark = parse_mark(concept)
+            if mark is not None and mark[0] != "thing":
+                continue                        # an area is a shape, not something to find
+            instances = self._run_concept(vision, sizes, mark[2] if mark else concept)
+            if mark is not None:                # of everything with that name: what was pointed at
+                instances = [(m, s) for m, s in instances if _centre_in(m, mark[1])]
             if not instances:
                 continue
             union = np.zeros((h, w), dtype=bool)

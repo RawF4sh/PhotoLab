@@ -331,6 +331,18 @@ on top, as a separate **cell** of that region. With the LLM decider active, a cl
 rejected is translated by the model into the same bounded structure. `autoedit adjust`
 (`adjust.py`) stores its own deltas through the same path with `scope: "photo"`.
 
+A target is one of four kinds: the whole photo (`global`), a region or thing found by its name
+(`sky`, `jacket`), a named part of the frame (`place:top`, F18), or a **mark**, an oval the user
+drew (F37), spelled `mark:thing:x0,y0,x1,y1:word` or `mark:area:x0,y0,x1,y1`
+(`segment/base.py::mark_name`). A thing mark is found by its word, and the oval picks the instances
+whose centre lies in it (`segment/sam3.py`); its mask cuts cells out of the arbitrated regions like
+any instructed thing, and skin or snow inside it gets cells of its own that keep their limits. An
+area mark is a soft oval blended as a layer of its own, like a place; where such a layer (an area
+mark or a named place) lies on skin or snow that the run found, that part is a second layer
+(`…/guarded`) with the change after their policy.
+`lessons.py` turns the plan into the walk-through that Studio's "Show me how" and
+`autoedit adjust --explain` show; its texts are data in `configs/lessons.toml`.
+
 ---
 
 ## 7. Deciding the edit (`decide/`)
@@ -475,7 +487,7 @@ Three independent safety layers, all data-driven:
 - **Region policies** (`policies.py`) — hard rails enforced *after* the decider on whatever the
   rules/LLM proposed: drop `forbidden` ops and clamp to `max` magnitudes per concept (e.g. snow
   can't be tinted, skin can't be over-clarified). `enforce(..., owners)` lets an instructed target
-  inherit the policies of every protected concept named in it ("skin tones" gets the skin policy). **Re-enforced after reference tuning** too — the
+  inherit the policies of every protected concept named in it ("skin tones" gets the skin policy). Skin caps `tint` as well as `temp` (F37), so a typed colour change cannot give a face a cast. **Re-enforced after reference tuning** too — the
   reference tuner mutates region settings later in the pipeline, and the rails must win over it.
 - **Skin-safe guard** (`pipeline.py::_build_guard` + `edit/apply.py`) — holds aggressive *global*
   ops off `guard_global` concepts (skin/snow). The guarded op list is `rules.toml [guard].ops`.
@@ -603,7 +615,7 @@ is pinned by `tests/snapshots/api_v1.json`; a test fails on any change, and
 | `GET /api/groups?dir=` | **RAW+JPEG pairs collapsed** into one logical photo (Studio UI). |
 | `GET /api/thumb?path=&px=` | Fast JPEG thumbnail (decode + downscale, no pipeline; `px` clamped ≤2048). |
 | `POST /api/pick?kind=` | Native folder/file picker (POST — it registers a trust-boundary root). |
-| `POST /api/preview` | Single-image before/after (lossless WebP data-URLs) + decision sidecar. |
+| `POST /api/preview` | Single-image before/after (lossless WebP data-URLs) + decision sidecar. With `photo_marks` (ovals with a sentence each, F37) the answer also carries `marks`, `mark_overlays` and `walkthrough`; `/run-one` and `/jobs` take `photo_marks` too. |
 | `POST /api/jobs`, `GET /api/jobs/{id}`, `POST .../control` | Background batch with live progress. |
 | `GET /api/jobs/{id}/events` | The same progress as a server-sent event stream: an `event: snapshot` whenever it changes, `event: done` at the end. |
 | `POST /api/run`, `/run-one`, `/curate`; `/curate/jobs`; `/review/labels`; `/datasets/…`; `/aesthetic/…`; `/variants` | Workflow routes (see APP_GUIDE.md). |
@@ -660,7 +672,8 @@ autoedit run <in> [out] [--style --prompt --edit "…" --preset --concepts a,b,c
                          --workers N --threads N --no-mask-cache
                          --no-consistent --consistency brightness|bursts
                          --resume --dry-run --config run.toml --configs-dir DIR --profile DIR]
-autoedit adjust <photo|sidecar> [--set TARGET.OP=VALUE] [--edit "…"] [--reset] [--source IMG] …
+autoedit adjust <photo|sidecar> [--set TARGET.OP=VALUE] [--edit "…"] [--mark X0,Y0,X1,Y1 [--mark-kind auto|area]]
+                         [--explain] [--reset] [--source IMG] …
 autoedit curate | dataset | rank-variants | train-recipe | train-aesthetic   # workflow + learning
 autoedit looks list | save NAME [--from BASE --set FIELD=VALUE] | delete NAME
 autoedit calibrate [photos] [--out DIR | --continue DIR [--finish]] [--count --rounds --seed --name …]
@@ -693,7 +706,7 @@ autoedit styles | presets | exports | settings [--json]   # list profiles / pres
 ## 18. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable.
-**665 tests** in 76 files currently green (run on two Python interpreters, with different Pillow and
+**754 tests** in 84 files currently green (run on two Python interpreters, with different Pillow and
 FastAPI versions). Any new edit op needs a math test; rule changes need a golden test —
 percentile/WB rule goldens assert BOTH the new adaptive behavior on populated stats AND exact
 byte-for-byte reproduction of the pre-retune output on zero-filled stats. Coverage includes:
@@ -701,7 +714,8 @@ identity no-op, each op's math, dehaze (identity + real haze reduction), the `ve
 `haze` divergence on bright-but-not-hazy scenes, sky-excluded foreground stats, region-aware
 auto-WB (cast measurement + warmth-preserving correction), segmentation cache (overlap reuse,
 absent-concept sentinel, LRU), RAW+JPEG grouping, intent parsing, guards/gates, security/trust
-boundary, batch consistency (brightness and bursts), region instructions, `adjust`, export presets
+boundary, batch consistency (brightness and bursts), region instructions, marks and their
+walk-through, `adjust`, export presets
 and path checks, the profile overlay, the API route and settings snapshots, input formats, thread
 and worker equality with the single-thread bytes, and web service preview/jobs, and the blind-test
 A/B harness itself. Per-pixel ops are tested for identical output on one and four threads.
@@ -733,8 +747,9 @@ src/autoedit/
   notes.py               # human-readable "why" notes
   emit.py                # sidecar + image output, manifest
   paths.py               # config/cache path resolution, profile overlay, TOML merge/dump
-  instructions.py        # --edit parser + plan (cells of instructed regions)
+  instructions.py        # --edit parser + plan (cells of instructed regions), marks (F37)
   adjust.py              # autoedit adjust: re-render one photo from its sidecar
+  lessons.py             # the walk-through of a photo's own changes ("Show me how", --explain)
   exports.py             # export presets (exports.toml)
   calibrate.py           # taste calibration (blind pairs, votes, look fit)
   models.py              # SAM 3 weights: status / download / remove
@@ -744,7 +759,7 @@ src/autoedit/
                          # quality workflow, experiments, tone metrics (docs/QUALITY_WORKFLOW.md)
   palette.py             # OKLab palette model (edit/palette.py applies it)
   segment/
-    base.py              # Segmenter protocol + RegionMask
+    base.py              # Segmenter protocol + RegionMask + the names of a mark
     stub.py / sam3.py    # backends (no-GPU stub / SAM 3)
     cache.py             # per-concept mask cache + DiskMaskCache (<out>/.autoedit-masks)
     resolve.py           # gating + overlap arbitration → label map
@@ -772,5 +787,5 @@ src/autoedit/
   configs/
     rules.toml looks.toml styles.toml concepts.toml compose.toml intents.toml defaults.toml
     palettes.toml quality.toml workflows.toml
-    instructions.toml exports.toml calibrate.toml settings.toml
+    instructions.toml exports.toml calibrate.toml settings.toml lessons.toml
 ```

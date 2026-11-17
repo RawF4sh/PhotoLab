@@ -1,9 +1,9 @@
 # F37. Point and tell
 
-Status: spec (2026-11-16), with a first measurement and its second reading (T0, done). The
-owner's decisions are all made: F37 is built next, before F21's open tasks. Size L. Not yet in
-[FEATURE_PLAN.md](../FEATURE_PLAN.md): other sessions had that file open while this was written.
-The proposed row is the last section.
+Status: built and checked on 2026-11-16 and 2026-11-17 (T0 to T8); the numbers are under
+"Result" at the end. Size L. Plan entry: [FEATURE_PLAN.md](../FEATURE_PLAN.md). The spec was
+written on 2026-11-16 with a first measurement and its second reading (T0), and the owner made
+all five decisions the same day: F37 was built before F21's open tasks.
 Builds on [F2](F2-region-instructions.md) (instructed things and their cells),
 [F3](F3-per-photo-adjustments.md) (changes kept per photo), [F18](F18-shaped-light.md) (shapes),
 [F19](F19-follow-up-edits.md) (follow-ups in Studio), [F20](F20-free-text-instructions.md) (colour
@@ -979,3 +979,90 @@ And one sentence to its introduction, beside the one on F36: F37 was added on 20
 built ahead of F21's open tasks at the owner's word ("Yes, F37 first"), because those tasks wait
 for the measurement on the owner's photos. Nothing of this spec is left to add under "Decisions
 for the owner" there.
+
+Done on 2026-11-16, when the build started: the row and the sentence are in the plan.
+
+## Result
+
+Built on 2026-11-16 and 2026-11-17 through the feature loop. Status: built and checked. The build
+committed nothing; the owner drives git.
+
+- **Built** by seven Builders (Sonnet; T3 and T6 at high effort, the others at medium), one Tweaker
+  (Haiku, T7) and two Checker reviews (Opus, high: the whole diff after T7, then T8's diff). The
+  session wrote `configs/lessons.toml`, ran the measurements and made the small fixes listed
+  under "Where the build left this spec's wording".
+- **Default output is byte-identical.** The two photos of the stub corpus and three panel photos
+  rendered with SAM 3 give the same bytes as renders made before the first line of F37 was
+  written (compared after T3, after T6 and after T8; two fresh SAM 3 runs of the old code had
+  given the same bytes as each other, so the comparison is valid). The Checker also rendered
+  eight cases with the committed code and the new code side by side: no adjustment, typed
+  things, named places and the whole photo, in two styles. All identical.
+- **Tests:** 754 on both interpreters (725 before F37). Tests 1 to 25 are in `tests/test_marks.py`,
+  `tests/test_lessons.py` and `tests/test_sam3_glue.py`, with four more that the build added.
+
+### Acceptance checks
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Suites, stub smoke run, default renders | Met. 754 passed, 0 failed, on both interpreters. The stub run completes with sidecars and a manifest. Default renders are byte-identical (above). A sidecar's `config_digest` differs from one written before F37, because `instructions.toml` and `concepts.toml` changed; `autoedit adjust` on an older export therefore prints its usual warning that the config files differ |
+| 2 | T0's two counts are in this file | Met ("T0, done") |
+| 3 | `scripts/eval_marks.py` against the first measurement | Met. All 51 boxes: the same number of kept instances and the same coverage as the word-alone route (largest difference 0.0 points). 48 boxes gave a mask; 12 of the 13 part boxes gave no thing. One pass took 0.42 s (median, 90th percentile 0.50 s) at a load average of 4.9 to 6.0 |
+| 4 | `autoedit adjust --mark ... --explain` on three panel photos, with SAM 3 | Met in three parts, not met in one. **Found:** "make this guy more purple" found one person (9.7 % of the frame, score 0.90), "brighten this tree" five trees with their centre in the oval (4.0 %, 0.96), "darken this rock" three rocks (2.1 %, 0.77). **Outside the mark:** after the region stage the picture equals the one without the mark exactly (0.0000 levels) beyond 1 % of the long edge from the mask, on all three photos. The exported files of the two photos under 2 megapixels have no differing pixel beyond 5 % of the long edge. On the 22 megapixel photo 0.04 % of the pixels far from the mark differ, by up to 4 levels: the global pass, which reads whole-frame statistics, moves far pixels by at most 0.00014 levels, that flips the rounding of 275 values (0.0016 %) by one level, and JPEG spreads each flip over its block. Every local edit has behaved so since F2. **A second `adjust` without a change** is byte-identical and loads no model: 12.9 s, 2.4 s and 1.7 s, against 20.3 s, 9.0 s and 7.5 s for the `adjust` that added the mark. **Preview and export masks: not met on the large photo.** They are the same mask (overlap 1.0000) on the two photos under 4096 pixels. On the 22 megapixel photo the overlap for "guy" is 0.92, where 0.98 was asked. The preview analyses a 4096 pixel copy, and SAM 3's mask is patchy over the dark backpack, so a difference of 4 levels in the analysis picture flips patches inside the thing. The outline is the same. For other words on the same oval: "man" 0.96, "person" 0.98, "backpack" 0.99, "hiker" 1.00 |
+| 5 | Speed | Met. The segment stage of a preview that adds one named mark, on a photo that has had a preview: 0.51 s (median; 90th percentile 0.59 s, largest 0.60 s) over 16 previews on three photos, at a load average of 5.6 to 8.6. In Studio: 0.49 s. The same mark again: 0.006 to 0.019 s. The target was 1.5 s |
+| 6 | Studio, in the browser, on the photo with a person | Met, with SAM 3. Drawn an oval, typed "make this guy more purple", seen the mask on the photo and the result; "Oval only" and back; "Show me how" with its steps and the switch that shows the photo without the change; "make this warmer" over the glacier, with its hint to name the thing (the snow under the oval took no warmth); "brighten this lamp", which found nothing and offered "Use the oval"; Undo; a reload kept the two marks; a batch of two photos, whose sidecar holds both marks by name; `autoedit adjust` on that export without a change is byte-identical. A Studio batch writes no `run.json`, so that command needs `--source`, as before F37 |
+| 7 | Three masks at full size, by eye | Looked at in the edited exports, beside the same crops without the mark. Hair against fog: the hair takes the tint, the fog and the snow beside it are unchanged, no rim. The jacket's edge against the hillside: clean, nothing spills. The tree's branches against a bright sky: the crown is lifted, the sky between the branches is not, no halo. The person in that photo is out of focus, so the hair edge was not a hard test. The mask's holes over the dark backpack do not show, because a tint moves a near-black surface by less than one level |
+| 8 | The tone gate | Does not apply: no default pixel changed (check 1) |
+| 9 | The Checker's review, with the privacy check | Done. No finding that had to be fixed. Three that should be, all fixed: a huge integer in a mark's box answered 500 and now answers 400; the status row in the plan; the API half of test 19 now sends every rule. One regular expression that slowed down on a very long number was replaced. Privacy: no local path, name or address in any changed or new file |
+| 10 | After T8 | Met. Both suites: 754 passed, 0 failed. Default renders are byte-identical, with the stub and with SAM 3 (above). "Make the top pink" on the panel photo with snow under the gradient: the sky moves 7.9 levels toward magenta, the mountain 5.4 and the snow 0.1 (3.2 with `guard = false`); the walk-through reads "snow +0 (blocked); the rest of it -100 (full)". The Checker's review of T8's diff: no finding that had to be fixed. Two on test 25 that should be, both done: the banding gate is off only where it must be, and the test now pins that the rest of the shape gets the change in full. One on the report, also done: the far tail of a glow counted as reaching snow, so a layer now reaches a region only above 0.0001, the alpha below which a layer is skipped at apply. The Checker read these changes again and confirmed them. It rendered six place instructions with the committed code and with T8: those the policies leave alone are identical, and with `guard = false` the pink ones are identical too |
+
+### Where the build left this spec's wording
+
+Each was decided by the session, and the Checker judged each as a decision.
+
+- **A thing mark keeps its word among its owners** (section 5 says "without the word"). A word
+  that is itself a protected concept, as in "this snow", must bring its policy.
+- **The parts of one mark that no region owns form one group,** so the cut between a protected
+  part and the rest is blended in parallel and loses no edit.
+- **The guarded part of an area mark or a named place** exists only when the shape reaches skin
+  or snow, and it obeys only the regions it reaches (section 6 says "the guarded concepts the run
+  found"). An oval over a face keeps the skin limits, not those of snow elsewhere in the photo.
+  An oval that reaches both obeys both: the skin under it then takes no colour at all. A shape
+  reaches a region when its alpha there is above 0.0001, the floor below which a layer is skipped
+  at apply.
+- **`pointing_words` holds 14 more words** than the "Config keys" section lists (give, turn,
+  tone, colour and others). The word list reads "give him a violet tone" itself; without them it
+  named the thing "give him tone", and nothing was found.
+- **The reader:** a clause part that is only a place ("... and top") is refused with the other
+  places; `to_mark` leaves a target that is a mark already; `mark_name` refuses booleans and
+  spells a negative zero as 0.0000.
+- **A walk-through entry has more keys** than the example in section 10 (`target`, `mask.line`,
+  `mask.found`, `mask.why`, `mask.box`, `guards`). The part of a thing that lies in no region
+  reads "all of it" or "the rest of it". A part made of several cells reports its largest cell.
+- **Tests:** tests 8 and 9 compare after the region stage (the global pass reads whole-frame
+  statistics); in test 11 the typed 0.02 % mask is "not found in this photo", as it was before
+  F37, where the table says "too small"; test 3 uses a sentence the word list cannot read for its
+  service part; test 25 switches the banding gate off, which otherwise re-renders one of its two
+  runs.
+- **In the page:** an oval that was held back in part says so on its chip, and "Show me how" asks
+  for the second preview when its switch is first used.
+- **`autoedit adjust --mark`** reads the sentence with the word list only, as `--edit` does there.
+
+### Found on the way, not built
+
+For the owner to decide. None of them blocks the feature.
+
+1. **The preview and the export analyse two different pictures of a photo above 4096 pixels**
+   (check 4). Proposal: make the analysis picture from the original before the 4096 pixel working
+   copy is made, so both see the same pixels. It moves every preview mask of a large photo a
+   little, which is why it was not done here.
+2. **Holes inside a marked thing.** On a dark, even surface SAM 3's mask has holes. They did not
+   show here. They would on a brighter surface with a strong change. Proposal: fill the holes
+   that lie fully inside a marked thing. It changes what a mark edits against what SAM 3
+   returned, and the measured coverage with it.
+3. **A named thing bigger than the oval whose centre lies outside it** reads "No sky found in the
+   oval", not "That is part of something bigger". The offer is the same ("Use the oval").
+4. **The masks of marks on disk are not capped.** Every new oval that is exported adds one mask
+   to the photo's file in `.autoedit-masks`. In memory the cap of 64 holds.
+5. **Studio repeats three limits of the server** (the smallest side of 1 %, 300 characters, 20
+   marks). A profile that raises `min_side` would make the page send ovals the server refuses.
+6. **`APP_GUIDE.md` has no section on the Mark tool.** It was not in this spec's list of files.

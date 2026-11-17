@@ -22,7 +22,9 @@ import threading
 import numpy as np
 
 from ..imageio import Image
-from .base import RegionMask, Segmenter
+from .base import MARK, RegionMask, Segmenter
+
+MAX_MARKS = 64   # mark names kept per photo; every new oval is a new name
 
 
 class CachingSegmenter:
@@ -34,6 +36,10 @@ class CachingSegmenter:
         self._cache: dict = {}   # image_key -> {concept: RegionMask | None}
         self._order: list = []   # LRU of image_keys, most-recently-used last
         self._lock = threading.Lock()
+
+    @property
+    def open_vocabulary(self) -> bool:
+        return getattr(self.inner, "open_vocabulary", False)
 
     def _key(self, img: Image):
         """Path + proxy pixels + mtime. RAW development can change pixels at the same path/size."""
@@ -67,7 +73,11 @@ class CachingSegmenter:
             # Reassemble in the requested order, dropping concepts that found nothing.
             # NOTE: these are the CACHED RegionMask objects, returned by reference — downstream
             # (resolve/stats/apply) treats masks as read-only; mutating one would poison the cache.
-            return [bucket[c] for c in concepts if bucket.get(c) is not None]
+            result = [bucket[c] for c in concepts if bucket.get(c) is not None]
+            marks = [c for c in bucket if c.startswith(MARK)]
+            for c in marks[:max(0, len(marks) - MAX_MARKS)]:   # oldest first: dict order is age
+                del bucket[c]
+            return result
 
     def _touch_evict(self, key) -> None:
         if key in self._order:

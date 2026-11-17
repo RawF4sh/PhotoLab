@@ -67,6 +67,7 @@ _HEURISTICS = {
 
 class StubSegmenter:
     name = "stub"
+    open_vocabulary = False
 
     def segment(self, img: Image, concepts: list[str]) -> list[RegionMask]:
         out: list[RegionMask] = []

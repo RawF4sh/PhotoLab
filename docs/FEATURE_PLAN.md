@@ -15,6 +15,10 @@ more kinds of photography. The kinds have their own file, [GENRES.md](GENRES.md)
 F36 was added and built the same day, ahead of F21 at the owner's word ("F36 first"): F21 asks
 SAM 3 for about 20 more things per photo, and F36 makes each of them a light pass.
 
+F37 was added on 2026-11-16 and is built ahead of F21's open tasks at the owner's word ("Yes,
+F37 first"), because those tasks wait for the measurement on the owner's photos. Its spec is
+[F37](plans/F37-point-and-tell.md).
+
 ## Order and status
 
 | ID | Feature | Size | Status |
@@ -55,6 +59,7 @@ SAM 3 for about 20 more things per photo, and F36 makes each of them a light pas
 | F34 | Exact colour and clean backgrounds | M | planned |
 | F35 | Pick the keepers | M | planned |
 | F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs was built, measured and dropped; the worker default waits for the owner |
+| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | done (built before F21's open tasks); six things found on the way wait for the owner, in the spec's "Result" |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -721,6 +726,8 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Keep a local history of your own edits, on by default (F27)? | F27: no pixels, no file names, never leaves the computer | `history = true` under `[run]` |
 | Do background blur, skin smoothing and overlays stay out? | "Ideas, not planned yet", last item. Proposed: they stay out | none |
 | Render workers on by default? | F36, T5: twice the batch speed, and 5.3 GB per worker. Proposed: no, `--workers 0` per run | `workers = 0` under `[performance]` in `defaults.toml` |
+| Analyse the preview of a large photo on the same picture as the export? | [F37 result](plans/F37-point-and-tell.md), check 4: above 4096 pixels the preview analyses a smaller copy, and the two masks of one mark overlapped at 0.92 on a 22 megapixel photo. It moves every preview mask of a large photo a little | The analysis picture is made from the original in `web/service.py::preview` |
+| Fill the holes inside a marked thing? | [F37 result](plans/F37-point-and-tell.md), "Found on the way": SAM 3's mask has holes on dark, even surfaces. Filling them changes what a mark edits against what SAM 3 returned | A small task of its own |
 
 Things only the owner can do, left open by the unattended run:
 

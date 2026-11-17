@@ -7,11 +7,12 @@ import math
 import os
 import pathlib
 
-from . import emit, instructions
+from . import emit, instructions, lessons, paths
 from .contract import Adjustment, Result, RunConfig
 from .edit.ops import OP_NAMES
 from .paths import config_paths
 from .pipeline import Pipeline
+from .segment.base import MARK, mark_name, parse_mark
 
 _SIDECAR = ".autoedit.json"
 
@@ -21,6 +22,12 @@ def parse_set(text: str) -> Adjustment:
     left, eq, value = text.partition("=")
     target, dot, op = left.strip().rpartition(".")
     target = " ".join(target.lower().split())
+    if target.startswith(MARK):
+        mark = parse_mark(target)
+        if mark is None:
+            raise ValueError(f"--set {text!r}: a mark is mark:area:X0,Y0,X1,Y1 or "
+                             "mark:thing:X0,Y0,X1,Y1:WORD")
+        target = mark_name(*mark)
     if not eq or not dot or not target or op not in OP_NAMES:
         raise ValueError(f"--set expects TARGET.OP=VALUE (for example sky.exposure=-0.3), got {text!r}")
     try:
@@ -44,9 +51,12 @@ def _source_from_manifest(out_dir: str, image: str) -> str | None:
 def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
              source: str | None = None, configs_dir: str | None = None,
              reference: str | None = None, recipe_model: str | None = None,
-             allow_cloud: bool = False, profile: str | None = None) -> dict:
+             allow_cloud: bool = False, profile: str | None = None,
+             mark=None, mark_kind: str = "auto", explain: bool = False) -> dict:
     """Render the photo behind `target` (its exported image or its sidecar) again. Stored
     per-photo adjustments are kept unless `reset`; `sets` and `edit` add new ones."""
+    if mark is not None and not (edit and edit.strip()):
+        raise ValueError("--mark needs --edit: the sentence says what changes inside the mark")
     sidecar = target if target.endswith(_SIDECAR) else os.path.splitext(target)[0] + _SIDECAR
     if not os.path.isfile(sidecar):
         raise FileNotFoundError(f"no sidecar at {sidecar}")
@@ -91,11 +101,21 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     new = [parse_set(s) for s in sets]
     problems: list[str] = []
     if edit and edit.strip():
-        parsed, problems = instructions.parse(edit, pipe.vocab(), pipe.known_concepts())
+        if mark is not None:
+            m = instructions.check_mark({"box": list(mark), "kind": mark_kind, "edit": edit}, pipe.vocab())
+            kind = m["kind"] if getattr(pipe.segmenter, "open_vocabulary", False) else "area"
+            parsed, problems = instructions.parse(m["edit"], pipe.vocab(), (), mark=(m["box"], kind))
+        else:
+            parsed, problems = instructions.parse(edit, pipe.vocab(), pipe.known_concepts())
         new += [a.model_copy(update={"scope": "photo"}) for a in parsed]
+    walk: list = []
+
+    def _planned(*args):        # made here: later steps may still change the settings it reads
+        walk.extend(lessons.walk(*args, pipe.vocab(), lessons.load(
+            paths.config_path("lessons.toml", packaged_fallback=True))))
     out_rgb, result = pipe.process_one(source, adjustments=kept + new,
                                        exposure_bias=old.exposure_bias, batch_group=old.batch_group,
-                                       wb_bias=tuple(old.wb_bias))
+                                       wb_bias=tuple(old.wb_bias), on_plan=_planned if explain else None)
     if result.decider != old.decider:
         raise ValueError(f"the re-render used the {result.decider} decider, the run used "
                          f"{old.decider}; nothing was written")
@@ -110,4 +130,18 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
             cfg.out_format, ".jpg"))))
     emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, source)
     return {"image": image_out, "sidecar": sidecar, "problems": problems, "warnings": warnings,
-            "adjustments": [a.model_dump() for a in result.adjustments]}
+            "adjustments": [a.model_dump() for a in result.adjustments], "walkthrough": walk}
+
+
+def explain_lines(walkthrough) -> list[str]:
+    """The walk-through as plain lines: the mask, then each tool and what held it back."""
+    out = []
+    for e in walkthrough:
+        m = e["mask"]
+        out.append(f"{e['label']}: {m.get('name') or m['kind']}. {m['line']}")
+        for t in e["tools"]:
+            done = "; ".join(f"{i['part']} {i['value']:+g} ({i['state']})" for i in t["applied"]) or "not applied"
+            does = f" {t['does']}" if t.get("does") else ""
+            out.append(f"  {t.get('name') or t['op']}: asked {t['asked']:+g}; {done}.{does}")
+        out += [f"  held back: {h}" for h in e["held"]]
+    return out

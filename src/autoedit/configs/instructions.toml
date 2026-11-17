@@ -8,13 +8,17 @@
 #               gradient (angle, start, end) | oval (cx, cy, rx, ry, feather) | oval_outside
 #               (the same, a vignette) | glow (radius_scale, min_radius: a round light on the
 #               light the finder located). A place is one target per clause, never mixed with an
-#               object; it is blended on its own, like a vignette, and no region policy applies.
+#               object; it is blended on its own, like a vignette. Where it lies on skin or snow
+#               that the run found, that part gets the change after their policy ([shapes] guard).
 # [sizes]       words that scale the extent of the place of their clause (a place only).
 # [amounts]     words that scale the deltas of their clause.
 # [limits]      ceiling (absolute value) for the SUM of instruction deltas on one target, per op.
 # [target]      gating for an instructed concept that has no [concept.X] entry in concepts.toml,
 #               and the smallest overlap, as a fraction of the frame, that becomes its own cell.
 # [policy]      target word -> protected concept whose region policy it obeys.
+# [marks]       an oval the user drew (F37): a sentence that names a thing edits that thing inside the
+#               oval, any other sentence edits the oval itself. Gates and words for the reader.
+# [shapes]      guard: skin and snow keep their limits inside a shape layer made by an instruction.
 # [parser]      separators, joiners, determiners, ignored words, words that reject a clause,
 #               words that mean the whole photo, and target length limits.
 #
@@ -223,6 +227,31 @@ peak = "mountain"
 peaks = "mountain"
 hill = "mountain"
 hills = "mountain"
+
+[marks]
+# A mark is an oval the user drew (F37). A sentence that names a thing ("this guy") edits that
+# thing inside the oval; any other sentence edits the oval itself, as a soft shape.
+feather = 0.35               # area: the edge fades over this share of the radius
+                             # (the drawn line is where the change is at half strength)
+min_side = 0.01              # a mark narrower than this share of the frame is refused
+min_score = 0.45             # thing: below this score the answer is not used
+min_coverage = 0.0001        # thing: the smallest mask, as a share of the frame
+min_cell_coverage = 0.0001   # thing: the smallest overlap with a region that is its own cell
+inside_share = 0.6           # thing: less of the mask inside the box: "bigger than the mark"
+guard_min_share = 0.03       # skin or snow inside a mark is its own cell from this share of it
+# The sentence asks for the oval itself:
+area_words = ["area", "part", "spot", "patch", "corner", "region", "zone"]
+# Words that name nothing. They are dropped from a mark's name, so "give him a violet tone" names
+# "him" and "turn this jacket purple" names "jacket":
+pointing_words = ["thing", "one", "object", "stuff", "bit", "here", "there",
+                  "circle", "oval", "mark", "selection",
+                  "give", "gives", "turn", "turns", "let", "get", "change", "paint",
+                  "colour", "color", "tint", "tone", "hue", "feel"]
+
+[shapes]
+# A shape layer made by an instruction is blended on its own: the oval of an area mark and a
+# named place of F18. Inside it, skin and snow the run found keep their limits.
+guard = true
 
 [parser]
 # Words that end one instruction and start the next, besides . , ; ! ? and a line break.

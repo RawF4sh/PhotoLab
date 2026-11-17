@@ -83,6 +83,7 @@ autoedit run ./raws ./out --raw-mode preview_ev_headroom       # RAW development
 autoedit run ./photos ./out --metadata keep                    # keep GPS and serial numbers too (default shareable drops both; none writes no EXIF)
 autoedit run ./photos ./out --edit "brighten the jacket, darken the sky slightly"   # region instructions in words
 autoedit adjust ./out/IMG_0001.jpg --set sky.exposure=-0.3   # re-render one photo from its sidecar
+autoedit adjust ./out/IMG_0001.jpg --mark 0.58,0.12,0.92,0.94 --edit "make this guy more purple" --explain   # an oval (shares of the frame) and what should change there
 autoedit run ./photos ./out --workers 4                        # render processes for a batch (default 1)
 autoedit run ./photos ./out --export web                       # export preset: format, size, name, subfolder
 autoedit exports       # list export presets
@@ -104,7 +105,9 @@ choosing the best variants from a batch.
 
 Launch **Studio** with `pip install -e '.[ui]'` and `autoedit ui`. Open a folder, pick a style,
 add or toggle named concepts, generate a before/after preview, and run the checked photos.
-The Masks button shows the actual resolved region footprints, before edge feathering. Concept
+The Masks button shows the actual resolved region footprints, before edge feathering. The Mark
+button lets you drag an oval on the photo and type what should change there ("make this guy more
+purple"); "Show me how" then walks through the mask and each tool. Concept
 choices and Settings → RAW development apply to both preview and export. “None” selects zero
 photos and disables the batch. See [APP_GUIDE.md](APP_GUIDE.md) for the full workflow.
 
@@ -139,7 +142,8 @@ local `./configs` dir or `--configs-dir`):
 - [looks.toml](src/autoedit/configs/looks.toml) — magnitude shaping + split-tone color grading.
 - [compose.toml](src/autoedit/configs/compose.toml) — radial/linear compositional moves (vignette, sky grad).
 - [concepts.toml](src/autoedit/configs/concepts.toml) — concept presets + per-concept priority/feather/rule mapping.
-- [instructions.toml](src/autoedit/configs/instructions.toml) — the words `--edit` understands (verbs, amounts, limits per op).
+- [instructions.toml](src/autoedit/configs/instructions.toml) — the words `--edit` understands (verbs, amounts, limits per op), and the gates and words for marks.
+- [lessons.toml](src/autoedit/configs/lessons.toml) — what each tool does, when to use it and what to watch for (the "Show me how" walk-through).
 - [exports.toml](src/autoedit/configs/exports.toml) — export presets for `--export` (`full`, `web`, `social`, `archive`, `webp`).
 - [calibrate.toml](src/autoedit/configs/calibrate.toml) — dimensions and step sizes of `autoedit calibrate`.
 - [settings.toml](src/autoedit/configs/settings.toml) — the description of every run setting, shown by `autoedit settings`.

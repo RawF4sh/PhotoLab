@@ -3,6 +3,38 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Point and tell (F37)
+
+A run without a mark or an instruction renders the same bytes as before.
+
+### Added
+- **Mark a spot and say what to change.** In Studio, the Mark button lets you drag an oval on the
+  photo and type a sentence for it: "make this guy more purple", "brighten this a little". A
+  sentence that names a thing edits that thing along its outline: SAM 3 finds everything with that
+  name, and the oval picks what has its centre inside it. Any other sentence edits the oval itself,
+  soft at the edge. Each mark is a chip with an "Oval only" switch, Undo and remove; marks are kept
+  when the page reloads and are used by the batch.
+- **"Show me how"** on every chip of "Edit this version": the mask, each tool with what was asked
+  and what was applied, a short lesson on each tool, what was held back and why, and a switch that
+  shows the photo without the change. The lesson texts are data in `configs/lessons.toml`.
+- **The same without a browser:** `autoedit adjust PHOTO --mark X0,Y0,X1,Y1 --edit "…"`, with
+  `--mark-kind auto|area` and `--explain`, which prints the walk-through. In the API the preview,
+  run-one and jobs routes take `photo_marks`.
+- **Skin and snow keep their limits inside a mark:** where the run found them as regions, and for a
+  named thing also where it did not (a small or distant person). A circled glacier takes no colour.
+- `scripts/eval_marks.py` measures what a mark finds on a file of hand-drawn boxes. On 51 boxes on
+  16 photos, the name with the oval picking the instance was right on 29 of 37 things (a box
+  prompt alone: 18) and gave no thing on 12 of 13 boxes that held only part of something bigger. A
+  new mark on a photo that has had a preview costs 0.5 s of segmentation.
+
+### Changed
+- **Skin has a tint limit** (`tint = 6` in `[concept.skin] max`). A typed colour change on skin
+  ("make the skin pinker") is held there; before, nothing limited it. No rule sets tint on a
+  region, so a run without instructions renders as before.
+- **Named places keep the limits of skin and snow too.** "Make the top pink" used to tint the snow
+  and the skin under the gradient. Now those parts get the change after their policy and the rest
+  gets it in full. "Darken the top" and "add a vignette" render as before.
+
 ## [Unreleased] — Faster segmentation (F36)
 
 ### Changed
