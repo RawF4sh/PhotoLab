@@ -8,6 +8,10 @@ Features are built one at a time, in the order below, through the loop described
 [AGENT_ROUTING.md](AGENT_ROUTING.md). Each feature starts with a spec in `docs/plans/`. Update the
 status column here whenever a feature moves.
 
+Extended on 2026-11-16 with phases 8 to 11 (F21 to F35), at the owner's request: a check for
+what a photo gives away, film looks and filters, a style that grows from the owner's edits, and
+more kinds of photography. The kinds have their own file, [GENRES.md](GENRES.md).
+
 ## Order and status
 
 | ID | Feature | Size | Status |
@@ -32,6 +36,21 @@ status column here whenever a feature moves.
 | F18 | Shaped light: gradients, ovals, a sun glow | M | done; the automatic glow is off by default |
 | F19 | Follow-up edits | M | done |
 | F20 | Free-text instructions (more words, a local model) | M | done |
+| F21 | Reveal check: what a photo gives away | L | planned (measure first) |
+| F22 | Hide on request: cover, mosaic, blur | M | planned; needs the owner's yes on the content rule |
+| F23 | Grain | M | planned |
+| F24 | Black and white, and film looks | M | planned |
+| F25 | LUT files | S | planned |
+| F26 | Surprise me | S | planned |
+| F27 | Style from your edits | M | planned (measure first) |
+| F28 | Look files: export, import, preview card | M | planned |
+| F29 | Teaching mode | M | planned |
+| F30 | Genre packs | M | planned |
+| F31 | Night sky tools | M | planned; needs night-sky photos |
+| F32 | Geometry: level, upright, crop | L | planned; needs the owner's yes on cropping |
+| F33 | Merge frames: brackets, stacks, focus series | L | planned |
+| F34 | Exact colour and clean backgrounds | M | planned |
+| F35 | Pick the keepers | M | planned |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -284,10 +303,345 @@ Three config decisions, each a small change with a gate run once the owner has d
 - **Done when:** 80 % of a set of 40 written phrasings come back right, no negation becomes an
   edit, and the owner's sentence works in Studio.
 
+## Phases 8 to 11: where the engine stands (added 2026-11-16)
+
+The owner asked for four things: a check for what a photo gives away, with a blur for it; a look
+that grows out of the owner's own edits and can be shared; grain, old-film looks and filters; and
+more kinds of photography, night sky first. The kinds of photography have their own file,
+[GENRES.md](GENRES.md): 32 kinds, each with its plan. Checked against the code on 2026-11-16.
+
+| Area | Exists today | Gap |
+|---|---|---|
+| What a photo gives away | Exports drop the GPS position and the camera and lens serial numbers by default (`metadata = "shareable"`, F1) | Nothing looks at the picture itself; names the photographer entered (artist, copyright) stay; nothing reports what was found |
+| Hiding things | Nothing | No blur, mosaic or cover |
+| Grain and film looks | Looks, palettes, split-tone, mood words (matte, faded) | No grain op; black and white is saturation at zero, with no choice of how colours turn grey; no LUT files |
+| Personal style | Blind-vote calibration (F12), looks saved by hand (F11), a recipe predictor that needs before/after pairs | The changes a user types after an edit (F19) are kept per photo and never looked at as a habit |
+| Sharing a look | A look is a few numbers in a TOML file in the profile | No file to hand to someone else, no check of a file from someone else, no picture that shows what the look does |
+| Teaching | The "What it did" report: every step with its reason | A step cannot be seen alone; the user cannot try first and compare; Studio has two sliders |
+| Kinds of photography | Three scenes (people, landscape, other), three concept sets (generic, wedding, landscape), rules for eight region types | One real test set (mountain landscapes). No pack for any other kind |
+| Geometry | Nothing | No rotate, straighten, crop or perspective |
+| Several frames into one | Bursts are found and evened in brightness (F9) | Never merged: no brackets, no stacking, no focus series |
+| Picking | A scorer (`critic.py`), a diverse-subset copier (`curate`), bursts (F9) | Nothing ranks the frames of one burst |
+
+## Phase 8: check before sharing
+
+The feature the owner asked for most. Order matters: the check first, measured, then the blur.
+
+### F21. Reveal check (L, measure first)
+
+- **Why:** a photo that is posted or delivered can give away more than it should: a number plate,
+  a house number, a screen, a letter on a table, a name badge, a child's school crest, the GPS
+  position inside the file. Phone apps exist that blur faces and number plates in one photo at a
+  time (a web search on 2026-11-16 found several; their claims were not tested). None was found
+  that checks a whole shoot inside the editing run, for things the photographer names, on the
+  photographer's own computer. SAM 3 makes that possible here: it finds any named thing.
+- **Build:**
+  - `configs/reveal.toml`: what to look for, as data. Each entry has the words given to SAM 3, a
+    minimum score, and a kind (`plate`, `address`, `screen`, `document`, `card`, `badge`,
+    `people`, `child`, `key`, `code`). First list: number plate; house number, street sign;
+    computer, phone and TV screen; letter, document, whiteboard, parcel label; bank and ID card,
+    ticket, boarding pass; name badge; face; child; key; barcode and QR code. The user adds own
+    words in the profile (F11), for example a company logo.
+  - `reveal.py`: measurement only, no pixel changes. Part one runs the segmenter with the reveal
+    words on the proxy and keeps each finding (kind, box, score, share of the frame). Part two
+    reads the file: GPS position, serial numbers, artist and owner name, capture time, and says
+    what the chosen export will still carry.
+  - The result goes into the sidecar (a `reveal` block) and the manifest. A page `reveal.html` in
+    the output folder shows every photo with a finding, boxes drawn. The run summary gets one
+    line ("14 of 212 photos have findings"). `autoedit check FOLDER` runs the check alone.
+  - Studio: a "Check before sharing" panel that draws the findings on the preview.
+  - Wording: the check never says "safe". It says what it looked for and what it found. It never
+    works out who a person is (no face recognition). A face that is the subject of a portrait is
+    listed apart from other people in the frame.
+  - With the stub segmenter only the file part runs, and the report says so. It must never print
+    an empty "nothing found" for a part that did not run.
+  - Off by default (`--reveal-check`). The stage order is unchanged: the check is part of
+    `segment` and `stats`.
+  - Later option: reading the text in the picture (an address, an email, a phone number). That
+    needs a local text reader the engine does not have.
+- **Measure first:** a labelled set of at least 100 photos (at least 20 with plates, 20 with
+  screens, 20 with documents or signs, 40 with nothing). Run SAM 3 on the reveal words and write
+  down, per kind, how many were found and how many false alarms came up. If fewer than 9 of 10
+  readable plates are found, stop and report: the feature then needs a second detector. Also
+  measure the time the extra words add per photo.
+- **Done when:** the found and false-alarm rates per kind are in the spec's result; the owner has
+  read the report of one real shoot; with the check off the output is byte-identical; the stub
+  run still completes.
+
+### F22. Hide on request (M)
+
+- **Why:** the owner wants what the check finds to be blurred.
+- **Build:**
+  - `--hide plate,screen` hides every finding of those kinds; in Studio a finding has a Hide
+    button. Nothing is hidden unless the user asks.
+  - Three methods, as data in `reveal.toml`. `cover` is the default: one flat fill in the average
+    colour of the region's surroundings, so nothing from inside is left. `mosaic` and `blur` look softer
+    and keep a trace of what was there; the interface says so. A light blur or small blocks over
+    text can be read back, so both scale with the size of the region.
+  - The mask is grown by a margin and never feathered inward. Hiding is the last pixel step of
+    `apply`, on the full-size image. The source file is never changed.
+  - The sidecar lists every hidden region (kind, box, method), and "What it did" shows it. The
+    exported file must hold no second copy of the picture from before the hiding. Today's export
+    copies a fixed list of metadata tags and should carry no embedded preview; a test makes sure.
+  - Nothing is generated: no copied texture, no rebuilt background, nothing that looks like
+    picture content.
+- **Owner decision:** the plan says "AutoEdit must never change content". Hiding changes what can
+  be seen. Proposed wording: "AutoEdit never invents content: nothing is generated, replaced or
+  filled in. Hiding a region is allowed when the user asks for it, and is always reported."
+- **Done when:** two different pictures under the same mask give identical pixels with `cover`
+  (a test: nothing under the mask can be told apart); pixels outside the grown mask are
+  byte-identical to a run without hiding; the exported file holds no embedded preview; a real
+  photo is checked at full size; default output is byte-identical.
+
+## Phase 9: film and filters
+
+Small features with a visible result. The owner asked for grain, an older look and "some random
+filter".
+
+### F23. Grain (M)
+
+- **Why:** film grain has been on the Later list since the first plan.
+- **Build:** an op `grain` (amount 0 to 100) with `grain_size`, the last step of `ops.STEPS`,
+  after `sharpen`, so it is never sharpened or cleaned away by `denoise`. Luma grain, strongest
+  in the middle tones and fading toward black and white. The pattern is seeded from the photo's
+  identity, so a rerun is byte-identical. Its size follows the image's long edge and it is added
+  after the export resize, so a web export and a full-size export look alike. Looks can carry it;
+  the instruction words "add grain", "more grain", "grainy" map to it.
+- **Done when:** a math test (zero is identity; the mean stays within 0.5 of 255; same input,
+  same output; more amount, more variance); the review gate does not report grain as noise or
+  banding, with `quality.toml` untouched; a sheet of 100 % crops for the owner; default output is
+  byte-identical.
+
+### F24. Black and white, and film looks (M)
+
+- **Why:** black and white today is saturation at zero. Editors choose how each colour turns grey
+  (a red filter makes a blue sky dark). Old-film looks are faded blacks, soft highlights and a
+  colour cast in shadows and highlights: most ops for that exist and need looks written as data.
+- **Build:** an op `bw` (amount) with a weight per colour band (red, yellow, green, blue), in the
+  colour step. Looks as data: `bw_classic`, `bw_red_filter`, `bw_soft`, `film_warm`, `film_cool`,
+  `film_faded`, `cross_process`, `instant`. The names say what the look does; no film brand is
+  named or claimed. A second op, `halation` (a warm glow round the brightest areas), only if the
+  contact sheet shows the looks need it.
+- **Done when:** a math test for `bw` (grey input is unchanged; zero is identity); a golden test
+  per look; the tone gate at 0 and 0 per look, where a look that means to be dark uses the
+  existing `preserve_exposure` field; a contact sheet of every look on 12 photos.
+
+### F25. LUT files (S)
+
+- **Why:** thousands of colour filters exist as `.cube` LUT files, free and sold, and a LUT is how
+  a look travels to other programs, video editors included.
+- **Build:** `--lut FILE.cube` with an op `lut` (amount 0 to 100) after the colour steps. A strict
+  reader: text only, a size limit, known keywords only. `autoedit looks lut NAME -o FILE.cube`
+  writes the whole-picture colour part of a look as a LUT; region edits cannot live in a LUT, and
+  the file says so in a comment.
+- **Done when:** an identity LUT is a no-op; a known LUT matches a reference within 1 of 255; a
+  broken file is refused with a clear message; the review gate runs after the LUT as after any
+  edit.
+
+### F26. Surprise me (S)
+
+- **Why:** a quick way to see looks the user would not have picked.
+- **Build:** a Studio button and `--look surprise --seed N`: six looks from the library on the
+  current photo, side by side (the variants machinery exists). The user picks one; the pick is a
+  named look, so the batch can be repeated.
+- **Done when:** the same seed gives the same six; the sidecar records the picked look by name.
+
+## Phase 10: your own style
+
+### F27. Style from your edits (M, measure first)
+
+- **Why:** the owner wants a look that builds up over time out of the photos already edited.
+  Today a personal look comes from blind votes (F12) or from saving one by hand (F11). What a user
+  types after an edit (F19) is the clearest sign of taste, and it is not used.
+- **Build:**
+  1. History. On export, one line per photo into `history.jsonl` in the profile: the scene, the
+     numbers the recipe predictor already uses (`recipe.features_from_stats`), the look, and the
+     user's own changes per target. No pixels, no file names, no metadata. A setting turns it
+     off; `autoedit history clear` deletes it. This step is cheap and can be built at any time.
+  2. Suggestions. `autoedit style suggest` and a Studio card. Per scene and target it takes the
+     median of the user's changes. A suggestion appears only when the same change was made on at
+     least 12 photos from at least 3 runs, in the same direction on at least 70 % of them: "You
+     made the sky darker on 14 of 17 landscapes. Add it to your look?" Yes writes a new named
+     look into the profile. Nothing changes without a yes.
+  3. Blind check. The old look against the new one on the user's own photos, with the voting page
+     of F12.
+  - Later: when the change depends on the photo (dark photos get more lift), train the recipe
+    predictor on the history. It stays "not now" until there is evidence.
+- **Done when:** a made-up history with one planted habit gives exactly that suggestion; a history
+  without a habit gives none; a yes changes the look file and nothing else; nothing leaves the
+  computer.
+
+### F28. Look files (M)
+
+- **Why:** people give away and sell presets. An AutoEdit look is data already. It needs a file
+  that travels and a picture that shows what it does.
+- **Build:** `autoedit looks export NAME` writes one file (`NAME.aelook`, TOML): the look's
+  values, palette, grain, black-and-white weights, a format version, optional author and licence
+  lines. Never photos, paths or history. `autoedit looks import FILE` checks it the way the
+  profile layer checks a config: known keys only, finite numbers inside the limits, a size limit.
+  A look file is data and can never run code. `autoedit looks card NAME` renders the look on
+  sample photos as one before-and-after sheet (PNG and HTML) to show or sell it.
+- **Owner decision:** which sample photos. The repo has two small test images. Either the owner
+  picks a dozen of their own, or a licence-free set is downloaded (a download needs a yes).
+- **Done when:** export then import gives the same look; a set of hostile files (unknown keys,
+  huge numbers, not-a-number, 10 MB, names that look like paths) is refused, with tests; the card
+  renders with the stub segmenter; a look from someone else stays inside the limits and the
+  review gate.
+
+### F29. Teaching mode (M)
+
+- **Why:** the owner wants the tool to teach how to edit, toward the user's own style. The "What
+  it did" report says what was done and why. Teaching needs three more things: see one step
+  alone, try first and compare, and be told what went wrong in numbers.
+- **Build** (in Studio; the server re-renders with the code of `adjust`):
+  1. Step through. The edit replayed one step at a time in editing order, each with the picture
+     before and after that step and three lines from `configs/lessons.toml`: what the tool does,
+     when editors use it, what to watch for.
+  2. Try first. The engine's edit is hidden. The user edits with typed instructions (F19, F20)
+     and a small set of sliders for the basic tools, then compares: their values beside the
+     engine's, plus what the existing checks measure (blown highlights, crushed shadows, skin
+     colour shift, banding, colours pushed out of range). Facts, not taste: "your version clips
+     3 % of the sky".
+  3. Your style. A page from the history of F27: how the user's edits differ from the baseline
+     per scene, with example photos.
+  - No model is needed. Later option: the local model (F20) answers "why did you darken the sky?"
+    from the sidecar's reasons only.
+- **Done when:** in the browser, on a real photo, the last step's picture equals the full preview
+  byte for byte; the compare table matches the sidecar; a test checks that every op has a lesson.
+
+## Phase 11: more kinds of photography
+
+The full list and the plan for each kind is in [GENRES.md](GENRES.md). The features here are the
+mechanism and the new tools that several kinds need.
+
+### F30. Genre packs (M)
+
+- **Why:** each kind of photography has its own things to find, its usual moves and its limits.
+  The engine has three scenes and three concept sets.
+- **Build:** `configs/genres.toml`. A genre names a concept set, opt-in rule sets (the
+  `[opt_in.NAME...]` mechanism exists), a default look, run settings (for example noise reduction
+  on) and what the reveal check looks for (F21). `--genre NAME`, `autoedit genres list`, a Studio
+  menu, own genres in the profile. A genre selects data; there is no code per genre. The engine
+  may suggest a genre for a folder and never applies one unasked.
+- **Done when:** `--genre landscape` gives the same bytes as today's `--preset landscape`; each
+  new pack has a golden test and passes the tone gate at 0 and 0 on at least 20 photos of its
+  kind. A pack without test photos stays `planned`.
+
+### F31. Night sky tools (M)
+
+- **Why:** the owner named astrophotography. A night-sky photo breaks what the engine assumes: the
+  frame is meant to be dark, city light puts a colour cast and a brightness slope across the sky,
+  and stars are small bright points that noise reduction eats and sharpening swells.
+- **Build** (wide night landscapes: Milky Way, aurora, star trails; not telescope work with
+  calibration frames, which Siril and PixInsight do):
+  - `sky_gradient`: fits a smooth surface to the sky background inside the sky mask, stars left
+    out, and subtracts it per channel. Removes the cast and the slope.
+  - A sky rule that lifts faint detail and holds star cores; a new curve shape only if the
+    existing `curve` op cannot do it.
+  - `hot_pixels`: single stuck pixels replaced by the middle value of their neighbours.
+  - Star protection: `denoise` and `sharpen` work less on star cores.
+  - The `astro` pack, with a look that uses `preserve_exposure`.
+  - With F33: stacking for noise, and star trails.
+- **Done when:** math tests per op (zero is identity; on a made-up sky with a slope and stars the
+  slope is gone to within 1 of 255 and each star keeps its brightness within 2 %); the tone gate's
+  behaviour on frames that are meant to be dark is written down, `quality.toml` untouched; a blind
+  sheet on at least 20 night-sky photos, which the owner has to supply.
+
+### F32. Geometry (L)
+
+- **Why:** the engine cannot rotate, crop or straighten. A sloping horizon and leaning walls are
+  the first thing an editor fixes in landscapes, seascapes, buildings and rooms.
+- **Build:** `level` (rotate to the horizon, found from the boundary between the sky, water and
+  ground masks; at most 5 degrees), `upright` (leaning vertical lines made vertical, limited),
+  `crop` to a shape for an export preset (`aspect = "4:5"`, placed on the subject mask). Decided
+  in `decide`, applied in `apply` as one resampling of the full-size image after the colour steps
+  and before `sharpen` and `grain`. Off by default; the sidecar gives the angle and how much of
+  the frame was cut.
+- **Owner decision:** straightening cuts a little off the edges. Proposed: allowed, because
+  nothing is invented; the cut is limited and reported.
+- **Later:** lens corrections from a lens database.
+- **Done when:** a made-up tilted horizon is level to within 0.2 degrees; a level photo is left
+  alone byte for byte; a made-up leaning grid is upright; a sheet of real photos.
+
+### F33. Merge frames (L)
+
+- **Why:** several kinds are shot as a set of frames meant to become one picture: exposure
+  brackets (a room with bright windows, a sunset), repeats against noise (night sky, a dark
+  stage), focus series (macro, products), star trails.
+- **Build:** `autoedit merge FOLDER`. Groups come from the burst finder of F9 plus the exposure
+  data. Modes: `average` (less noise), `brackets` (per pixel, the best-exposed frames blended),
+  `focus` (per pixel, the sharpest frame), `trails` (per pixel, the brightest). First version:
+  frames from a tripod, aligned by a small shift. Aligning a moving sky is a second task. The
+  result is one 16-bit TIFF per group, with a record of the frames used, and that file then goes
+  through the normal pipeline. The stage order is unchanged.
+- **Content rule:** every pixel comes from the user's own frames of the same scene. Things that
+  moved between frames leave ghosts; the first version flags such a group and does not repair it.
+- **Done when:** made-up tests per mode (the average of N noisy frames cuts noise by the square
+  root of N within 10 %; `brackets` leaves no clipped pixel where a frame has detail; `focus`
+  picks the sharp frame); one real bracket set and one real night set; groups with movement are
+  flagged.
+
+### F34. Exact colour and clean backgrounds (M)
+
+- **Why:** products, food, copies of artwork and school portraits need colour that is right and
+  the same across the set, and a backdrop that is evenly white. That is a different job from
+  "make it look good".
+- **Build:** a neutral pick (`--neutral x,y`, or a click in Studio on something grey or white)
+  that sets the white balance for one photo or the whole set. A backdrop rule: the background
+  region evened out and taken to a set white, the product untouched. Shoot consistency (F9)
+  extended from brightness to white balance. A report of the colour difference between frames of
+  the same product.
+- **Stays out:** cutting the product out onto a new background.
+- **Done when:** the picked patch is neutral within 1 of 255; a made-up uneven backdrop is even
+  within 2 of 255 while pixels outside the grown mask are byte-identical; on a real set the spread
+  in white balance is at least halved.
+
+### F35. Pick the keepers (M)
+
+- **Why:** sports, wildlife, events and weddings are shot in bursts, and most of the time goes
+  into choosing. The parts exist: bursts (F9), the scorer, `curate`.
+- **Build:** `autoedit pick FOLDER`. Per burst, the frames ranked by the sharpness of the subject
+  mask (not of the whole frame), exposure, and the scorer when a model is there. Output: a ranking
+  file and a contact sheet with the pick marked; picks are copied or tagged. No source file is
+  moved or deleted. Open eyes and smiles need a face model and are not in the first version.
+- **Done when:** in made-up bursts with one sharp frame, that frame is always picked; on a real
+  shoot of at least 30 bursts the owner's own pick is among the tool's top two in 8 of 10 bursts;
+  a hash test shows no source file changed.
+
+## Ideas, not planned yet (added 2026-11-16)
+
+None has a spec. Whether people want them was not researched, except where it says so.
+
+- **A record of what was edited.** The sidecar already proves that nothing was generated. Two
+  uses: a one-page "edit declaration" for photo contests and news desks that limit editing, and
+  Content Credentials (the C2PA standard) signed into the export. The second needs a signing
+  certificate; how other programs show a self-made one has to be checked first. This fits the
+  product rule better than any other idea here.
+- **Search by what is in the photo.** The run already knows the regions of every photo. An index
+  over the sidecars answers "all photos with snow and a lake". The same list can be written as
+  keywords into the file for stock agencies, and as a first draft of an image description for
+  websites.
+- **Timelapse flicker.** A folder of frames evened in brightness from frame to frame. The
+  machinery is the burst evening of F9.
+- **Learn from a photo you admire.** Give a reference photo and get, in plain words, how it
+  differs from yours (the reference matching exists). It belongs with teaching mode.
+- **Speak instead of type.** A microphone button on the instruction box. Speech must be turned
+  into text on this computer, which needs a local speech model.
+- **Brighter-than-white output.** Phones and browsers now show photos with real highlights
+  (gain-map JPEG and AVIF). The engine works in standard range; this is a large change.
+- **Print help.** Sharpening for the print size, a warning for colours a printer cannot make,
+  a border.
+- **A delivery page.** The contact-sheet pages exist; a client gallery with picks is close.
+- **Release check.** After the reveal check: "people found in 40 photos; is a signed release on
+  file?" A checklist, nothing more.
+- **Needs an owner decision under the content rule, proposed to stay out:** background blur
+  (fake shallow focus), skin smoothing and blemish removal, light leaks, dust, frames and
+  watermarks laid over the photo, repairing dust and scratches on scans.
+
 ## Later, or not planned
 
-- **Later:** lens corrections for RAW, Display P3 output, a watch folder, film grain for the
-  cinematic look.
+- **Later:** lens corrections for RAW, Display P3 output, a watch folder. (Film grain moved into
+  the plan as F23.)
 - **Proposed by the unattended run of 2026-11-11** (each is a feature of its own, none is built):
   - *RAW highlight recovery.* The RAW files hold cloud detail that the default decode clips to
     flat white (seen with LibRaw's blend mode, [F6 result](plans/F6-highlights.md)). LibRaw's
@@ -306,7 +660,9 @@ Three config decisions, each a small change with a gate run once the owner has d
 - **Not now:** an XMP hand-off to Lightroom. AutoEdit's op math does not map onto Adobe's sliders.
 - **Not now:** the learned recipe predictor as a default. It needs evidence first.
 - **Never:** generative edits (sky replacement, object removal, inpainting) and retouching that
-  changes content. AutoEdit must never change content.
+  changes content. AutoEdit must never change content. (Two features ask the owner for a
+  bounded exception, each reported in the sidecar: hiding a region on request, F22, and
+  straightening or cropping, F32. Neither generates anything.)
 - **After this plan:** the Studio rebuild, the desktop shell and the website.
 
 ## Rules for every feature
@@ -335,6 +691,12 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Bursts mode as the default consistency? | [F9 result](plans/F9-shoot-consistency.md) | `consistency = "bursts"` under `[run]` |
 | Gated SAM 3 flow, or a second segmenter? | The candidate list in `ARCHITECTURE.md`, "Adding a segmenter" (licences unverified) | F14 follow-up |
 | What should the website do first: showcase and download, or online editing? | none yet | After this plan |
+| May AutoEdit hide a region when the user asks (F22)? | The proposed wording of the content rule is in F22 | F22 is built; the "Never" line above is reworded |
+| May AutoEdit straighten and crop (F32)? | F32 | F32 is built |
+| Which kinds of photography first? | [GENRES.md](GENRES.md), "Order". A pack can only be tested on photos of its kind, and the repo has mountain landscapes only | The owner names the kinds and supplies at least 20 photos of each |
+| Sample photos for look cards (F28): own photos, or a licence-free set from the web? | F28 | A download needs a yes |
+| Keep a local history of your own edits, on by default (F27)? | F27: no pixels, no file names, never leaves the computer | `history = true` under `[run]` |
+| Do background blur, skin smoothing and overlays stay out? | "Ideas, not planned yet", last item. Proposed: they stay out | none |
 
 Things only the owner can do, left open by the unattended run:
 
