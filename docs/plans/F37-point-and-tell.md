@@ -1,7 +1,7 @@
 # F37. Point and tell
 
-Status: spec (2026-11-16), with a first measurement and its second reading (T0, done). Size L.
-Not yet in
+Status: spec (2026-11-16), with a first measurement and its second reading (T0, done). The
+owner's decisions are made, except where F37 goes in the order (decision 3). Size L. Not yet in
 [FEATURE_PLAN.md](../FEATURE_PLAN.md): other sessions had that file open while this was written.
 The proposed row is the last section.
 Builds on [F2](F2-region-instructions.md) (instructed things and their cells),
@@ -76,8 +76,9 @@ Why the oval alone does not look for a thing is measured below.
    `tint`. "Purple" is tint -90 and temp -10: on skin the warmth is held and the tint is not. By
    the op's arithmetic a skin tone then loses about 6 levels of 255 in green while red and blue
    move by about 1: a magenta cast. With a tint limit of 6 it would be 0.4 levels. The same is
-   true today for the typed "make the face pinker" (F20). The oversaturation gate does not catch
-   it: a shift of the middle channel does not make a pixel more colourful by its measure.
+   true today for typed changes (F20): on the synthetic test photo, "make the skin pinker"
+   leaves tint -100 on the skin region. The oversaturation gate does not catch it: a shift of
+   the middle channel does not make a pixel more colourful by its measure.
 6. **A small person has no skin region.** Skin under 4 % of the frame counts as absent (a guard
    against red dots on rock), and the `dramatic` and `cinematic_preserved` styles do not look
    for skin at all. A circled hiker would be recoloured whole, with no policy in the way.
@@ -238,7 +239,7 @@ beside those of the first run.
 | What "inside the oval" means | What has its centre in the box. If more than 40 % of it lies outside the box, it is bigger than the mark (a stretch of sky) and nothing is applied | `inside_share` under `[marks]` |
 | Nothing found | Nothing is applied. The chip offers the oval. No silent switch | `mark_adjustments` in `web/service.py` |
 | Size words on a mark | Not understood: a mark has the size that was drawn | `parse` |
-| Area marks and protected regions | Inside an area mark, skin and snow that the run found keep their limits. F18's named places stay as they are | `guard_area = false` under `[marks]` |
+| Area marks and protected regions | Inside an area mark, skin and snow that the run found keep their limits. F18's named places follow in T8 (the owner's decision 4) | `guard = false` under `[shapes]` |
 | Without SAM 3 | Every mark is an area. The stub is not taught to find things: a thing mark that reaches it is "not found", like any name it does not know | Nothing to reverse |
 | Where the sentence is read | On this computer: the word list, then the local model (F20). Never the cloud model, as for follow-ups (F19) | Nothing to reverse |
 | Where Studio keeps marks | In the photo's follow-up list: same list, same local storage, same Undo | `STATE.followups` in `studio.html` |
@@ -508,12 +509,13 @@ Details:
   (1 - guard) with the full change, and the oval times guard with the held one, named
   `instruction:<mark>` and `instruction:<mark>/guarded`. The guard is the feathered mask that
   `_build_guard` makes today; that method gains a way to return the mask also when the global
-  pass holds none of the guarded ops.
-- **The skin tint limit** (owner's decision 2): `tint = 6` in `[concept.skin] max`, beside
-  `temp = 6`. With it, "make this guy more purple" changes his clothes and keeps his skin. No
-  default render changes: no rule sets tint on a region. A run with a reference photo can ask
-  for a little more than 6 on a region (several passes of at most 5); on skin the limit then
-  holds it. It also limits typed changes on skin ("make the face pinker"), which is the point.
+  pass holds none of the guarded ops. The switch is `guard` under `[shapes]`.
+- **The skin tint limit** (decided by the owner on 2026-11-16, decision 2): `tint = 6` in
+  `[concept.skin] max`, beside `temp = 6`. With it, "make this guy more purple" changes his
+  clothes and keeps his skin. No default render changes: no rule sets tint on a region. A run
+  with a reference photo can ask for a little more than 6 on a region (several passes of at
+  most 5); on skin the limit then holds it. It also limits typed changes on skin ("make the face
+  pinker"), which is the point, and test 24 pins it.
 - **Snow.** A circled glacier or snow field takes no colour: the snow policy forbids it, as for
   the typed "warm the snow". The note says so, and brightness still works.
 - **Not touched:** `edit/gates.py`, `edit/ops.py`, `edit/banding.py`, `quality.py`,
@@ -754,7 +756,26 @@ What F37 needs from F36, and must keep:
 Target, on the development machine with the load average written beside it: the segment stage of
 a preview that adds one named mark stays under 1.5 s (median) once the photo has had a preview.
 
-## Config keys: `[marks]` in `configs/instructions.toml`
+### 12. The follow-up: named places keep the limits too (T8)
+
+Decided by the owner on 2026-11-16 (decision 4). Until T8 is built, F18's rule holds: a named
+place ("the top", "the center") applies its change to everything under it, with no region
+policy. On the synthetic test photo, "make the center pink" puts tint -100 over the skin today.
+
+- **What changes.** Every layer made by an instruction goes through the guarded split of section
+  6, the named places included. Under "make the top pink", skin and snow that the run found get
+  the change after their policy, and the rest of the gradient gets it in full.
+- **What does not.** A change the policies leave alone ("darken the top", "add a vignette")
+  stays one layer and renders exactly as before. The engine's own moves in `compose.toml` (the
+  vignette, the sky gradient, the sun glow) are not touched: they are not instructions, and
+  changing them would change default pixels.
+- **A glow on snow** keeps its brightness and loses its warmth there: the snow policy forbids
+  `temp`. That is the rule that keeps snow white everywhere else.
+- **The switch** is the one of the area marks: `guard` under `[shapes]`.
+- **F18's spec** gets one line under its decisions table: the row "Region policies on an
+  instructed shape" was reversed for skin and snow by F37, T8, with the date.
+
+## Config keys: `[marks]` and `[shapes]` in `configs/instructions.toml`
 
 ```toml
 [marks]
@@ -768,16 +789,20 @@ min_coverage = 0.0001        # thing: the smallest mask, as a share of the frame
 min_cell_coverage = 0.0001   # thing: the smallest overlap with a region that is its own cell
 inside_share = 0.6           # thing: less of the mask inside the box: "bigger than the mark"
 guard_min_share = 0.03       # skin or snow inside a mark is its own cell from this share of it
-guard_area = true            # area: skin and snow the run found keep their limits in the oval
 # The sentence asks for the oval itself:
 area_words = ["area", "part", "spot", "patch", "corner", "region", "zone"]
 # Words that name nothing:
 pointing_words = ["thing", "one", "object", "stuff", "bit", "here", "there",
                   "circle", "oval", "mark", "selection"]
+
+[shapes]
+# A shape layer made by an instruction is blended on its own: the oval of an area mark and,
+# from T8 on, a named place of F18. Inside it, skin and snow the run found keep their limits.
+guard = true
 ```
 
-`load_vocab` reads the block into `Vocab.marks` with these values as defaults, so an older
-`instructions.toml` in a profile keeps working.
+`load_vocab` reads `[marks]` into `Vocab.marks` and `guard` into `Vocab.shape_guard`, with these
+values as defaults, so an older `instructions.toml` in a profile keeps working.
 
 Where the numbers come from: `inside_share` and `guard_min_share` from the first measurement
 (whole boxes 0.69 or more inside, part boxes 0.47 or less; skin 5 % of a person). `min_score` is
@@ -794,14 +819,14 @@ memory (64). They are limits of the service, beside `MAX_PHOTO_EDIT`.
 |---|---|---|
 | `src/autoedit/segment/base.py` | `MARK`, `mark_name`, `parse_mark` | T1 |
 | `src/autoedit/instructions.py` | `Vocab.marks`; `parse(..., mark=)`, `_mark_target`, `to_mark`, `mark_spec`, `layer_spec`, `_doubtful` | T1 |
-| `src/autoedit/configs/instructions.toml` | `[marks]` | T1 |
+| `src/autoedit/configs/instructions.toml` | `[marks]`, `[shapes]` | T1 |
 | `src/autoedit/segment/sam3.py` | the branch in `segment`, `_centre_in`, `open_vocabulary` | T2 |
 | `src/autoedit/segment/stub.py` | `open_vocabulary` only | T2 |
 | `src/autoedit/segment/cache.py` | at most 64 mark masks per photo in `CachingSegmenter` | T2 |
 | `scripts/eval_marks.py` | new: a boxes file in, numbers and a sheet out | T2 |
 | `src/autoedit/instructions.py` | `plan`: `lay`, the gates of a mark, protected parts, `why`, `asked`; `mark_found`; `report`; `extra_concepts` | T3 |
 | `src/autoedit/pipeline.py` | guarded concepts for a thing mark; area layers with their guarded part; `layer_spec`; `on_plan`. No stage is added or moved | T3 |
-| `src/autoedit/configs/concepts.toml` | `tint = 6` in the skin limits, only after a yes | T3 |
+| `src/autoedit/configs/concepts.toml` | `tint = 6` in the skin limits (the owner's decision 2) | T3 |
 | `src/autoedit/configs/lessons.toml` | new | T4 |
 | `src/autoedit/lessons.py` | new: `load`, `walk` | T4 |
 | `src/autoedit/web/service.py` | `mark_adjustments`, `photo_marks` in `preview` and `run_one`, the three answer fields | T5 |
@@ -812,7 +837,9 @@ memory (64). They are limits of the service, beside `MAX_PHOTO_EDIT`.
 | `src/autoedit/web/static/studio.html` | section 9, and the panel of section 10 | T6 |
 | `tests/test_marks.py`, `tests/test_lessons.py` | new | T1 to T5 |
 | `tests/test_sam3_glue.py` | a thing mark in `segment` | T2 |
-| `README.md`, `ARCHITECTURE.md`, `CHANGELOG.md` | the feature, the kinds of target, the three flags | T7 |
+| `README.md`, `ARCHITECTURE.md`, `CHANGELOG.md` | the feature, the kinds of target, the three flags, the skin tint limit | T7 |
+| `src/autoedit/pipeline.py` | the guarded split for every instruction layer, named places included | T8 |
+| `docs/plans/F18-shaped-light.md`, `CHANGELOG.md` | one line each: places keep the limits of skin and snow | T8 |
 
 Protected areas (`docs/AGENT_ROUTING.md`): only `pipeline.py` is touched, and its stage order is
 not. This spec is the Planner's part; the Checker reviews T3 without exception.
@@ -827,16 +854,18 @@ One after the other. F21's open tasks change the segmenters, `pipeline.py`, `web
 | T0 | Checker (Opus, high), then the session | Done on 2026-11-16. The Checker judged blind sheets of the first run's masks row by row, without the session's count. The session applied "The numbers that decide" and wrote both counts into this file | "T0, done": the two counts side by side |
 | T1 | Builder (Sonnet, medium) | Sections 1 to 3; tests 1 to 4 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_instructions.py tests/test_instruction_words.py tests/test_shaped_light.py tests/test_follow_up.py -q` |
 | T2 | Builder (Sonnet, medium) | Section 4; tests 5 to 7 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_sam3_glue.py tests/test_segment_cache.py -q` |
-| T3 | Builder (Sonnet, high) | Sections 5 to 7; tests 8 to 17 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_instructions.py tests/test_adjust.py tests/test_apply_groups.py tests/test_policies.py tests/test_guard.py tests/test_pipeline.py -q`, then `PYTHONPATH=src python3 tests/run_all.py` |
+| T3 | Builder (Sonnet, high) | Sections 5 to 7; tests 8 to 17 and 24 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_instructions.py tests/test_adjust.py tests/test_apply_groups.py tests/test_policies.py tests/test_guard.py tests/test_pipeline.py -q`, then `PYTHONPATH=src python3 tests/run_all.py` |
 | T4 | Builder (Sonnet, medium) | Section 10 without the page; tests 22 and 23 | `PYTHONPATH=src python3 -m pytest tests/test_lessons.py tests/test_marks.py -q` |
 | T5 | Builder (Sonnet, medium) | Section 8; tests 18 to 21 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_follow_up.py tests/test_web_service.py tests/test_jobs.py tests/test_api_contract.py tests/test_security.py tests/test_adjust.py tests/test_cli.py -q` |
 | T6 | Builder (Sonnet, high) | Sections 9 and 10 in the page | T5's command, then acceptance check 6 in the browser |
 | T7 | Tweaker (Haiku, low) | The exact old and new strings from the session's brief | `PYTHONPATH=src python3 tests/run_all.py` |
 | Check | Checker (Opus, high) | The diff against this spec and the invariants of `CLAUDE.md`; the definition of done; the privacy check | Findings as `file:line` |
+| T8 | Builder (Sonnet, medium), then the Checker (Opus, high) on its diff | After the Check. Section 12; test 25 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_shaped_light.py tests/test_instruction_words.py tests/test_follow_up.py -q` |
 
 Every task ends with `PYTHONPATH=src python3 tests/run_all.py` and
 `PYTHONPATH=src .venv/bin/python tests/run_all.py`. T0 is done and says "build as specified". The
-tasks after it wait for the owner's decisions.
+owner's decisions are made, except the order (decision 3): T1 starts when the owner says where
+F37 goes in the plan.
 
 ## Tests
 
@@ -857,16 +886,18 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 | 9 | `test_two_marks_that_overlap` | The cells stay disjoint; the overlap cell carries the base settings plus both changes, applied once |
 | 10 | `test_bigger_than_the_mark` | A mask with 30 % inside the box: status `not_found`, the note says "bigger than the mark", pixels equal the run without the mark |
 | 11 | `test_a_small_thing_is_edited` | A mask of 0.02 % of the frame inside a region is applied under a mark; the same mask as a typed concept is "too small" |
-| 12 | `test_skin_inside_a_thing_mark_keeps_its_limits` | Concepts `["sky"]`, a mark mask, a `skin` mask over 20 % of it (score 0.9): the segmenter was asked for `skin`; the skin part has `skin` among its owners; with "purple", `temp` is held at the skin limit, and `tint` too when `concepts.toml` has that limit (the test reads the limit, so it passes for either answer to decision 2); the rest of the mark gets the full change; status `clamped` |
+| 12 | `test_skin_inside_a_thing_mark_keeps_its_limits` | Concepts `["sky"]`, a mark mask, a `skin` mask over 20 % of it (score 0.9): the segmenter was asked for `skin`; the skin part has `skin` among its owners; with "purple", `temp` and `tint` are held at the skin limits (the test reads them from `concepts.toml`); the rest of the mark gets the full change; status `clamped` |
 | 13 | `test_a_speck_of_skin_is_ignored` | Skin over 1 % of the mark: no extra cell, the full change everywhere |
 | 14 | `test_snow_inside_a_mark_takes_no_colour` | A mark across a snow region, "purple": the snow cell drops tint and temp, its pixels equal the run without the mark; "brighten" passes |
-| 15 | `test_area_mark_holds_guarded_regions` | Stub pipeline, an area mark over the skin ellipse, "purple": `composition` lists the mark and its `/guarded` part; inside the skin the change is the held one; with "brighten" there is one layer; with `guard_area = false` one layer with the full change |
+| 15 | `test_area_mark_holds_guarded_regions` | Stub pipeline, an area mark over the skin ellipse, "purple": `composition` lists the mark and its `/guarded` part; inside the skin the change is the held one; with "brighten" there is one layer; with `guard = false` under `[shapes]` one layer with the full change |
 | 16 | `test_no_mark_changes_nothing` | A run without marks is byte-identical to the same run with the new code path never entered (compare `adjustments=None` and `adjustments=[]`), and the segmenter was asked for the run's concepts only |
 | 17 | `test_a_mark_leaves_the_rest_alone` | With a thing mark and extra guarded masks: the scene, the regions and their settings equal the run without the mark; the bottom rows of the image are unchanged within 1 level |
 | 18 | `test_preview_takes_photo_marks` | Stub; `photo_marks = [{box, edit: "brighten this"}]`: brighter inside the oval, an adjustment of scope `photo`, and `marks`, `mark_overlays`, `walkthrough` in the answer |
 | 19 | `test_photo_marks_are_checked` | Each rule of section 8 once: 400 through the API and `ValueError` from the service |
 | 20 | `test_batch_and_adjust_keep_marks` | A job on two photos with a mark on one: its sidecar holds the adjustment with the mark's name and its image differs from a run without; the other photo is byte-identical; `adjust.rerender(image)` without a change is byte-identical; `reset=True` removes the mark |
 | 21 | `test_cli_adjust_mark` | `--mark 0.3,0.3,0.7,0.7 --edit "brighten this"` returns 0 and brightens the middle only; `--mark 0.3,0.3,0.2,0.7` returns 2; `--mark` without `--edit` returns 2; `--explain` prints the mask line and one line per tool |
+| 24 | `test_typed_colour_on_skin_is_limited` (T3, the golden test for the new limit) | Stub pipeline on the synthetic image, `edit="make the skin pinker"`: the skin region's `tint` in the result is the limit of `concepts.toml` (-6, where it is -100 today), a note reads `policy[skin]: clamped tint`, the status is `clamped`; without an instruction the same photo renders byte-identical with and without the limit |
+| 25 | `test_named_place_holds_guarded_regions` (T8) | Stub pipeline on the synthetic image, `edit="make the center pink"`: `composition` lists `instruction:center` and `instruction:center/guarded`, and inside the skin the tint is the held one; `edit="brighten the center"` gives one layer, and its pixels equal the run with `guard = false`; a run without instructions is byte-identical before and after T8 |
 
 `tests/test_lessons.py`:
 
@@ -898,6 +929,9 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
    a jacket's edge.
 8. The tone gate does not apply: no default pixel changes (check 1 proves it).
 9. The Checker's review, with the privacy check before the commit block.
+10. After T8: both suites green, default renders byte-identical, "make the top pink" on one real
+    photo with snow under the gradient (the snow keeps its colour, the sky takes the pink), and
+    the Checker's review of that diff.
 
 ## Known limits
 
@@ -922,18 +956,26 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 
 ## Decisions for the owner
 
-| Decision | Evidence | The change, if yes |
+**Made on 2026-11-16.** Asked "Accept the spec's five proposed answers as they stand?", the owner
+answered "Yes, as proposed". Four of the five decisions had a proposed answer:
+
+| Decision | The owner's answer | What follows |
 |---|---|---|
-| 1. The default: a name in the sentence means the thing, no name means the oval itself. The other choice is to let an unnamed oval guess a thing; measured, that guess is right on half the boxes and changes when the oval is redrawn. Proposed: as specified | "Measured before the design" | none |
-| 2. Skin gets a tint limit. Today nothing stops a typed change from tinting skin: "make this guy more purple" turns his face magenta, and so does F20's "make the face pinker". Proposed: yes | "What was found", point 5. No default render changes | `tint = 6` in `[concept.skin] max` in `concepts.toml` |
-| 3. When to build it: before or after F21's open tasks? They share files, so one after the other. F36, which it needs, is closed | "Tasks" | The order in `FEATURE_PLAN.md` |
-| 4. Should F18's named places protect skin and snow too? Today "make the top pink" reaches the skin and snow under the gradient with no region policy; only the oversaturation gate stands in the way. Proposed: yes, as a small follow-up with T3's helper | Section 6. Not measured on a photo | One task after F37 |
-| 5. Is this walk-through enough until F29: the mask, the tools and amounts, a lesson on each, the change on and off? A picture before and after every single tool stays with F29 | Section 10 | none |
+| 1. The default: a name in the sentence means the thing, no name means the oval itself. The other choice was to let an unnamed oval guess a thing; measured, that guess is right on half the boxes and changes when the oval is redrawn | As specified | Nothing to change |
+| 2. Skin gets a tint limit. Until now nothing stopped a typed change from tinting skin: "make this guy more purple" would give his face a magenta cast, and F20's "make the skin pinker" does | Yes | `tint = 6` in `[concept.skin] max` in `concepts.toml`, built in T3 and pinned by test 24. No default render changes |
+| 4. F18's named places protect skin and snow too. Until now "make the top pink" reached the skin and snow under the gradient with no region policy | Yes, as a small follow-up | T8, section 12, test 25 |
+| 5. This walk-through is enough until F29: the mask, the tools and amounts, a lesson on each, the change on and off. A picture before and after every single tool stays with F29 | Yes | Nothing to change |
+
+**Still open.** Decision 3 had no proposed answer, so the yes does not cover it:
+
+| Decision | Evidence | The change |
+|---|---|---|
+| 3. Where F37 goes in the order: before or after F21's open tasks? They share files, so one after the other. Proposed now: F37 first. F21's next tasks wait for the measurement on the owner's labelled photos, and F37 waits for nothing | "Tasks"; the F21 row of `FEATURE_PLAN.md` | The order in `FEATURE_PLAN.md` |
 
 ## Proposed plan entry
 
 For the table in `FEATURE_PLAN.md`:
 
-`| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | spec, measured and read twice (T0 done); waits for the owner's decisions |`
+`| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | spec, measured and decided; ready to build once its place in the order is set |`
 
-And under "Decisions for the owner" there, rows 2 and 4 of the table above.
+Under "Decisions for the owner" there, only decision 3 of this spec: the order.
