@@ -36,7 +36,7 @@ more kinds of photography. The kinds have their own file, [GENRES.md](GENRES.md)
 | F18 | Shaped light: gradients, ovals, a sun glow | M | done; the automatic glow is off by default |
 | F19 | Follow-up edits | M | done |
 | F20 | Free-text instructions (more words, a local model) | M | done |
-| F21 | Reveal check: what a photo gives away | L | planned (measure first) |
+| F21 | Reveal check: what a photo gives away | L | spec; the measurement on the owner's photos is open |
 | F22 | Hide on request: cover, mosaic, blur | M | planned; needs the owner's yes on the content rule |
 | F23 | Grain | M | planned |
 | F24 | Black and white, and film looks | M | planned |
@@ -337,8 +337,8 @@ The feature the owner asked for most. Order matters: the check first, measured, 
   photographer's own computer. SAM 3 makes that possible here: it finds any named thing.
 - **Build:**
   - `configs/reveal.toml`: what to look for, as data. Each entry has the words given to SAM 3, a
-    minimum score, and a kind (`plate`, `address`, `screen`, `document`, `card`, `badge`,
-    `people`, `child`, `key`, `code`). First list: number plate; house number, street sign;
+    minimum score, and a kind (`plate`, `address`, `writing`, `screen`, `document`, `card`,
+    `badge`, `people`, `face`, `child`, `key`, `code`). First list: number plate; house number, street sign;
     computer, phone and TV screen; letter, document, whiteboard, parcel label; bank and ID card,
     ticket, boarding pass; name badge; face; child; key; barcode and QR code. The user adds own
     words in the profile (F11), for example a company logo.
@@ -359,6 +359,7 @@ The feature the owner asked for most. Order matters: the check first, measured, 
     `segment` and `stats`.
   - Later option: reading the text in the picture (an address, an email, a phone number). That
     needs a local text reader the engine does not have.
+- **Spec:** [F21](plans/F21-reveal-check.md).
 - **Measure first:** a labelled set of at least 100 photos (at least 20 with plates, 20 with
   screens, 20 with documents or signs, 40 with nothing). Run SAM 3 on the reveal words and write
   down, per kind, how many were found and how many false alarms came up. If fewer than 9 of 10
