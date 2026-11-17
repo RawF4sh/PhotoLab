@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .edit.mask import blobs
+
 _GRID = 128   # the blob search runs on a grid of about this many cells on the long side
 
 
@@ -44,34 +46,8 @@ def _dilate(m: np.ndarray, p: int) -> np.ndarray:
 def _largest_blob(mask: np.ndarray) -> np.ndarray | None:
     """The biggest 8-connected group of True pixels, found on a coarse grid (a flood fill over
     at most _GRID x _GRID cells), returned as a full-size mask."""
-    h, w = mask.shape
-    b = max(1, -(-max(h, w) // _GRID))
-    gh, gw = -(-h // b), -(-w // b)
-    padded = np.zeros((gh * b, gw * b), bool)
-    padded[:h, :w] = mask
-    cells = padded.reshape(gh, b, gw, b).any(axis=(1, 3))
-    seen = np.zeros_like(cells)
-    best: list[tuple[int, int]] = []
-    for y0, x0 in zip(*np.nonzero(cells)):
-        if seen[y0, x0]:
-            continue
-        stack, group = [(int(y0), int(x0))], []
-        seen[y0, x0] = True
-        while stack:
-            y, x = stack.pop()
-            group.append((y, x))
-            for yy in range(max(y - 1, 0), min(y + 2, gh)):
-                for xx in range(max(x - 1, 0), min(x + 2, gw)):
-                    if cells[yy, xx] and not seen[yy, xx]:
-                        seen[yy, xx] = True
-                        stack.append((yy, xx))
-        if len(group) > len(best):
-            best = group
-    if not best:
-        return None
-    keep = np.zeros((gh, gw), bool)
-    keep[tuple(np.array(best).T)] = True
-    return mask & np.kron(keep, np.ones((b, b), bool))[:h, :w]
+    found = blobs(mask, _GRID)
+    return found[0] if found else None
 
 
 def _from_mask(core: np.ndarray, source: str, score: float) -> Light:

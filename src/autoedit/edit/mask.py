@@ -17,6 +17,39 @@ from .filters import gaussian_blur, guided_filter
 _GUIDE_CAP = 1600  # run the guided filter at ≤ this long edge for speed, then upsample the alpha
 
 
+def blobs(mask: np.ndarray, grid: int) -> list[np.ndarray]:
+    """The 8-connected groups of True pixels, found on a grid of at most grid x grid cells,
+    largest first, each as a full-size mask."""
+    h, w = mask.shape
+    b = max(1, -(-max(h, w) // grid))
+    gh, gw = -(-h // b), -(-w // b)
+    padded = np.zeros((gh * b, gw * b), bool)
+    padded[:h, :w] = mask
+    cells = padded.reshape(gh, b, gw, b).any(axis=(1, 3))
+    labels = np.zeros((gh, gw), np.int32)
+    sizes: list[int] = []
+    for y0, x0 in zip(*np.nonzero(cells)):
+        if labels[y0, x0]:
+            continue
+        sizes.append(0)
+        k = len(sizes)
+        stack = [(int(y0), int(x0))]
+        labels[y0, x0] = k
+        while stack:
+            y, x = stack.pop()
+            sizes[-1] += 1
+            for yy in range(max(y - 1, 0), min(y + 2, gh)):
+                for xx in range(max(x - 1, 0), min(x + 2, gw)):
+                    if cells[yy, xx] and not labels[yy, xx]:
+                        labels[yy, xx] = k
+                        stack.append((yy, xx))
+    if not sizes:
+        return []
+    full = np.kron(labels, np.ones((b, b), np.int32))[:h, :w]   # upsampled once
+    order = sorted(range(1, len(sizes) + 1), key=lambda k: -sizes[k - 1])   # stable: scan order breaks ties
+    return [mask & (full == k) for k in order]
+
+
 def build_alpha(proxy_mask: np.ndarray, full_hw: tuple[int, int], feather_frac: float,
                 guide: np.ndarray | None = None) -> np.ndarray:
     """proxy_mask: bool HxW (proxy res). guide: optional full-res luma HxW for edge-aware

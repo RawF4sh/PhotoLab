@@ -43,10 +43,10 @@ def config_path(name: str, packaged_fallback: bool = False) -> str:
     return path
 
 
-_CONFIG_FILES = ("rules", "looks", "concepts", "styles", "compose", "intents", "palettes", "instructions", "exports")
+_CONFIG_FILES = ("rules", "looks", "concepts", "styles", "compose", "intents", "palettes", "instructions", "exports", "reveal")
 
 
-_OPTIONAL = ("instructions", "exports")
+_OPTIONAL = ("instructions", "exports", "reveal")
 
 
 def _app_dir(create: bool) -> str | None:
@@ -168,6 +168,68 @@ def _check_looks(data: dict, path: str) -> None:
                 raise ValueError(f"{path}: look {name}.{field} must be a finite number, not {val}")
 
 
+_CHECK_RANGES = {"min_score": (0, 1), "min_side": (0, 0.2), "merge_iou": (0, 1), "subject_ratio": (0, 1)}
+_KIND_KEYS = ("label", "words", "min_score", "weak", "off")
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9 -]{0,39}")   # starts with a letter or digit: never blank
+
+
+def _number(val, lo: float, hi: float, name: str, path: str) -> None:
+    if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+        raise ValueError(f"{path}: {name} must be a finite number")
+    if not lo <= val <= hi:
+        raise ValueError(f"{path}: {name} must be from {lo} to {hi}, not {val}")
+
+
+def _check_reveal(data: dict, path: str) -> None:
+    """Refuse a reveal.toml that is malformed or would make the check slow (each word is a model call)."""
+    for key in data:
+        if key not in ("check", "kind"):
+            raise ValueError(f"{path}: unknown key {key!r}; valid keys: check, kind")
+    check = data.get("check", {})
+    if not isinstance(check, dict):
+        raise ValueError(f"{path}: check must be a table")
+    for key, val in check.items():
+        if key in _CHECK_RANGES:
+            _number(val, *_CHECK_RANGES[key], f"check.{key}", path)
+        elif key == "max_findings":
+            _number(val, 1, 200, "check.max_findings", path)
+            if not isinstance(val, int):
+                raise ValueError(f"{path}: check.max_findings must be a whole number")
+        elif key == "tiles":
+            if isinstance(val, bool) or val not in (1, 2):
+                raise ValueError(f"{path}: check.tiles must be 1 or 2")
+        else:
+            raise ValueError(f"{path}: unknown key check.{key}; valid keys: "
+                             f"{', '.join(list(_CHECK_RANGES) + ['max_findings', 'tiles'])}")
+    kinds = data.get("kind", {})
+    if not isinstance(kinds, dict):
+        raise ValueError(f"{path}: kind must be a table of tables")
+    total = 0
+    for name, body in kinds.items():
+        if not isinstance(body, dict):
+            raise ValueError(f"{path}: kind.{name} must be a table")
+        for key, val in body.items():
+            where = f"kind.{name}.{key}"
+            if key not in _KIND_KEYS:
+                raise ValueError(f"{path}: unknown key {where}; valid keys: {', '.join(_KIND_KEYS)}")
+            if key == "label" and not (isinstance(val, str) and val.strip()):
+                raise ValueError(f"{path}: {where} must be a non-empty string")
+            elif key in ("weak", "off") and not isinstance(val, bool):
+                raise ValueError(f"{path}: {where} must be true or false")
+            elif key == "min_score":
+                _number(val, 0, 1, where, path)
+            elif key == "words":
+                if not (isinstance(val, list) and 1 <= len(val) <= 8):
+                    raise ValueError(f"{path}: {where} must be a list of 1 to 8 words")
+                for w in val:
+                    if not (isinstance(w, str) and _WORD.fullmatch(w)):
+                        raise ValueError(f"{path}: {where} has a bad word {w!r}: "
+                                         "1 to 40 letters, digits, spaces or hyphens")
+                total += len(val)
+    if total > 40:
+        raise ValueError(f"{path}: {total} words in all; at most 40 (each word is a model call)")
+
+
 def _overlay(base_name: str, profile: str | None) -> tuple[str, dict] | None:
     """(path, content) of the profile's file for `base_name`, validated; None without one."""
     if not profile:
@@ -178,6 +240,8 @@ def _overlay(base_name: str, profile: str | None) -> tuple[str, dict] | None:
     data = _load(path)
     if base_name == "looks.toml":
         _check_looks(data, path)
+    elif base_name == "reveal.toml":
+        _check_reveal(data, path)
     return path, data
 
 

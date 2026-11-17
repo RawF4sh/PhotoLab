@@ -39,9 +39,11 @@ mask) not one pixel differs and the scores agree to four places. All words in on
 failed with a shape error in transformers 5.12.1 and was not pursued.
 
 The one-pass route is task T1 of [F36](F36-speed-and-frameworks.md), which found the same thing
-on the same day and is being built. F21 does not build it and waits for it (section 11): without
-it the check costs 50 to 90 s per photo, with it about 10 s. The first six photos of this probe
-shared the GPU with F36's own measurement; the rest ran alone.
+on the same day and built it (section 11). Without it the check would cost 50 to 90 s per photo.
+F36's own numbers, on a quiet machine: 1.83 s for the image pass and 0.35 s per word. In a run
+the image pass is made for the style's concepts anyway, so the 21 words of the check add about
+7 s per photo. The first six photos of this probe shared the GPU with F36's measurement; the rest
+ran alone.
 
 **What fired** (score 0.4 or more, the backend's floor). Crops of the findings were looked at.
 
@@ -83,13 +85,18 @@ they cannot say whether the check finds a plate. That needs photos that have the
 - **Photos:** at least 100 of the owner's own, in a folder outside the repo: at least 20 with a
   number plate a person can read at full size, 20 with a screen, 20 with a document, sign or
   label, and 40 with none of the listed things. Phone photos and camera files both.
-- **Labels:** `scripts/eval_reveal.py label FOLDER` writes a page with one row per photo and one
-  tick box per kind; its button downloads `labels.csv` (the pattern of the calibration page,
-  F12). A tick means: this photo has at least one such thing that a person can read or recognise
-  at full size.
-- **Measure:** `scripts/eval_reveal.py run FOLDER --labels labels.csv`. Per kind: photos with
-  the thing, photos where the check found it (hits), photos without it where the check reported
-  it (false alarms), at the proxy size, and again with tiles (design, section 9).
+- **Labels:** `scripts/eval_reveal.py label FOLDER` writes a page with one block per photo and
+  one tick box per kind, plus a "looked at" box; its button downloads `labels.csv` (the pattern
+  of the calibration page, F12). A tick means: this photo has at least one such thing that a
+  person can read or recognise at full size. Only photos marked "looked at" are used, so a photo
+  nobody judged can never count as "nothing in it". The page and its previews go into a folder
+  beside the photos (`<folder>-reveal-eval`), never into the repo.
+- **Measure:** `scripts/eval_reveal.py run FOLDER --labels labels.csv --tiles`, with the project's
+  virtual environment. Per kind: photos with the thing, photos where the check found it (hits),
+  photos without it where the check reported it (false alarms), at the proxy size, and again
+  with tiles (design, section 9). Each photo's result is written as soon as it is done, so a
+  stopped run continues where it was. The report (`report.md`) gives each kind its verdict by
+  the rules below and names the photos that were missed.
 - **Rules that follow from the numbers:**
   - Number plates found on fewer than 9 of 10 photos that have one, with tiles on: **stop**. The
     feature then needs a second detector, and the owner decides.
@@ -101,6 +108,11 @@ they cannot say whether the check finds a plate. That needs photos that have the
   - Tiles are built only if they raise the hits of at least one kind by 10 points or more.
   - A word that adds no hit beyond the other words of its kind is removed. Each word costs about
     0.4 s per photo.
+  - Three details the script settles: the proxy and the tiles each get their own `min_score` by
+    the rule above, and the one with more hits decides the kind (the proxy on a tie, because it
+    is cheaper), so a false alarm that only the tiles raise cannot lift the proxy's score; a kind
+    that no labelled photo has is "not measured"; the tiles count only when every used photo has
+    them.
 - The numbers go into this file under "Result of the measurement" before tasks T2 onward start.
   The photos and the labels are never committed.
 
@@ -295,6 +307,7 @@ class RevealReport(BaseModel):
 
 Result.reveal: RevealReport | None = None
 RunConfig.reveal_check: bool = False   # with its description for the settings schema (F13)
+RunConfig.reveal_path: str             # as exports_path: the packaged file is the fallback
 ```
 
 The sidecar of a run without the check gains one line, `"reveal": null`, as earlier features
@@ -310,7 +323,9 @@ not know, which would read as "nothing found"; this attribute is what prevents t
 
 ### 7. `pipeline.py`
 
-- `build`: `self.reveal = reveal.load(paths["reveal"]) if cfg.reveal_check else None`.
+- `build`: `self.reveal = reveal.load(cfg.reveal_path) if cfg.reveal_check else None`. `RunConfig`
+  gains `reveal_path`, declared as `exports_path` is (`config_paths` has returned the key since
+  T1; until T2 `RunConfig` ignores it).
 - One helper builds the word list for a photo, and both `process_one` and `presegment` use it:
 
   ```python
@@ -374,8 +389,9 @@ The picture is analysed at a long edge of 1536. A plate that is 150 pixels wide 
 photo is 38 pixels there, and a house number across the street is a few. With `tiles = 2`, the
 reveal words (only those) are also run on four overlapping quarters of the full-size image, each
 scaled to the analysis size, and the tile masks are mapped back and joined with the proxy's mask
-before `findings`. Cost: five passes per word instead of one. The tile masks go through the same
-disk cache, keyed by the tile's pixels.
+before `findings`. Cost: each tile is another image, so it is encoded again and gets its own word
+passes: four times (1.83 s + 21 x 0.35 s), about 37 s more per photo at F36's numbers. The tile
+masks go through the same disk cache, keyed by the tile's pixels.
 
 ### 10. Studio and the API
 
@@ -392,15 +408,16 @@ disk cache, keyed by the tile's pixels.
 ### 11. One image pass for all words: built by F36, needed here
 
 The owner decided on 2026-11-16: the one-pass change is built once, as F36's T1, before F21.
-[F36](F36-speed-and-frameworks.md), task T1, makes `Sam3Segmenter.segment` encode the picture
-once and run each word against that. Its task T2 keeps the last photo's image features in
-memory, so switching the check on in Studio for a photo that is already previewed costs the 21
-light passes (about 9 s here) and no new image pass.
+F36 is closed (the same day). What F21 builds on:
 
-F21 adds 21 words to every photo, so its tasks T2 onward start only when F36 is closed. Until
-then F21 edits none of F36's files (`segment/sam3.py`, `segment/cache.py` and their tests).
-Nothing in F21 touches that code afterwards beyond the `open_vocabulary` attribute of section 6.
-F21's task T1 (sections 1 to 5) shares no file with F36 and can be built beside it.
+- `Sam3Segmenter.segment` encodes the picture once (`_encode`) and runs `_run_concept(vision,
+  sizes, concept)` per word. All masks and scores are identical to the old route.
+- The last photo's image features stay in memory (`_kept`, keyed by `pixel_digest` in
+  `segment/cache.py`). In Studio, switching the check on for a photo that is already previewed
+  costs the 21 word passes (about 7 s) and no new image pass.
+- `segment(img, [])` returns `[]` without loading the model.
+
+Nothing in F21 touches that code beyond the `open_vocabulary` attribute of section 6.
 
 ## Wording rules (page, Studio, command line)
 
@@ -441,9 +458,9 @@ Models and effort as [AGENT_ROUTING.md](../AGENT_ROUTING.md) sets them.
 
 | Task | Who | What | Proves itself with |
 |---|---|---|---|
-| T0 | Builder (Sonnet, medium), then the session with the owner's photos | `scripts/eval_reveal.py` and a throwaway copy of `findings`; the owner labels; the session runs it and writes "Result of the measurement" | the table of hits and false alarms per kind |
-| T1 | Builder (Sonnet, medium) | sections 1 to 5: the config and its check, `reveal.py` without the page, `blobs`, `metadata_report`, the contract. Can run beside T0: it needs no model | tests 1 to 8, both suites |
-| T2 | Builder (Sonnet, medium), after F36 is closed | sections 6 to 8: segmenters, pipeline, batch, page, command | tests 9 to 15, both suites, the stub run of the definition of done |
+| T0 | Builder (Sonnet, medium), then the session with the owner's photos | `scripts/eval_reveal.py` (it uses T1's `findings`; the tile code lives in the script until T4); the owner labels; the session runs it and writes "Result of the measurement" | the table of hits and false alarms per kind |
+| T1 | Builder (Sonnet, medium) | sections 1 to 5: the config and its check, `reveal.py` (`load`, `words`, `findings`, `report`), `blobs`, `metadata_report`, the two report types of the contract. It adds and wires nothing: `Result.reveal` and `RunConfig.reveal_check` come with T2, so no file a run writes changes while F36 is measuring. Can run beside T0: it needs no model | tests 1 to 8, both suites |
+| T2 | Builder (Sonnet, medium), after T0's numbers are in | sections 6 to 8: `Result.reveal`, `RunConfig.reveal_check`, segmenters, pipeline, `summary`, batch, page, command | tests 9 to 15, both suites, the stub run of the definition of done |
 | T3 | Builder (Sonnet, medium) | section 10: service and Studio | tests 16 and 17; the browser walkthrough |
 | T4 | Builder (Sonnet, medium), only if T0 says so | section 9: tiles | test 18; T0's script again with `tiles = 2` |
 | Check | Checker (Opus, high) | the diff of T1 to T4 against this spec, with these questions first: can any path print or store a metadata value; can any path report "nothing found" for a part that did not run; does the check change a pixel; can a `reveal.toml` from a profile make the run slow or unsafe | findings |
@@ -483,3 +500,40 @@ Models and effort as [AGENT_ROUTING.md](../AGENT_ROUTING.md) sets them.
 4. In Studio, in the browser: the switch on, a photo with a known finding, the box in the right
    place at two window sizes; a photo without findings; the stub backend.
 5. Time per photo with the check on and off, written into the result.
+
+## Result so far
+
+### T1, built on 2026-11-16
+
+- **Built** by one Builder (Sonnet, medium): `configs/reveal.toml`, `reveal.py` (`load`, `words`,
+  `findings`, `report`), `edit/mask.py::blobs` with `light._largest_blob` calling it,
+  `imageio.metadata_report`, the config check in `paths.py`, the two report types, and tests 1 to
+  8 in `tests/test_reveal.py`.
+- **Nothing is wired.** No run reads the new code yet. Exports of the two smoke photos (JPEG and
+  16-bit TIFF, metadata kept) are byte-identical to the ones made before the build, and the
+  sidecars have the same keys.
+- **Checked by the session:** the metadata report was compared with real files. A test photo with
+  a GPS position, a serial number, names and a capture time was exported as JPEG and as 16-bit
+  TIFF in all three metadata modes, and each file was read back: the report matched every file.
+  None of the values appears in the report.
+- **Tests:** both suites green on both interpreters (714 tests at that moment, with the F36
+  session's unfinished changes in the tree); the stub run completes.
+- **Two corrections after the Builder:** for a 16-bit TIFF the report now takes exactly the tags
+  that file writes (it missed the date when only the capture time was set); a word in
+  `reveal.toml` must start with a letter or a digit.
+- **Left as the Builder chose:** when two words of one kind find the same thing, the merged
+  finding keeps the larger box and its share, the higher score and that word; `looked_for` is
+  empty when the picture part did not run.
+- **Known and unchanged:** the 16-bit TIFF writer adds its own description tag (the image's
+  shape). It is not the photographer's description and the report does not count it.
+- **T0's tools, built on 2026-11-16:** `scripts/eval_reveal.py` (`label` and `run`) by one Builder
+  (Sonnet, medium), with 8 tests in `tests/test_eval_reveal.py`. Checked by the session: the
+  labelling page in a browser (ticks, the counter, a reload keeps them, the CSV it builds); the
+  refusal without SAM 3; and one real run with SAM 3 and tiles on ten of the repo's landscape
+  photos, labelled from what the probe had shown. It found the three photos with people, the one
+  face, the summit lettering and the trail sign, with no false alarm on the five photos without
+  anything; 9.3 s per photo for the 21 words, and 37.8 s more with tiles. Ten photos prove that
+  the tools work and nothing about the feature. One change after the Builder: each measurement
+  gets its own threshold (see "Rules that follow from the numbers").
+- **Open:** T0's measurement itself (the owner's labelled photos) comes next; T2 to T4 follow its numbers (F36, which
+  they also waited for, is closed); then the Checker's review of the whole feature.

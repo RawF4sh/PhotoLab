@@ -632,6 +632,70 @@ def _to_u8(rgb01: np.ndarray, dither: bool = True) -> np.ndarray:
     return np.clip(np.floor(x + 0.5), 0, 255).astype(np.uint8)
 
 
+def _tiff_text_tags(exif: bytes) -> tuple[dict[int, str], str | None]:
+    """The text tags a 16-bit TIFF carries from an export's EXIF block, and its software string."""
+    src = PILImage.Exif()
+    src.load(exif)
+    text = {t: src.get(t) for t in (0x010F, 0x0110, 0x0132, 0x013B, 0x8298)}
+    text[0x0132] = src.get_ifd(_EXIF_IFD).get(0x9003) or text[0x0132]  # capture time wins
+    text = {t: v for t, v in text.items() if isinstance(v, str) and v}
+    sw = src.get(0x0131)
+    return text, sw if isinstance(sw, str) else None
+
+
+_META_GROUPS = {
+    "serial": _EXIF_SERIALS,
+    "names": (0x013B, 0x8298, 0xA430),
+    "time": (0x0132, 0x9003, 0x9004),
+    "camera": (0x010F, 0x0110, 0xA434),
+    "description": (0x010E, 0x9286),
+}
+
+
+def _present(exif: PILImage.Exif, tiff_only: set[int] | None = None) -> dict[str, bool]:
+    tags = set(exif.keys()) | set(exif.get_ifd(_EXIF_IFD).keys())
+    if tiff_only is not None:
+        tags = set(tiff_only)   # exactly the tags the 16-bit TIFF writes (its DateTime can come from the capture time)
+    out = {"gps": bool(exif.get_ifd(_GPS_IFD)) and tiff_only is None}
+    out.update({g: bool(tags & set(t)) for g, t in _META_GROUPS.items()})
+    return out
+
+
+def metadata_report(source: str | None, mode: str, fmt: str) -> dict[str, dict[str, bool]]:
+    """For each group of tags: is it in the source, and will this export carry it? Presence only,
+    never a value. The export side is read from the bytes the export would write. Never raises
+    for a bad source."""
+    none = {g: {"source": False, "export": False} for g in ("gps", *_META_GROUPS)}
+    if not source:
+        export_exif(source, mode, (1, 1))     # still refuses an unknown mode
+        return none
+    try:
+        if os.path.splitext(source)[1].lower() in _HEIF_EXT:
+            _ensure_heif()
+        with PILImage.open(source) as pil:
+            src = pil.getexif()
+            had = _present(src)
+    except Exception:
+        return none
+    data = export_exif(source, mode, (1, 1))
+    out_present = dict.fromkeys(had, False)
+    if data:
+        try:
+            ex = PILImage.Exif()
+            ex.load(data)
+            only = None
+            if fmt == "tiff":
+                try:
+                    import tifffile  # noqa: F401  (without it the TIFF falls back to 8-bit and keeps the block)
+                    only = set(_tiff_text_tags(data)[0])
+                except ImportError:
+                    pass
+            out_present = _present(ex, only)
+        except Exception:
+            pass
+    return {g: {"source": had[g], "export": out_present[g]} for g in had}
+
+
 def _save_tiff16(rgb01: np.ndarray, path: str, exif: bytes | None = None,
                  icc_profile: bytes | None = None) -> bool:
     try:
@@ -646,13 +710,10 @@ def _save_tiff16(rgb01: np.ndarray, path: str, exif: bytes | None = None,
         # ponytail: tifffile cannot write the Exif/GPS sub-directories (it filters tags 34665 and
         # 34853), so a 16-bit TIFF carries the first directory's text tags only. Exposure, lens
         # and GPS would need a hand-written sub-directory appender; add it when a TIFF user asks.
-        src = PILImage.Exif()
-        src.load(exif)
-        text = {t: src.get(t) for t in (0x010F, 0x0110, 0x0132, 0x013B, 0x8298)}
-        text[0x0132] = src.get_ifd(_EXIF_IFD).get(0x9003) or text[0x0132]  # capture time wins
-        tags += [(t, 2, 0, v, True) for t, v in text.items() if isinstance(v, str) and v]
-        if isinstance(src.get(0x0131), str):
-            kw["software"] = src[0x0131]
+        text, software = _tiff_text_tags(exif)
+        tags += [(t, 2, 0, v, True) for t, v in text.items()]
+        if software:
+            kw["software"] = software
     if tags:
         kw["extratags"] = tags
     tifffile.imwrite(path, data, photometric="rgb", **kw)

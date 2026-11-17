@@ -271,6 +271,25 @@ class Adjustment(BaseModel):
     via: Literal["", "local", "cloud"] = ""   # F20: "" = the word list understood it; else which model translated it
 
 
+class RevealFinding(BaseModel):
+    kind: str
+    word: str
+    score: float
+    box: list[float] = Field(min_length=4, max_length=4)   # x0, y0, x1, y1 as shares of the frame
+    share: float                                            # of the frame's area
+    subject: bool = False
+    weak: bool = False                                      # the kind is marked "may miss"
+
+
+class RevealReport(BaseModel):
+    picture: Literal["checked", "not_run"]
+    reason: str = ""                  # for not_run: why
+    looked_for: list[str] = []        # kind names, so "nothing found" always says of what
+    findings: list[RevealFinding] = []
+    more: int = 0                     # findings left out by max_findings
+    file: dict[str, dict[str, bool]] = {}
+
+
 class Result(BaseModel):
     """The per-image sidecar (`<name>.autoedit.json`) — every decision, auditable."""
 

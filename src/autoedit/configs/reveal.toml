@@ -1,0 +1,56 @@
+# The things the reveal check (F21) looks for. A reveal.toml in the profile is merged over this file.
+[check]
+min_score = 0.5       # for a kind without its own value
+min_side = 0.006      # smallest side of a finding, as a share of the frame's long edge
+max_findings = 30     # per photo; the rest is counted ("and 12 more")
+merge_iou = 0.5       # two findings of one kind that overlap this much are one
+subject_ratio = 0.6   # in a photo of people, a person at least this large next to the largest is also "the subject"
+tiles = 1             # 1 = the proxy only; 2 = also 2 x 2 tiles
+
+[kind.plate]
+label = "number plate"
+words = ["license plate"]
+
+[kind.address]
+label = "house number or street sign"
+words = ["house number", "street sign"]
+
+[kind.writing]
+label = "writing"
+words = ["letter"]              # finds written characters (measured), not a letter in the post
+
+[kind.screen]
+label = "screen"
+words = ["computer screen", "phone screen", "television"]
+
+[kind.document]
+label = "document, letter or label"
+words = ["document", "envelope", "whiteboard", "shipping label"]
+
+[kind.card]
+label = "card or ticket"
+words = ["credit card", "ID card", "ticket"]
+
+[kind.badge]
+label = "name badge"
+words = ["name tag"]
+
+[kind.people]
+label = "person"
+words = ["person"]
+
+[kind.face]
+label = "face"
+words = ["human face"]         # "face" alone also finds animals (measured)
+
+[kind.child]
+label = "possibly a child"
+words = ["child"]              # fired on distant adults in the probe; T0 decides
+
+[kind.key]
+label = "key"
+words = ["key"]
+
+[kind.code]
+label = "barcode or QR code"
+words = ["barcode", "QR code"]
