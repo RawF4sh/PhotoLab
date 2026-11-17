@@ -1,7 +1,8 @@
 # F36. Speed and frameworks
 
-Status: done for T0 to T3 (2026-11-16; the owner said "F36 first"). T4 and T5 wait for the
-owner's decisions; T6 was withdrawn after T0. Size M. Plan entry:
+Status: done for T0 to T3 (2026-11-16; the owner said "F36 first"). T4 was built at the owner's
+word, measured, and dropped by the owner the same day: it does not pay. T5 waits for the
+owner's decision; T6 was withdrawn after T0. Size M. Plan entry:
 [FEATURE_PLAN.md](../FEATURE_PLAN.md), section F36. The numbers that count are in the
 [Result](#result).
 
@@ -23,9 +24,11 @@ Rewritten on 2026-11-16 with T0's numbers from a quiet machine.
 3. **No part needs another framework.** The first version of this spec proposed a test of SAM 3
    on Apple's MLX. T0 took the reason away: the encoder takes 1.8 s here, and the ports report
    2.0 to 2.4 s. The local model already runs on MLX, through Ollama.
-4. **Jobs slow each other more than any code does.** The first measurements for this spec ran
-   next to other heavy jobs and came out five times too high: 80 to 92 s per photo instead of
-   16.6 s. The tests took 346 to 511 s there, and take about a minute alone.
+4. **An overloaded machine slows everything more than any code does.** The first measurements
+   for this spec ran next to renders, tests and other sessions' jobs and came out five times
+   too high: 80 to 92 s per photo instead of 16.6 s. The tests took 346 to 511 s there, and take
+   about a minute alone. The cause is not SAM 3 jobs sharing the GPU: two or three of them at
+   once finish in the time they would take one after the other (measured for T4).
 
 ## Measured before the design (2026-11-16)
 
@@ -250,6 +253,29 @@ def _one_job():
 `segment` wraps its encoder and concept passes in `with _one_job():`. Cost: a Studio preview
 waits while a batch segments one photo.
 
+**Built on 2026-11-16, measured, and dropped.** Real jobs side by side, each with six photos
+and seven concepts, on the code after T1 and T2:
+
+| Jobs at once | No lock | With the lock | One after the other |
+|---|---|---|---|
+| 1 | 30 s | | 30 s |
+| 2 | 62 s | 68 s | 60 s |
+| 3 | 96 s | 89 s | 90 s |
+
+SAM 3 jobs that share the GPU do not starve each other. Two or three at once finish in the time
+they would take one after the other, with or without the lock; the lock moves the total by
+between 7 % less and 10 % more. Memory did not run short either: with three models loaded,
+41 % of memory stayed free and swap grew by 64 MB. The slowdowns that prompted T4 came from the
+whole machine being overloaded (a load average above 100 on 10 cores from renders, tests and
+several jobs, and swap nearly full), and a lock around SAM 3 does not touch that.
+
+The built lock kept its file in the user's temp folder and never followed a symlink. Its review
+(Checker, Opus, high) found two things to fix before it could ship: an error from `flock` other
+than "busy" failed the photo, and a path under the temp folder depends on `TMPDIR`. Neither was
+fixed, because the lock is not shipped. The owner dropped it on 2026-11-16 ("Drop it"), and the
+code was not kept. Whoever builds a lock later starts from the sketch above and these two
+findings.
+
 ### T5. Render workers by default (only after a yes)
 
 `[performance] workers = 0` in `defaults.toml`: half the cores, at most four. Output is
@@ -362,7 +388,6 @@ The fakes in `tests/test_sam3_glue.py` change with T1: `_Proc.__call__` returns 
 
 | Decision | Evidence | The change, if yes |
 |---|---|---|
-| One SAM 3 job at a time, enforced (T4)? | Several jobs at once starved each other for more than 45 minutes (noted on 2026-11-10). On 2026-11-16 the same code took 16.6 s per photo alone and 80 to 92 s next to other sessions' jobs, and none of them knew of the others | T4 is built. A Studio preview then waits while a batch segments one photo |
 | Render workers on by default (T5)? | F4: 69.7 s against 33.1 s for eight photos. T0: one render of a 22 MP photo holds 5.3 GB, so four workers hold about 21 GB. That is too much for a 16 GB machine, so the recommendation is no; `--workers 0` gives it for one run | `workers = 0` under `[performance]` |
 
 Decided:
@@ -370,6 +395,9 @@ Decided:
 - Build T0 to T3 before F21? Yes, on 2026-11-16 ("Yes, F36 first"). F21 refers to T1 for the
   one-pass change.
 - The MLX download for T6: withdrawn after T0. Nothing to decide.
+- Ship the lock for SAM 3 jobs (T4)? No, on 2026-11-16 ("Drop it"). Built and measured first:
+  two jobs at once take 62 s without it and 68 s with it, three take 96 s and 89 s, and it adds
+  a way to hang (a paused job blocks the others).
 
 ## Result
 
@@ -414,4 +442,6 @@ Closed on 2026-11-16 for T0 to T3.
 - **For T5:** one stub render of a 22 MP photo takes 7.1 s and holds 5.3 GB.
 - **What the first numbers got wrong:** their absolute size, by about five times ("What was
   found", point 4). The design rested on the ratio and on the identical masks, and both held.
-- **Open:** T4 and T5, the owner's decisions above. A check of the follow-up in a browser.
+- **T4, the lock:** built, reviewed, measured with two and three real jobs, and dropped. The
+  numbers are in the T4 section. 722 tests passed with it; the committed code never held it.
+- **Open:** T5, the owner's decision above. A check of the follow-up in a browser.

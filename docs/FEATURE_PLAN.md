@@ -54,7 +54,7 @@ SAM 3 for about 20 more things per photo, and F36 makes each of them a light pas
 | F33 | Merge frames: brackets, stacks, focus series | L | planned |
 | F34 | Exact colour and clean backgrounds | M | planned |
 | F35 | Pick the keepers | M | planned |
-| F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs and the worker default wait for the owner |
+| F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs was built, measured and dropped; the worker default waits for the owner |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -170,7 +170,10 @@ The first feature, chosen small on purpose: it also proves the agent loop end to
   every mask identical. A follow-up edit that names a new thing takes 0.5 s of segmentation
   instead of about 2.2 s (the encoder plus one pass). No part needs another framework: the
   measured numbers are in the spec.
-- **Owner:** two decisions are open, in the table at the end of this file.
+- **Measured and dropped:** a lock that lets only one SAM 3 job run at a time. Two or three
+  jobs at once already finish in the time they would take one after the other, so the lock
+  gains nothing. The owner dropped it on 2026-11-16.
+- **Owner:** one decision is open, in the table at the end of this file.
 
 ## Phase 3: image quality
 
@@ -717,7 +720,6 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Sample photos for look cards (F28): own photos, or a licence-free set from the web? | F28 | A download needs a yes |
 | Keep a local history of your own edits, on by default (F27)? | F27: no pixels, no file names, never leaves the computer | `history = true` under `[run]` |
 | Do background blur, skin smoothing and overlays stay out? | "Ideas, not planned yet", last item. Proposed: they stay out | none |
-| One SAM 3 job at a time on this computer, enforced by a lock? | [F36](plans/F36-speed-and-frameworks.md), T4: the same code took 16.6 s per photo alone and 80 to 92 s next to other sessions' jobs | F36's T4 is built. A Studio preview then waits while a batch segments one photo |
 | Render workers on by default? | F36, T5: twice the batch speed, and 5.3 GB per worker. Proposed: no, `--workers 0` per run | `workers = 0` under `[performance]` in `defaults.toml` |
 
 Things only the owner can do, left open by the unattended run:
