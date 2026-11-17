@@ -6,8 +6,9 @@ of the package (CLAUDE-style invariant). Requires the `sam` extra: `pip install 
 SAM 3 ships *inside* Hugging Face Transformers (>=5.12) as `Sam3Model` + `Sam3Processor`
 (model id `facebook/sam3`) — there is no standalone `sam3` PyPI package. It does Promptable
 Concept Segmentation: given a short noun-phrase ("the dress", "snow", "sky") it returns a mask
-+ score for *every* instance of that concept. We run one text prompt per concept and union the
-instances; per-concept gating + overlap arbitration happen downstream in resolve.py.
++ score for *every* instance of that concept. The image encoder runs once per photo and each
+concept is one light pass on its output, with the instances unioned; per-concept gating +
+overlap arbitration happen downstream in resolve.py.
 
 Weights are gated on Hugging Face: accept the license at https://huggingface.co/facebook/sam3
 and authenticate (`huggingface-cli login`, or set HF_TOKEN) before first run. They are fetched
@@ -26,6 +27,7 @@ import numpy as np
 
 from ..imageio import Image
 from .base import RegionMask
+from .cache import pixel_digest
 
 # Must be set before torch initialises the MPS backend; harmless elsewhere.
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -77,6 +79,9 @@ class Sam3Segmenter:
         self.mask_threshold = mask_threshold
         self._model = None  # lazily loaded, then kept resident for the whole run
         self._processor = None
+        # Digest, image features and sizes of the last photo, so that a new concept on the same
+        # photo skips the encoder.
+        self._kept = None
 
     def _ensure_model(self):
         if self._model is not None:
@@ -110,11 +115,20 @@ class Sam3Segmenter:
                 ) from exc
 
     def segment(self, img: Image, concepts: list[str]) -> list[RegionMask]:
+        if not concepts:
+            return []
         self._ensure_model()
         h, w = img.height, img.width
         out: list[RegionMask] = []
+        key = pixel_digest(img.rgb)
+        if self._kept is not None and self._kept[0] == key:
+            vision, sizes = self._kept[1], self._kept[2]
+        else:
+            self._kept = None                   # let go of the last photo before encoding the next
+            vision, sizes = self._encode(img.rgb)   # the image encoder: once per photo
+            self._kept = (key, vision, sizes)
         for concept in concepts:
-            instances = self._run_concept(img.rgb, concept)
+            instances = self._run_concept(vision, sizes, concept)
             if not instances:
                 continue
             union = np.zeros((h, w), dtype=bool)
@@ -133,20 +147,41 @@ class Sam3Segmenter:
                     instance_count=len(instances),
                 )
             )
+        if self.device == "mps":
+            # Hand the allocator's unused GPU buffers back after every photo. Measured on 16
+            # photos (F36): the Metal driver then holds 12.1 GB instead of 15.5 GB, and the time
+            # per photo does not change.
+            import torch
+
+            torch.mps.empty_cache()
         return out
 
-    def _run_concept(self, image_rgb, concept: str):
-        """The ONE SAM 3 inference call. Returns [(bool HxW mask, float score), ...] for every
-        instance of `concept`, with masks at the proxy resolution we feed in (resolve.py upsamples
-        + feathers later). Open-vocab tolerance: a concept with no matches just returns []."""
+    def _encode(self, image_rgb):
+        """The image encoder, once per photo. Every concept reuses its output: the full forward
+        is this call followed by the per-concept part, so the masks are the same."""
         import torch
         from PIL import Image as PILImage
 
         # The processor expects uint8 PIL (0-255); our proxy rgb is float [0,1].
         pil = PILImage.fromarray((np.clip(image_rgb, 0.0, 1.0) * 255 + 0.5).astype(np.uint8), "RGB")
-        inputs = self._processor(images=pil, text=concept, return_tensors="pt").to(self.device)
+        inputs = self._processor(images=pil, return_tensors="pt").to(self.device)
         with torch.no_grad():
-            outputs = self._model(**inputs)
+            vision = self._model.get_vision_features(pixel_values=inputs["pixel_values"])
+        sizes = inputs.get("original_sizes")
+        sizes = sizes.to("cpu").tolist() if hasattr(sizes, "to") else sizes
+        return vision, sizes
+
+    def _run_concept(self, vision, sizes, concept: str):
+        """The per-concept SAM 3 pass on the encoded image. Returns [(bool HxW mask, float score),
+        ...] for every instance of `concept`, with masks at the proxy resolution we feed in
+        (resolve.py upsamples + feathers later). Open-vocab tolerance: a concept with no matches
+        just returns []."""
+        import torch
+
+        text = self._processor(text=concept, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self._model(vision_embeds=vision, input_ids=text["input_ids"],
+                                  attention_mask=text.get("attention_mask"))
 
         # Run mask post-processing on CPU. torch's MPS backend has aborted (SIGABRT in the
         # Metal driver) inside bitwise/binary ops on bool masks for some inputs; the heavy
@@ -156,8 +191,6 @@ class Sam3Segmenter:
             for k, v in list(items()):
                 if isinstance(v, torch.Tensor):
                     outputs[k] = v.to("cpu")
-        sizes = inputs.get("original_sizes")
-        sizes = sizes.to("cpu").tolist() if hasattr(sizes, "to") else sizes
 
         # post_process returns one dict per image; masks are resized to target (== proxy) size.
         results = self._processor.post_process_instance_segmentation(

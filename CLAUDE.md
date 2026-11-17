@@ -37,7 +37,7 @@ auto-mask fixed regions).
 ## Conventions
 
 - Core runtime deps stay minimal (numpy, Pillow, pydantic + stdlib) so the stub pipeline runs
-  anywhere; torch / Anthropic / OpenCV / Kornia are **optional extras**, imported lazily.
+  anywhere; torch / Anthropic / OpenCV are **optional extras**, imported lazily.
 - Per-image failures are isolated in `batch.py` — one bad photo never aborts the run.
 - The sidecar `notes` "why" list is first-class (debugging + future "explain this edit").
 - Tests: keep them runnable via `PYTHONPATH=src python tests/run_all.py` (no pytest needed)

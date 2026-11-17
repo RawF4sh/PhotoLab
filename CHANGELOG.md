@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Faster segmentation (F36)
+
+### Changed
+- **SAM 3 reads each photo once.** The image encoder used to run once per concept. It now runs
+  once per photo, and every concept is a light pass on its output. A photo with seven concepts
+  takes 4.1 s to segment instead of 16.6 s (16 photos, Apple M1 Max). Every mask is identical to
+  before, so the output does not change.
+- **A thing named later on the same photo skips the encoder.** In Studio, a follow-up such as
+  "brighten the jacket" spends 0.5 s in segmentation.
+- **Less GPU memory held between photos on Apple Silicon:** 12.1 GB instead of 15.5 GB.
+
+### Removed
+- `kornia` and `colour-science` from the `accel` extra, and the `cli` extra (`typer`, `rich`).
+  Nothing imported them, and `pip install '.[accel]'` no longer installs torch.
+
 ## [Unreleased] — Free-text instructions (F20)
 
 ### Added

@@ -12,6 +12,9 @@ Extended on 2026-11-16 with phases 8 to 11 (F21 to F35), at the owner's request:
 what a photo gives away, film looks and filters, a style that grows from the owner's edits, and
 more kinds of photography. The kinds have their own file, [GENRES.md](GENRES.md).
 
+F36 was added and built the same day, ahead of F21 at the owner's word ("F36 first"): F21 asks
+SAM 3 for about 20 more things per photo, and F36 makes each of them a light pass.
+
 ## Order and status
 
 | ID | Feature | Size | Status |
@@ -36,7 +39,7 @@ more kinds of photography. The kinds have their own file, [GENRES.md](GENRES.md)
 | F18 | Shaped light: gradients, ovals, a sun glow | M | done; the automatic glow is off by default |
 | F19 | Follow-up edits | M | done |
 | F20 | Free-text instructions (more words, a local model) | M | done |
-| F21 | Reveal check: what a photo gives away | L | spec; the measurement on the owner's photos is open |
+| F21 | Reveal check: what a photo gives away | L | building: T1 done and not wired; next is the measurement on the owner's photos, then T2 onward |
 | F22 | Hide on request: cover, mosaic, blur | M | planned; needs the owner's yes on the content rule |
 | F23 | Grain | M | planned |
 | F24 | Black and white, and film looks | M | planned |
@@ -51,6 +54,7 @@ more kinds of photography. The kinds have their own file, [GENRES.md](GENRES.md)
 | F33 | Merge frames: brackets, stacks, focus series | L | planned |
 | F34 | Exact colour and clean backgrounds | M | planned |
 | F35 | Pick the keepers | M | planned |
+| F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs and the worker default wait for the owner |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -152,6 +156,21 @@ The first feature, chosen small on purpose: it also proves the agent loop end to
   difference against pre-change renders (goal 0); measured batch speed-up per worker; tests and
   tone gate green. Targets: 10 s or less for one 22 MP photo, and at least three times the batch
   throughput on the development machine.
+
+### F36. Speed and frameworks (M, added 2026-11-16)
+
+- **Why:** after F4 the slow stage was segmentation. SAM 3 ran its whole model once per concept,
+  so the image encoder ran seven times on one photo. The owner also asked whether any part
+  should move to another framework.
+- **Build:** the image encoder runs once per photo and each concept is one light pass on its
+  output. The last photo's encoder output stays in memory, so a thing named later on the same
+  photo skips the encoder. Packages that nothing imports leave the extras. Spec and result:
+  [F36](plans/F36-speed-and-frameworks.md).
+- **Result:** segmentation of a photo with seven concepts takes 4.1 s instead of 16.6 s, with
+  every mask identical. A follow-up edit that names a new thing takes 0.5 s of segmentation
+  instead of about 2.2 s (the encoder plus one pass). No part needs another framework: the
+  measured numbers are in the spec.
+- **Owner:** two decisions are open, in the table at the end of this file.
 
 ## Phase 3: image quality
 
@@ -698,6 +717,8 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Sample photos for look cards (F28): own photos, or a licence-free set from the web? | F28 | A download needs a yes |
 | Keep a local history of your own edits, on by default (F27)? | F27: no pixels, no file names, never leaves the computer | `history = true` under `[run]` |
 | Do background blur, skin smoothing and overlays stay out? | "Ideas, not planned yet", last item. Proposed: they stay out | none |
+| One SAM 3 job at a time on this computer, enforced by a lock? | [F36](plans/F36-speed-and-frameworks.md), T4: the same code took 16.6 s per photo alone and 80 to 92 s next to other sessions' jobs | F36's T4 is built. A Studio preview then waits while a batch segments one photo |
+| Render workers on by default? | F36, T5: twice the batch speed, and 5.3 GB per worker. Proposed: no, `--workers 0` per run | `workers = 0` under `[performance]` in `defaults.toml` |
 
 Things only the owner can do, left open by the unattended run:
 

@@ -1,8 +1,9 @@
 # F36. Speed and frameworks
 
-Status: spec (2026-11-16). Nothing is built; it waits for the owner's decisions at the end.
-Size M. Not yet in [FEATURE_PLAN.md](../FEATURE_PLAN.md): another session had that file open
-while this was written. The proposed row is the last section.
+Status: done for T0 to T3 (2026-11-16; the owner said "F36 first"). T4 and T5 wait for the
+owner's decisions; T6 was withdrawn after T0. Size M. Plan entry:
+[FEATURE_PLAN.md](../FEATURE_PLAN.md), section F36. The numbers that count are in the
+[Result](#result).
 
 ## Goal
 
@@ -12,17 +13,25 @@ that would move pixels is tested first and stays behind a setting.
 
 ## What was found
 
-1. **Segmentation is the slow stage, by far.** One photo with the seven concepts of `natural`
-   spent 80 to 92 s in SAM 3. All the pixel work on a 22 MP photo takes 7 to 9 s (F4).
-2. **Most of that is repeated work.** `segment/sam3.py` runs the whole model once per concept, so
-   the image encoder, the expensive part, runs seven times on the same picture. Run once and
-   reused, the same photos took 23 s each, and all seven masks were identical bit for bit.
-3. **No part needs another framework today.** One change is worth a test: SAM 3 on Apple's MLX.
-   The local model already runs on MLX, through Ollama.
-4. **Jobs slow each other more than any code does.** The tests take 88 s alone and 346 to 511 s
-   next to other heavy jobs (SAM 3 probes, a Studio render).
+Rewritten on 2026-11-16 with T0's numbers from a quiet machine.
+
+1. **Segmentation was the slow stage.** One photo with the seven concepts of `natural` spent
+   16.6 s in SAM 3. All the pixel work on a 22 MP photo takes 7 to 9 s (F4).
+2. **Most of that was repeated work.** `segment/sam3.py` ran the whole model once per concept,
+   so the image encoder, the expensive part, ran seven times on the same picture. Run once and
+   reused, a photo takes 4.1 s, and every mask is identical bit for bit.
+3. **No part needs another framework.** The first version of this spec proposed a test of SAM 3
+   on Apple's MLX. T0 took the reason away: the encoder takes 1.8 s here, and the ports report
+   2.0 to 2.4 s. The local model already runs on MLX, through Ollama.
+4. **Jobs slow each other more than any code does.** The first measurements for this spec ran
+   next to other heavy jobs and came out five times too high: 80 to 92 s per photo instead of
+   16.6 s. The tests took 346 to 511 s there, and take about a minute alone.
 
 ## Measured before the design (2026-11-16)
+
+These are the first measurements, kept as the record of what the design was based on. Their
+absolute times are about five times too high; the ratios and the mask comparison held up. The
+clean numbers are in the [Result](#result).
 
 Development machine (10 cores, 64 GB), `.venv` (torch 2.12.0, transformers 5.12.1), MPS, analysis
 size 1536, two 22 MP JPEGs.
@@ -91,12 +100,12 @@ Cost today: `concepts × (encoder + pass)`. Cost with the encoder run once:
 | Part | Runs on | Looked at | Verdict | Why |
 |---|---|---|---|---|
 | Pixel ops | numpy and OpenCV on the CPU, row strips in threads (F4) | The GPU, through torch or MLX | Keep | F4's analysis stands: a port must cover the whole chain, is not bit-identical and doubles the protected op math. After T1 segmentation still costs twice the pixel work, and it is the GPU's job |
-| Segmentation | SAM 3 in Transformers on torch MPS | MLX ports, Core ML, Apple's Core AI, smaller models | Test MLX (T6). The rest later | A Core ML conversion of SAM 3.1 reports 2.05 s per image for the encoder, and 2.38 s on MLX, on a 16 GB laptop; here the encoder took 7.4 to 8.1 s, perhaps under load. Other float rounding: masks will not be identical |
+| Segmentation | SAM 3 in Transformers on torch MPS | MLX ports, Core ML, Apple's Core AI, smaller models | Keep. (First verdict: test MLX. Withdrawn after T0) | T0: the encoder takes 1.8 s here. A Core ML conversion of SAM 3.1 reports 2.05 s per image, and 2.38 s on MLX, on a 16 GB laptop: no gain in sight. Other float rounding would also move masks |
 | Local model | Ollama, `qwen3.5:9b` | mlx-lm in process, llama.cpp | Keep | It already runs on MLX. 1.5 s a call. The code needs no package, only HTTP on this computer |
 | Cloud model | Anthropic SDK | none | Keep | Refreshed in F17, off by default |
 | RAW and files | rawpy, Pillow, tifffile | none | Keep | Reading and writing are about 1 s of a render |
 | Studio and API | FastAPI, uvicorn, one HTML file of 1,500 lines | A component framework; a desktop shell | Not now | The plan puts the Studio rebuild after the engine. F13 and F15 give it a settings schema and a versioned API, so the choice stays open. It belongs in the rebuild's spec |
-| Tests | Own runner, also collected by pytest | A parallel runner | Keep | 88 s alone |
+| Tests | Own runner, also collected by pytest | A parallel runner | Keep | About a minute alone |
 | Packaging | setuptools with extras | none | Clean up (T3) | Four packages nothing imports |
 
 For the rebuild's spec, when it comes:
@@ -248,7 +257,11 @@ byte-identical (F4's test). With SAM 3, the parent then segments the next photo 
 renders the last one. The evidence is F4's table and T0's memory per worker; if four workers
 need more than half of a 16 GB machine, the recommendation is to leave the default at 1.
 
-### T6. SAM 3 on MLX: a probe (only after a yes)
+### T6. SAM 3 on MLX: a probe (withdrawn)
+
+**Withdrawn after T0.** The probe was proposed because the encoder seemed to take 7.4 to 8.1 s
+here against about 2 s reported for the ports. On a quiet machine it takes 1.8 s, so there is
+nothing to gain and no reason for a 3.5 GB download. The design stays below for the record.
 
 A throwaway measurement, nothing in `src/`. A scratch venv with an MLX port (`mlx-vlm`, or
 `mlx_sam3`), the MLX weights (3.5 GB) in a scratch folder, the 16 panel photos, the seven
@@ -266,7 +279,9 @@ owner's vote.
 | Decision | Chosen | Reverse it by |
 |---|---|---|
 | The unused packages | Removed from the extras (T3) | Restore the two lines in `pyproject.toml` |
-| How many photos keep their features | One, in memory, never on disk (estimated at about 100 MB; T2 measures it) | `_kept` in `segment/sam3.py` |
+| How many photos keep their features | One, in memory, never on disk (247 MB, measured) | `_kept` in `segment/sam3.py` |
+| The GPU allocator's cache after a photo | Handed back on MPS (`torch.mps.empty_cache()`), as acceptance check 6 says: the driver holds 12.1 GB instead of 15.5 GB, at no cost in time | The block at the end of `Sam3Segmenter.segment` |
+| The MLX probe (T6) | Withdrawn: T0 left it without a reason | Nothing to reverse |
 | Precision, batching, input size of SAM 3 | Unchanged: measured, no gain | Nothing to reverse |
 
 ## Files
@@ -323,7 +338,7 @@ The fakes in `tests/test_sam3_glue.py` change with T1: `_Proc.__call__` returns 
    ```sh
    .venv/bin/python - <<'EOF'
    import glob, os, numpy as np
-   a, b = "out-f36/before/.autoedit-masks", "out-f36/after/.autoedit-masks"
+   a, b = "out-f36/before/.autoedit-masks/sam3", "out-f36/after/.autoedit-masks/sam3"
    names = sorted(os.path.basename(p) for p in glob.glob(a + "/*.npz"))
    assert names and names == sorted(os.path.basename(p) for p in glob.glob(b + "/*.npz"))
    for n in names:
@@ -347,13 +362,56 @@ The fakes in `tests/test_sam3_glue.py` change with T1: `_Proc.__call__` returns 
 
 | Decision | Evidence | The change, if yes |
 |---|---|---|
-| Build T0 to T3 before F21? | F21 adds about 20 words per photo: 20 whole-model runs today, 20 light passes after T1. Its tiles multiply both. F21's probe reports the same comparison, so the change should be built once, from T1 here | F36 goes ahead of F21 in the order, and F21 refers to T1 |
-| One SAM 3 job at a time, enforced (T4)? | Several jobs at once starved each other for more than 45 minutes (noted on 2026-11-10); today's measurements ran next to a second session's job without either knowing | T4 is built. A Studio preview then waits while a batch segments one photo |
-| Render workers on by default (T5)? | F4: 69.7 s against 33.1 s for eight photos. T0's memory per worker | `workers = 0` under `[performance]` |
-| May the session download the MLX weights (3.5 GB) and install an MLX port into a scratch venv (T6)? | "Other frameworks" above. The numbers there are other people's | T6 runs; nothing in `src/` changes |
+| One SAM 3 job at a time, enforced (T4)? | Several jobs at once starved each other for more than 45 minutes (noted on 2026-11-10). On 2026-11-16 the same code took 16.6 s per photo alone and 80 to 92 s next to other sessions' jobs, and none of them knew of the others | T4 is built. A Studio preview then waits while a batch segments one photo |
+| Render workers on by default (T5)? | F4: 69.7 s against 33.1 s for eight photos. T0: one render of a 22 MP photo holds 5.3 GB, so four workers hold about 21 GB. That is too much for a 16 GB machine, so the recommendation is no; `--workers 0` gives it for one run | `workers = 0` under `[performance]` |
 
-## Proposed plan entry
+Decided:
 
-For the table in `FEATURE_PLAN.md`:
+- Build T0 to T3 before F21? Yes, on 2026-11-16 ("Yes, F36 first"). F21 refers to T1 for the
+  one-pass change.
+- The MLX download for T6: withdrawn after T0. Nothing to decide.
 
-`| F36 | Speed and frameworks: SAM 3 encodes each photo once | M | spec; waits for the owner's decisions |`
+## Result
+
+Closed on 2026-11-16 for T0 to T3.
+
+- **Built** by one Builder (Sonnet, medium) for T1 and T2; T3, the cache hand-back and two tests
+  by the session. One review by a Checker (Opus, high) found nothing to fix. It named two gaps
+  in the tests, both closed: the prompt's attention mask must reach the model, and the last
+  photo's features must be dropped before the next photo is encoded. One of its notes was not
+  taken: reading `_kept` once instead of three times would only matter if two threads segmented
+  at once, and every caller that shares a segmenter holds `INFERENCE_LOCK`.
+- **Segmentation**, the 16 panel photos with seven concepts each, load average 4 to 7 on 10
+  cores:
+
+  | | Before | After |
+  |---|---|---|
+  | One photo, median | 16.6 s | 4.1 s |
+  | All 16 | 267 s | 69 s |
+  | The whole dry run, model load included | 280 s | 82 s |
+
+  3.9 times. The final code (with the cache hand-back, and with another session's tests running
+  at a load average of 8) gave 4.3 s and 73 s.
+- **Masks:** all 61 masks and all 16 score lists are identical before and after, array by array.
+  Checked twice: after T2, and again on the final code.
+- **Inside one photo:** the encoder takes 1.83 s (1.37 to 2.62), one concept 0.35 s (0.31 to
+  0.44).
+- **A follow-up on the same photo**, through Studio's own functions (`web/service.preview`): the
+  first preview spends 3.92 s in the segment stage, the same preview again 0.02 s, and "brighten
+  the jacket" (a thing with no mask yet) 0.48 s. Not checked in a browser.
+- **Default output:** three 22 MP photos rendered with SAM 3 (two JPEGs and a RAW) are
+  byte-identical before and after. So are the two photos of the stub smoke run.
+- **Memory:** 3.7 GB of tensors on the GPU. The Metal driver held 15.5 GB. With the allocator's
+  cache handed back after each photo it holds 12.1 GB. Three sweeps over the 16 photos took
+  79.4 s and 88.5 s without the hand-back and 82.8 s with it, so it costs nothing measurable and
+  is built in. The rest of the 12.1 GB is not the allocator's cache and stays. The kept features
+  of one photo are 247 MB.
+- **Tests:** 708 pass with F36 alone (701 before, 7 new), under `tests/run_all.py` on both
+  Pythons and under pytest. 716 pass in the working tree, which also holds F21's first task.
+- **T3:** `kornia`, `kornia-rs` and `colour-science` were uninstalled from `.venv`. The suite
+  passes there, `autoedit doctor` reports SAM 3 ready, and the final 16-photo run was made
+  without them.
+- **For T5:** one stub render of a 22 MP photo takes 7.1 s and holds 5.3 GB.
+- **What the first numbers got wrong:** their absolute size, by about five times ("What was
+  found", point 4). The design rested on the ratio and on the identical masks, and both held.
+- **Open:** T4 and T5, the owner's decisions above. A check of the follow-up in a browser.

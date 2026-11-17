@@ -52,7 +52,7 @@ explained in a `<name>.autoedit.json` sidecar (detected concepts, stats, setting
 pip install -e .            # core: numpy, Pillow, pydantic (runs now with the stub segmenter)
 pip install -e '.[sam]'     # + torch + SAM 3 (real open-vocab masks; GPU recommended)
 pip install -e '.[llm]'     # + Anthropic SDK (LLM per-region refine)
-pip install -e '.[accel]'   # + OpenCV/Kornia/colour-science/tifffile/rawpy (quality + 16-bit)
+pip install -e '.[accel]'   # + OpenCV/tifffile/rawpy (speed, 16-bit TIFF, camera RAW)
 pip install -e '.[heif]'    # + pillow-heif (HEIC/HEIF phone photos; AVIF needs no extra)
 ```
 

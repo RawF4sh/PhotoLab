@@ -98,3 +98,18 @@ def test_lru_evicts_oldest_image():
     cache.segment(_img("/x/c.jpg"), ["sky"])            # evicts a
     cache.segment(_img("/x/a.jpg"), ["sky"])            # a must be re-segmented
     assert spy.calls.count(["sky"]) == 4
+
+
+def test_pixel_digest_keeps_the_mask_cache_names(tmp_path):
+    import hashlib
+    import os
+    from autoedit.segment.cache import DiskMaskCache, pixel_digest
+
+    img = Image(rgb=np.arange(48, dtype=np.float32).reshape(4, 4, 3) / 48, path="x")
+    px = np.ascontiguousarray(img.rgb)
+    h = hashlib.blake2b(repr((px.shape, str(px.dtype))).encode(), digest_size=16)
+    h.update(memoryview(px).cast("B"))
+    digest = h.hexdigest()
+    assert pixel_digest(img.rgb) == digest
+    assert DiskMaskCache(SpySegmenter(), str(tmp_path))._path(img) == os.path.join(
+        str(tmp_path), digest + ".npz")

@@ -11,7 +11,7 @@ and it masks and edits that. The edits themselves are classic, explainable photo
 (exposure, tone, white balance, dehaze, etc.) — never generative pixels.
 
 > Code lives in `src/autoedit/`. Core runtime deps are tiny: numpy, Pillow, pydantic +
-> stdlib. torch/SAM, Anthropic, OpenCV/Kornia, rawpy, tifffile, pillow-heif are **optional extras**, imported
+> stdlib. torch/SAM, Anthropic, OpenCV, rawpy, tifffile, pillow-heif are **optional extras**, imported
 > lazily, so the default "stub" pipeline runs anywhere with no GPU/network.
 
 ---
@@ -103,6 +103,9 @@ later. This isolates the SAM license + torch dependency to one file.
 - **`Sam3Segmenter`** (`segment/sam3.py`) — SAM 3 open-vocabulary segmentation; torch imported
   lazily; weights fetched from Hugging Face on first run (never committed).
   `autoedit models status|download|remove` (`models.py`) manages those weights.
+  The image encoder runs once per photo and every concept is one light pass on its output
+  (F36). The last photo's encoder output stays in memory, so a concept asked later on the same
+  photo (a follow-up edit in Studio) skips the encoder.
 
 ### Adding a segmenter
 

@@ -85,6 +85,15 @@ class CachingSegmenter:
 MASK_CACHE_DIR = ".autoedit-masks"
 
 
+def pixel_digest(rgb: np.ndarray) -> str:
+    """A name for a photo's proxy pixels. The mask cache's files are named by it, and the SAM 3
+    backend uses it to recognise the photo it has just encoded."""
+    pixels = np.ascontiguousarray(rgb)
+    h = hashlib.blake2b(repr((pixels.shape, str(pixels.dtype))).encode(), digest_size=16)
+    h.update(memoryview(pixels).cast("B"))
+    return h.hexdigest()
+
+
 class DiskMaskCache:
     """Keep each photo's raw masks on disk, keyed by the proxy pixels, so a re-render
     (`autoedit adjust`), a resumed batch or a later run with another style does not segment
@@ -98,11 +107,7 @@ class DiskMaskCache:
         return getattr(self.inner, name)
 
     def _path(self, img: Image) -> str:
-        pixels = np.ascontiguousarray(img.rgb)
-        h = hashlib.blake2b(repr((pixels.shape, str(pixels.dtype))).encode(), digest_size=16)
-        h.update(memoryview(pixels).cast("B"))
-        digest = h.hexdigest()
-        return os.path.join(self.root, digest + ".npz")
+        return os.path.join(self.root, pixel_digest(img.rgb) + ".npz")
 
     @staticmethod
     def _read(path: str, shape: tuple | None = None) -> dict:
