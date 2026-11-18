@@ -1148,14 +1148,14 @@ For the owner to decide. None of them blocks the feature.
    (check 4). Proposal: make the analysis picture from the original before the 4096 pixel working
    copy is made, so both see the same pixels. It moves every preview mask of a large photo a
    little, which is why it was not done here.
-2. **Holes inside a marked thing.** On a dark, even surface SAM 3's mask has holes. They did not
+2. **Not built (changes what a mark edits; the owner's call).** Holes inside a marked thing. On a dark, even surface SAM 3's mask has holes. They did not
    show here. They would on a brighter surface with a strong change. Proposal: fill the holes
    that lie fully inside a marked thing. It changes what a mark edits against what SAM 3
    returned, and the measured coverage with it.
-3. **A named thing bigger than the oval whose centre lies outside it** reads "No sky found in the
+3. **Not built (the offer is the same; telling the two apart needs the segmenter to report what its centre rule dropped).** A named thing bigger than the oval whose centre lies outside it reads "No sky found in the
    oval", not "That is part of something bigger". The offer is the same ("Use the oval").
-4. **The masks of marks on disk are not capped.** Every new oval that is exported adds one mask
-   to the photo's file in `.autoedit-masks`. In memory the cap of 64 holds.
-5. **Studio repeats three limits of the server** (the smallest side of 1 %, 300 characters, 20
-   marks). A profile that raises `min_side` would make the page send ovals the server refuses.
-6. **`APP_GUIDE.md` has no section on the Mark tool.** It was not in this spec's list of files.
+4. **Done in the unattended run of 2026-11-18:** `DiskMaskCache` keeps at most `MAX_MARKS` (64) marks per photo, oldest dropped first, as in memory; plain concepts are never dropped (test `test_disk_cache_caps_marks`). ~~The masks of marks on disk are not capped. Every new oval that is exported adds one mask
+   to the photo's file in `.autoedit-masks`. In memory the cap of 64 holds.~~
+5. **Done in the unattended run of 2026-11-18:** `GET /api/v1/version` carries `mark_limits`, and Studio reads them at startup, keeping its own values only as a fallback (test `test_version_carries_the_mark_limits`). ~~Studio repeats three limits of the server (the smallest side of 1 %, 300 characters, 20
+   marks). A profile that raises `min_side` would make the page send ovals the server refuses.~~
+6. **Done in the unattended run of 2026-11-18:** a section "9b" in `APP_GUIDE.md` and the `--mark` options in its command list. ~~`APP_GUIDE.md` has no section on the Mark tool. It was not in this spec's list of files.~~

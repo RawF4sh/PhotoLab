@@ -32,7 +32,7 @@ _ALLOWED = (
     "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "night_sky", "raw_mode",
     "highlight_hold", "light_shaping", "out_long_edge", "out_name", "out_subdir",
     "translator", "grain", "grain_size", "lut", "lut_amount", "history", "straighten", "out_aspect",
-    "neutral", "wb", "backdrop", "consistency_wb", "colour_report",
+    "neutral", "wb", "backdrop", "consistency_wb", "colour_report", "reveal_check",
 )
 
 
@@ -326,6 +326,13 @@ def check_marks(marks, vocab) -> list[dict]:
     return [instructions.check_mark(m, vocab) for m in marks]
 
 
+def mark_limits(configs_dir: str | None = None, profile: str | None = None) -> dict:
+    """What `check_marks` and `check_mark` enforce, for the page to repeat (F37)."""
+    vocab = instructions.load_vocab(make_cfg({}, configs_dir, profile).instructions_path)
+    return {"min_side": vocab.marks["min_side"], "max_chars": instructions.MAX_MARK_EDIT,
+            "max_marks": MAX_PHOTO_MARKS}
+
+
 def mark_adjustments(pipe: Pipeline, marks: list[dict]) -> tuple[list, list[dict]]:
     """Checked marks -> photo-scope adjustments + one fact per mark: {index, targets, problems}.
     Without SAM 3 every mark is an area. A mark's sentence never goes to the cloud."""
@@ -496,6 +503,7 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
         "walkthrough": r["walk"],
         "mark_overlays": r["mark_overlays"],
         "marks": r["marks"],
+        "reveal": r["result"].reveal.model_dump() if r["result"].reveal else None,     # F21: null = the check was off
     }
     if walk is not None:
         answer["steps"] = walk.done(r["result"], les, r["pipe"].guard_ops, r["walk"],

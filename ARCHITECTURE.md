@@ -568,6 +568,17 @@ UI (Settings → Batch consistency, default on).
 
 ---
 
+### Reveal check (`reveal.py`, `configs/reveal.toml`, F21)
+
+With `reveal_check` on, the words of `reveal.toml` ride along in the segment stage (`Pipeline._segment_words`,
+used by `process_one` and `presegment` alike, so render workers find them in the disk cache). They never
+reach `resolve`, so no reveal mask is a region and nothing is edited. Beside stats and scene,
+`reveal.report` splits each word's mask into connected areas (`edit/mask.py::blobs`) and lists them
+as findings with boxes in shares of the frame; `imageio.metadata_report` says per metadata group
+whether it is in the source and in the export, never its value. A segmenter without
+`open_vocabulary` (the stub) gives "not run", never "nothing found". `batch.py` writes `reveal.html`
+and the `reveal` block of `run.json`.
+
 ## 13. Output (`emit.py`)
 
 Per photo: a **baked image** (`output_paths` picks the extension from `out_format`; `write_image`

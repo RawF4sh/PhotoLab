@@ -118,6 +118,7 @@ class RunConfig(BaseModel):
     colour_report: bool = False  # measure the subject colour of every photo and report the spread per group (F34)
     straighten: bool = False  # turn the export so a clear waterline or horizon is level (F32); off → no turn
     out_aspect: str | None = Field(default=None, max_length=7)  # crop the export to this W:H shape (F32); None or "" = the photo's own
+    reveal_check: bool = False  # report which photos give something away: plates, screens, people, file metadata (F21); never changes a pixel
     history: bool = False  # one line per exported photo in the profile (F27)
     profile_dir: str | None = None  # the profile folder this config was built with; set by the code
 
@@ -131,6 +132,7 @@ class RunConfig(BaseModel):
     palettes_path: str = Field(default_factory=lambda: config_path("palettes.toml"))
     instructions_path: str = Field(default_factory=lambda: config_path("instructions.toml", packaged_fallback=True))
     exports_path: str = Field(default_factory=lambda: config_path("exports.toml", packaged_fallback=True))
+    reveal_path: str = Field(default_factory=lambda: config_path("reveal.toml", packaged_fallback=True))
 
     @field_validator("out_name")
     @classmethod
@@ -317,6 +319,7 @@ class Adjustment(BaseModel):
 
 class RevealFinding(BaseModel):
     kind: str
+    label: str = ""                                         # what the kind is called to a person; "" = use the kind name
     word: str
     score: float
     box: list[float] = Field(min_length=4, max_length=4)   # x0, y0, x1, y1 as shares of the frame
@@ -381,4 +384,5 @@ class Result(BaseModel):
     timing_ms: float = 0.0
     audit: dict = Field(default_factory=dict)
     stage_timings_ms: dict[str, float] = Field(default_factory=dict)
+    reveal: RevealReport | None = None  # what the reveal check found (F21); None = the check was off
     geometry: Geometry | None = None  # straighten and crop, done to the export (F32); None = the photo as it is

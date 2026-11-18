@@ -251,6 +251,19 @@ def test_caches_take_mark_names(tmp_path):
     assert inner.asked == [[names[0]]]                    # the first was dropped
 
 
+def test_disk_cache_caps_marks(tmp_path):
+    inner = _Counting()
+    disk = DiskMaskCache(inner, str(tmp_path))
+    names = [mark_name("thing", (0.0, 0.0, 0.1 + i / 1000, 0.5), "guy") for i in range(MAX_MARKS + 1)]
+    disk.segment(_photo(), ["sky", "nothing"])
+    for n in names:
+        disk.segment(_photo(), [n])
+    kept = DiskMaskCache._read(disk._path(_photo()))
+    assert "sky" in kept and "nothing" in kept                     # plain names are never dropped
+    assert sum(k.startswith("mark:") for k in kept) == MAX_MARKS
+    assert names[0] not in kept and names[1] in kept and names[-1] in kept
+
+
 # ── marks in the plan and the pipeline (T3) ─────────────────────────────────────────────────
 
 SKIN_MAX = load_concepts(os.path.join(configs_dir(), "concepts.toml"))[1]["skin"].max_ops
@@ -750,3 +763,30 @@ def test_named_place_holds_guarded_regions(tmp_path):
     assert np.array_equal(out, run("brighten the center", instructions_path=no_guard)[0])
 
     assert np.array_equal(run()[0], run(instructions_path=no_guard)[0])
+
+
+def test_version_carries_the_mark_limits(tmp_path):
+    import re
+    import shutil
+    try:
+        from fastapi.testclient import TestClient
+    except ImportError:
+        return
+    from autoedit.web import app as webapp
+
+    def limits(d):
+        client = TestClient(webapp.create_app(d, local_only=True), base_url="http://localhost")
+        return client.get("/api/v1/version").json()["mark_limits"]
+
+    want = {"min_side": _vocab().marks["min_side"], "max_chars": instructions.MAX_MARK_EDIT,
+            "max_marks": service.MAX_PHOTO_MARKS}
+    assert limits(configs_dir()) == want
+    cfgs = str(tmp_path / "configs")
+    shutil.copytree(configs_dir(), cfgs)
+    f = os.path.join(cfgs, "instructions.toml")
+    text = open(f).read()
+    open(f, "w").write(re.sub(r"min_side = 0\.01\b", "min_side = 0.05", text))
+    assert limits(cfgs)["min_side"] == 0.05
+    html = open(os.path.join(os.path.dirname(service.__file__), "static", "studio.html")).read()
+    assert "FU_MARKS" not in html and html.count("max_chars:300") == 1 and html.count("max_marks:20") == 1
+    assert "<=300" not in html and "<0.01||" not in html and "maxlength=\"300\"" in html   # maxlength is only the fallback

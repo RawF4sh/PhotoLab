@@ -413,6 +413,31 @@ native picker this session (set `AUTOEDIT_ALLOW_ANY_PATH=1` to opt out). Every r
 Host-header-checked to loopback (DNS-rebinding defense) and mutating requests are additionally
 localhost-origin-checked; `serve` refuses non-loopback hosts without `--unsafe-network`.
 
+### 9b. Point and tell: the Mark tool (F37)
+
+In Studio, **Mark** draws an oval on the photo (a drag, in the "after" view). The sentence for
+the mark goes in the edit box.
+
+- A sentence that names a thing ("make this guy more purple") edits that thing inside the oval.
+  SAM 3 finds it by its name; only what has its centre in the oval counts.
+- Any other sentence ("brighten this a little") edits the oval itself, as an area, soft at the edge.
+- "Oval only" on the mark's chip switches a named mark to the area. Naming the thing switches back.
+- When a named thing is not found, nothing is applied. The chip says so and offers "Use the oval".
+- "Show me how" opens the walk-through for that mark: what SAM 3 looked for, what was inside, each
+  step, what was held back, and the photo with this mark off.
+- Skin and snow keep their limits inside a mark: skin keeps its own limit, and snow takes no colour.
+- Without SAM 3 every mark is an area.
+- Marks are stored per photo in the sidecar, so a batch from Studio and `autoedit adjust` replay them.
+
+Command line:
+
+```
+autoedit adjust out/IMG_0042.jpg --mark 0.58,0.12,0.92,0.94 --edit "make this guy more purple" --explain
+```
+
+`--mark X0,Y0,X1,Y1` is the oval as four shares of the frame and needs `--edit`;
+`--mark-kind auto|area` (default `auto`); `--explain` prints the mask and one line per tool.
+
 ---
 
 ## 10. CLI reference
@@ -426,7 +451,7 @@ autoedit run <in> <out> [--style … --prompt … --palette … --intensity … 
                          --consistency brightness|bursts --profile DIR
                          --highlight-hold --denoise --levels
                          --no-consistent --no-compose --no-vignette --no-sharpen …]
-autoedit adjust <photo|sidecar> [--set sky.exposure=-0.3 --edit "…" --reset --source IMG]
+autoedit adjust <photo|sidecar> [--set sky.exposure=-0.3 --edit "…" --reset --source IMG --mark X0,Y0,X1,Y1 --mark-kind auto|area --explain]
 autoedit ui [--host --port --no-open]                 # launch Studio
 
 # workflow

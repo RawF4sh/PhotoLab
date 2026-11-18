@@ -38,6 +38,7 @@ def build_result(
     batch_group: str = "",
     post_region_stats: list[RegionStatsModel] | None = None,
     decode_ev: float = 0.0,
+    reveal=None,
 ) -> Result:
     rm = region_meta or {}
     return Result(
@@ -67,6 +68,7 @@ def build_result(
         model=model,
         engine_version=__version__,
         timing_ms=timing_ms,
+        reveal=reveal,
     )
 
 

@@ -10,47 +10,59 @@ tiles = 1             # 1 = the proxy only; 2 = also 2 x 2 tiles
 [kind.plate]
 label = "number plate"
 words = ["license plate"]
+min_score = 0.4      # measured 2026-11-17: 14 of 14, 1 false alarm in 120
 
 [kind.address]
 label = "house number or street sign"
 words = ["house number", "street sign"]
+weak = true          # not measured: no labelled photo had one
 
 [kind.writing]
 label = "writing"
 words = ["letter"]              # finds written characters (measured), not a letter in the post
+min_score = 0.4      # measured: 10 of 10, 10 false alarms in 124
 
 [kind.screen]
 label = "screen"
 words = ["computer screen", "phone screen", "television"]
+weak = true          # not measured: no labelled photo had one
 
 [kind.document]
 label = "document, letter or label"
 words = ["document", "envelope", "whiteboard", "shipping label"]
+weak = true          # not measured: no labelled photo had one
 
 [kind.card]
 label = "card or ticket"
 words = ["credit card", "ID card", "ticket"]
+weak = true          # not measured: no labelled photo had one
 
 [kind.badge]
 label = "name badge"
 words = ["name tag"]
+weak = true          # not measured: no labelled photo had one
 
 [kind.people]
 label = "person"
 words = ["person"]
+min_score = 0.8      # measured: 59 of 59, 6 false alarms in 75
 
 [kind.face]
 label = "face"
 words = ["human face"]         # "face" alone also finds animals (measured)
+min_score = 0.8      # measured: 39 of 40, 9 false alarms in 94
 
 [kind.child]
 label = "possibly a child"
-words = ["child"]              # fired on distant adults in the probe; T0 decides
+words = ["child"]              # fired on distant adults in the probe; kept after T0
+min_score = 0.65     # measured: 33 of 33, 9 false alarms in 101
 
 [kind.key]
 label = "key"
 words = ["key"]
+weak = true          # not measured: no labelled photo had one
 
 [kind.code]
 label = "barcode or QR code"
 words = ["barcode", "QR code"]
+weak = true          # not measured: no labelled photo had one

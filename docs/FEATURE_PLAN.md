@@ -43,7 +43,7 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F18 | Shaped light: gradients, ovals, a sun glow | M | done; the automatic glow is off by default |
 | F19 | Follow-up edits | M | done |
 | F20 | Free-text instructions (more words, a local model) | M | done |
-| F21 | Reveal check: what a photo gives away | L | building: T1 done and not wired; next is the measurement on the owner's photos, then T2 onward |
+| F21 | Reveal check: what a photo gives away | L | done, off by default (`--reveal-check`, `autoedit check`, "Check before sharing" in Studio); measured on 134 of the owner's photos (plates 14 of 14); seven kinds unmeasured and marked "may miss"; tiles not built; spec [F21](plans/F21-reveal-check.md) |
 | F22 | Hide on request: cover, mosaic, blur | M | planned; needs the owner's yes on the content rule |
 | F23 | Grain | M | done, off by default (`--grain N`, a look's `grain`, "add grain"); the owner looks at the crops in `out-features/F23/` |
 | F24 | Black and white, and film looks | M | done, off by default (`--look bw_classic`, `bw_red_filter`, `bw_soft`, `film_warm`, `film_cool`, `film_faded`, `cross_process`, `instant`); the owner looks at the sheets in `out-features/F24/` |
@@ -59,7 +59,7 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F34 | Exact colour and clean backgrounds | M | done, off by default (`--neutral X,Y`, `--neutral-from FILE`, `--backdrop`, `--consistency-wb`, `--colour-report`); checked on made-up pictures only, a real set is open; spec [F34](plans/F34-exact-colour.md) |
 | F35 | Pick the keepers | M | done as a tool (`autoedit pick FOLDER [-o DIR] [--copy]`); the check against the owner's own keepers on a shoot of 30 bursts is open |
 | F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs was built, measured and dropped; the worker default waits for the owner |
-| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | done (built before F21's open tasks; T9, the preview of a large photo, added on 2026-11-17); five things found on the way wait for the owner, in the spec's "Result" |
+| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | done (built before F21's open tasks; T9, the preview of a large photo, added on 2026-11-17); five things found on the way: three done on 2026-11-18 (disk cap, Studio limits from the server, the guide section), two wait for the owner (filling holes, the "bigger" message) |
 | F38 | AutoEdit Lab: a minimal test UI | M | done (`/lab`, `web/static/lab.html`): a second page beside Studio for the features of the unattended run; Studio and the API unchanged; spec [F38](plans/F38-test-ui.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
@@ -764,4 +764,6 @@ plan said:
 | A run refuses to write an export over a source photo (its own or another input); that photo fails, the batch goes on | Found in two reviews: an output folder that is the input folder, `--subdir` pointing back at it, upper-case extensions on a case-insensitive disk, a sibling file of another format | none intended |
 | Bursts are repeats of ONE framing (same orientation, thumbnails alike without the sky-over-ground layout); RAW files and JPEGs are evened out separately | The first comparison grouped different pictures shot seconds apart ([F9 result](plans/F9-shoot-consistency.md)) | `[consistency]` in `rules.toml` |
 | The LLM translation of instructions never gets a clause that was rejected as a negation or an exclusion | Found in review: it could turn "don't brighten the face" around | none intended |
+| F21's T2 and T3 were built on the first part of the measurement (134 photos, no screens or documents), before the owner said whether that was enough | The owner asked for an overnight run; the check is off by default and changes no pixel | `configs/reveal.toml` per kind; a second labelled set re-runs `scripts/eval_reveal.py` on the new photos only |
+| F21's seven unmeasured kinds report "may miss" and keep the default score of 0.5; on the owner's photos they raise false alarms (name badge on 10 of 137) | Missing a plate is worse than a false alarm in a check before sharing | `min_score` or `off = true` per kind in `reveal.toml` |
 | Already decided earlier: default for `metadata` is `shareable` (no GPS, no serial numbers) | F1 | `[output] metadata` |

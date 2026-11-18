@@ -12,8 +12,8 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 
-from . import consistency, emit
-from .contract import RunConfig
+from . import consistency, emit, reveal
+from .contract import RevealReport, RunConfig
 from .edit import par
 from .imageio import is_supported
 from .pipeline import Pipeline
@@ -40,7 +40,11 @@ def _effective_workers(cfg: RunConfig, workers: int) -> tuple[int, str]:
 
 
 class _NoModel:
-    """Stands in for the segmenter inside a render worker: the parent fills the mask cache."""
+    """Stands in for the segmenter inside a render worker: the parent fills the mask cache. It carries
+    the parent backend's `open_vocabulary`, or the worker would skip the reveal words (F21)."""
+
+    def __init__(self, open_vocabulary: bool = False):
+        self.open_vocabulary = open_vocabulary
 
     def segment(self, img, concepts):
         raise RuntimeError("mask cache miss in a render worker: " + ", ".join(concepts))
@@ -49,7 +53,7 @@ class _NoModel:
 _WORKER: dict = {}
 
 
-def _worker_init(cfg: RunConfig, out_dir: str, threads: int) -> None:
+def _worker_init(cfg: RunConfig, out_dir: str, threads: int, open_vocabulary: bool = False) -> None:
     # Build with the stub backend: a render worker reads masks from the cache and must not load a
     # model, and building the real backend would import torch in every worker.
     pipe = Pipeline.build(cfg.model_copy(update={"backend": "stub"}))
@@ -62,7 +66,7 @@ def _worker_init(cfg: RunConfig, out_dir: str, threads: int) -> None:
         pass
     pipe.use_mask_cache(out_dir)
     if isinstance(pipe.segmenter, DiskMaskCache):
-        pipe.segmenter.inner = _NoModel()
+        pipe.segmenter.inner = _NoModel(open_vocabulary)
     _WORKER["pipe"] = pipe
 
 
@@ -91,6 +95,18 @@ def _render_here(pipe, jobs, do_apply: bool, record, fail) -> None:
             fail(i, path, e)
         else:
             record(i, path, r)
+
+
+def reveal_line(block: dict) -> str:
+    """The last line of a run with the reveal check on."""
+    if block["picture"] == "not_run":
+        line = "Reveal check: the pictures were not checked (needs SAM 3); file metadata was."
+    else:
+        kinds = ", ".join(f"{k} {n}" for k, n in sorted(block["by_kind"].items(), key=lambda t: -t[1]))
+        line = (f"Reveal check: {block['with_findings']} of {block['photos']} photos have findings"
+                + (f" ({kinds})" if kinds else "") + ". See reveal.html.")
+    n = block.get("unchecked", 0)
+    return line + (f" {n} photos not checked (made before the check was on)." if n else "")
 
 
 def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, resume: bool = False,
@@ -128,6 +144,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
 
     par_fail: list[tuple[int, dict]] = []
     sidecars: list[str] = []         # every photo's sidecar, also of a photo a resume skips (the colour report)
+    made: list[tuple[str, str, str]] = []   # (source, export, sidecar) of every photo, for the reveal page
     pool = None
     pending: dict = {}               # future -> (index, path, image_out, sidecar, bias, group)
 
@@ -176,7 +193,8 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
     if n_workers > 1:
         pool = ProcessPoolExecutor(max_workers=n_workers, mp_context=multiprocessing.get_context("spawn"),
                                    initializer=_worker_init,
-                                   initargs=(cfg, out_dir, max(1, par.threads() // n_workers)))
+                                   initargs=(cfg, out_dir, max(1, par.threads() // n_workers),
+                                             bool(getattr(pipeline.segmenter, "open_vocabulary", False))))
 
     try:
         for i, path in enumerate(images, start=1):
@@ -192,6 +210,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
                     print(f"[{i}/{len(images)}] {os.path.basename(path)}  ERROR: {e}")
                 continue
             sidecars.append(sidecar)
+            made.append((path, image_out, sidecar))
             if resume and os.path.exists(sidecar):
                 skipped += 1
                 continue
@@ -270,14 +289,37 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         manifest["colour_report"] = consistency.colour_report(
             sidecars, ((pipeline.rules or {}).get("consistency") or {}).get(
                 "wb_min_confidence", consistency.BURST_DEFAULTS["wb_min_confidence"]))
+    items: list = []
+    unchecked: list[str] = []          # sidecars made with the check off (a resumed run keeps them)
+    warped: set[str] = set()           # photos whose export is straightened or cropped: boxes would not fit
+    if pipeline.reveal is not None:    # read back from the sidecars, so a resumed run counts the earlier photos too
+        for src, img_out, sc in made:
+            try:
+                with open(sc) as fh:
+                    doc = json.load(fh)
+                name = os.path.basename(src)
+                if doc.get("reveal"):
+                    items.append((name, img_out if os.path.exists(img_out) else src,
+                                  RevealReport.model_validate(doc["reveal"])))
+                    if doc.get("geometry") and os.path.exists(img_out):
+                        warped.add(name)
+                else:
+                    unchecked.append(name)
+            except (OSError, ValueError):
+                pass
+        manifest["reveal"] = {**reveal.summary([r for _, _, r in items]), "unchecked": len(unchecked)}
     with open(os.path.join(out_dir, "run.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
 
     print(f"\nDone: {processed} edited, {skipped} skipped, {len(failures)} failed, "
           f"{manifest['duration_s']}s. Scene mix: {dict(scene_mix)}")
+    if pipeline.reveal is not None:
+        reveal.write_page(out_dir, items, pipeline.reveal, unchecked, warped)
     if "colour_report" in manifest:
         print(f"Colour report ({consistency.DELTA_E}):")
         for line in consistency.colour_lines(manifest["colour_report"]) or \
                 ["  no group has two photos with a measured subject"]:
             print(line)
+    if "reveal" in manifest:
+        print(reveal_line(manifest["reveal"]))
     return manifest

@@ -169,6 +169,9 @@ class DiskMaskCache:
         if missing:
             fresh = {rm.name: rm for rm in self.inner.segment(img, missing)}
             bucket.update({c: fresh.get(c) for c in missing})
+            marks = [c for c in bucket if c.startswith(MARK) and c not in concepts]
+            for c in marks[:max(0, len(marks) + sum(c.startswith(MARK) for c in concepts) - MAX_MARKS)]:
+                del bucket[c]               # oldest first, as in memory; the asked ones stay
             try:
                 self._write(path, bucket)
             except OSError:                 # a read-only output folder must not fail the photo

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import (backdrop as backdrop_mod, compose, consistency, emit, geometry, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
+from . import (backdrop as backdrop_mod, reveal as reveal_mod, compose, consistency, emit, geometry, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
                lut as lut_mod, neutral as neutral_mod, night, palette as palette_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
 from .concepts import load_concepts, meta_for
 from .contract import Adjustment, Result, RunConfig
@@ -108,6 +108,7 @@ class Pipeline:
     geometry_cfg: dict = field(default_factory=dict)  # [geometry] of rules.toml; {} when neither straighten nor a crop is on (F32)
     neutral_cfg: dict = field(default_factory=lambda: dict(neutral_mod.DEFAULTS))  # [neutral] of rules.toml, checked (F34)
     backdrop_cfg: dict | None = None  # [backdrop] of rules.toml, checked; None when the clean backdrop is off (F34)
+    reveal: "reveal_mod.Config | None" = None  # the list of things the reveal check looks for; None when the check is off (F21)
     night_cfg: dict = field(default_factory=dict)  # [night_sky] of rules.toml, checked (F31)
 
     @classmethod
@@ -181,6 +182,7 @@ class Pipeline:
             backdrop_cfg=(rules_mod.block(rules, "backdrop", backdrop_mod.DEFAULTS, backdrop_mod.RANGES)
                           if cfg.backdrop else None),
             night_cfg=rules_mod.block(rules, "night_sky", night.DEFAULTS, night.RANGES),
+            reveal=reveal_mod.load(cfg.reveal_path) if cfg.reveal_check else None,
         )
 
     def vocab(self) -> instructions.Vocab:
@@ -204,15 +206,32 @@ class Pipeline:
     def presegment(self, path: str) -> None:
         """Decode and segment one photo, nothing else: fills the mask cache for a render worker."""
         concepts = self.concepts_for(style_for(self.cfg.style, self.styles))
-        extra = self._with_light_concept(instructions.extra_concepts(self.adjustments + self._all_habits(), concepts), concepts)
-        extra = self._with_geometry_concepts(extra, concepts)
-        if concepts or extra:
+        words = self._segment_words(concepts, self.adjustments + self._all_habits(),
+                                    self._wants_guard(self.adjustments))
+        if words:
             img = load_image(path, decode=raw_opts_from(self.cfg))
-            self.segmenter.segment(downscale_long_edge(img, self.cfg.analysis_long_edge),
-                                   concepts + extra)
+            self.segmenter.segment(downscale_long_edge(img, self.cfg.analysis_long_edge), words)
         if self.cfg.reference:
             # the reference's masks too, once per run: a render worker reads them from the cache
             self._reference_concept_features(concepts)
+
+    def _wants_guard(self, adjs: list) -> bool:
+        """A thing mark is in `adjs` and the segmenter can find named things (F37): the guard words are asked for."""
+        return getattr(self.segmenter, "open_vocabulary", False) and any(
+            (parse_mark(a.target) or ("",))[0] == "thing" for a in adjs)
+
+    def _segment_words(self, concepts: list[str], adjs: list, guard: bool = False) -> list[str]:
+        """Every word to segment for a photo; `presegment` and `process_one` both use it, so a render
+        worker's cache has the reveal words too (F21)."""
+        extra = self._with_light_concept(instructions.extra_concepts(adjs, concepts), concepts)
+        if guard:
+            # A thing mark keeps the limits of skin and snow inside it, also where the run found none (F37).
+            extra += [n for n, cm in self.meta.items() if cm.guard_global and n not in concepts and n not in extra]
+        extra = self._with_geometry_concepts(extra, concepts)
+        words = concepts + extra
+        if self.reveal is not None and getattr(self.segmenter, "open_vocabulary", False):
+            words += [w for w in reveal_mod.words(self.reveal) if w not in words]
+        return words
 
     def _all_habits(self) -> list[Adjustment]:
         """The look's habits of every scene: what to segment for before the scene is known."""
@@ -289,16 +308,11 @@ class Pipeline:
             proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
         adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
-        extra = self._with_light_concept(instructions.extra_concepts(adjs + self._all_habits(), concepts), concepts)
-        if getattr(self.segmenter, "open_vocabulary", False) and any(
-                (parse_mark(a.target) or ("",))[0] == "thing" for a in adjs):
-            # A thing mark keeps the limits of skin and snow inside it, also where the run found none (F37).
-            extra += [n for n, cm in self.meta.items() if cm.guard_global and n not in concepts and n not in extra]
-        extra = self._with_geometry_concepts(extra, concepts)
+        words = self._segment_words(concepts, adjs + self._all_habits(), self._wants_guard(adjs))
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
-        raw = self.segmenter.segment(proxy, concepts + extra) if (concepts or extra) else []
+        raw = self.segmenter.segment(proxy, words) if words else []
         stage_timings["segment"] = (time.perf_counter() - stage_started) * 1000
         stage_started = time.perf_counter()
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
@@ -319,6 +333,12 @@ class Pipeline:
         night_frame = cfg.night_sky and night.is_night(gstats, self.night_cfg)
         sc = scene_mod.classify(gstats, present, region_stats, override="night" if night_frame else None)
         stage_timings["scene"] = (time.perf_counter() - stage_started) * 1000
+        reveal_rep = None
+        if self.reveal is not None:   # beside stats and scene: a reveal mask is never a region, so nothing is edited by it (F21)
+            stage_started = time.perf_counter()
+            reveal_rep = reveal_mod.report(raw, self.reveal, sc.name, getattr(self.segmenter, "open_vocabulary", False),
+                                    path, cfg.metadata, cfg.out_format)
+            stage_timings["reveal"] = (time.perf_counter() - stage_started) * 1000
         region_rule = {name: meta_for(name, self.meta).region() for name in present}
         adjs = [a.model_copy() for a in self.habits.get(sc.name, [])] + adjs   # the look first, typed changes add to it
 
@@ -1073,6 +1093,7 @@ class Pipeline:
             batch_group=batch_group,
             post_region_stats=list(post_regions.values()),
             decode_ev=float(img.decode_ev),
+            reveal=reveal_rep,
             decider=self.decider.name,
             model=cfg.llm_model if cfg.decider == "llm" else None,
             timing_ms=(time.perf_counter() - t0) * 1000.0,

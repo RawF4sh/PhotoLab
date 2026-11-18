@@ -37,7 +37,7 @@ def _flatten(d: dict) -> dict:
         if src in dec:
             kw[dst] = dec[src]
     for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
-              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "light_shaping",
+              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "light_shaping", "reveal_check",
               "translator", "grain", "grain_size", "lut", "lut_amount", "history", "genre", "straighten", "neutral", "wb", "backdrop",
               "consistency_wb", "colour_report"):
         if k in run:
@@ -161,6 +161,7 @@ def load_run_config(args) -> RunConfig:
         "history": getattr(args, "history", None),
         "highlight_hold": getattr(args, "highlight_hold", None),
         "light_shaping": getattr(args, "light_shaping", None),
+        "reveal_check": getattr(args, "reveal_check", None),
         "translator": getattr(args, "translator", None),
     }
     for k, v in overrides.items():
@@ -274,6 +275,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="keep highlights that are blown in the source white instead of letting the edit grey them (opt-in)")
     p.add_argument("--light-shaping", dest="light_shaping", action="store_true", default=None,
                    help="add a soft warm glow where the sun is, when the photo has a clear light source (opt-in)")
+    p.add_argument("--reveal-check", dest="reveal_check", action="store_true", default=None,
+                   help="report which photos show a plate, screen, document, person or file metadata "
+                        "(opt-in; reveal.html and run.json, no picture changes)")
     p.add_argument("--workers", type=int,
                    help="render processes for a batch (0 = half the cores, at most 4)")
     p.add_argument("--threads", type=int,
@@ -332,6 +336,31 @@ def _cmd_run(args) -> int:
         print(str(e), file=sys.stderr)
         return 2
     return 0
+
+
+def _cmd_check(args) -> int:
+    """A dry run with the reveal check on: sidecars, mask cache and reveal.html, no image."""
+    from . import batch
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    args.reveal_check = True
+    out = args.out or os.path.join(args.folder, "autoedit-check")
+    try:
+        cfg = load_run_config(args)
+        m = batch.run(cfg, args.folder, out, do_apply=False, consistent=False, workers=cfg.workers)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(f"Page: {os.path.join(out, 'reveal.html')}")
+    if not args.strict:
+        return 0
+    if m["reveal"]["picture"] == "not_run":     # no photo was looked at: a clean exit would say nothing was found
+        print("--strict: the picture part did not run for any photo (it needs SAM 3; the stub cannot find "
+              "named things), so nothing was looked for in the pictures.", file=sys.stderr)
+        return 2
+    return 2 if m["reveal"]["with_findings"] else 0
 
 
 def _cmd_adjust(args) -> int:
@@ -1010,6 +1039,17 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="batch-edit a folder")
     _add_run_flags(run_p)
     run_p.set_defaults(func=_cmd_run)
+
+    chk_p = sub.add_parser("check", help="check a folder for what gives something away (reveal.html); changes no picture")
+    chk_p.add_argument("folder")
+    chk_p.add_argument("--out", help="where the sidecars and reveal.html go (default: FOLDER/autoedit-check)")
+    chk_p.add_argument("--strict", action="store_true", help="end with 2 when any photo has a finding")
+    chk_p.add_argument("--configs-dir", dest="configs_dir")
+    chk_p.add_argument("--profile")
+    chk_p.add_argument("--backend", choices=["auto", "sam3", "stub"])
+    chk_p.add_argument("--device")
+    chk_p.add_argument("--metadata", choices=["keep", "shareable", "none"])
+    chk_p.set_defaults(func=_cmd_check)
 
     adj_p = sub.add_parser("adjust", help="re-render one photo with its own adjustments")
     adj_p.add_argument("target", help="an exported photo or its .autoedit.json")

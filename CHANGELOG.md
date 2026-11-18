@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Reveal check (F21)
+
+### Added
+- **`autoedit check FOLDER [--out DIR] [--strict]`** and **`autoedit run ... --reveal-check`**: a
+  report of what a photo may give away before it is shared — number plates, writing, people,
+  faces, screens, documents and more, found by SAM 3 — and which file metadata (GPS position,
+  serial number, names, capture time) is in the source and in the export, never its values.
+  `reveal.html` in the output folder; a `reveal` block in each sidecar and in `run.json`. Kinds,
+  words and thresholds in `configs/reveal.toml`; seven kinds with no measured photo are marked
+  "may miss". Off by default; the check never changes a pixel. Without SAM 3 the picture part
+  reports "not run".
+- Studio: **Check before sharing** in Settings draws the findings over the preview.
+
 ## [Unreleased] — Night sky tools (F31)
 
 ### Added

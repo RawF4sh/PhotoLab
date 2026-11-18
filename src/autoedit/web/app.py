@@ -125,7 +125,7 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     @api.get("/version")
     def version():
         from .. import __version__
-        return {"api": "v1", "engine": __version__}
+        return {"api": "v1", "engine": __version__, "mark_limits": service.mark_limits(configs_dir, profile)}
 
     @api.get("/list")
     def listing(dir: str = ""):

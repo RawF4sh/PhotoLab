@@ -167,6 +167,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
   -webkit-mask-size:contain;-webkit-mask-repeat:no-repeat;-webkit-mask-position:center}
 /* the Mark tool (F37): the oval being drawn, the oval of a chip under the pointer, what it caught */
 .ba[data-marking]{cursor:crosshair;touch-action:none}
+.rv-box{position:absolute;border:2px solid var(--accent);pointer-events:none;box-sizing:border-box}
+.rv-ov{position:absolute;inset:0;pointer-events:none;z-index:4}
 .mark-ov{position:absolute;inset:0;pointer-events:none;z-index:4}
 .mark-tint{position:absolute;inset:0;mix-blend-mode:screen;opacity:.45}
 .mark-oval{position:absolute;border:2px solid #fff;border-radius:50%;pointer-events:none;
@@ -504,6 +506,7 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
           <div class="layer before"><img id="baBefore" alt="Before"></div>
           <div class="layer after"><img id="baAfter" alt="After (AutoEdit)"></div>
           <div class="mask-ov" id="maskOv"></div>
+          <div class="rv-ov" id="revealOv"></div>
           <div class="mark-ov" id="markOv"><div class="mark-tint" id="markTint"></div>
             <div class="mark-oval ghost" id="markGhost" hidden></div><div class="mark-oval" id="markPend" hidden></div></div>
           <div class="handle"></div>
@@ -537,6 +540,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
             <div class="fu-chips" id="fuChips"></div>
           </div>
         </div></div>
+      <div class="dsec" id="revealPanel" style="display:none"><div class="dsec-h"><h4>Check before sharing</h4></div>
+        <div class="dsec-b" id="revealBody"></div></div>
       <div id="previewError" role="alert" class="tip" style="padding:0 13px;color:var(--danger)"></div>
       <div class="dsec"><div class="dsec-h"><h4>Style</h4></div>
         <div class="dsec-b"><div class="styles" id="styles"></div>
@@ -721,6 +726,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         <div class="seg" id="translatorSeg" style="width:160px"><button class="on" data-t="auto">On</button>
           <button data-t="off">Off</button></div>
         <div class="tip" id="translatorNote" style="margin-top:6px"></div></div>
+      <div class="field"><label class="ck-row"><input type="checkbox" id="revealCk">Check before sharing</label>
+        <div class="tip" style="margin-top:6px">Looks for things a photo can give away, such as plates, screens and people, and lists what it finds. It changes nothing in the picture. It can miss things.</div></div>
       <div class="kv"><b>Segmenter</b><span class="v">SAM 3 · facebook/sam3</span></div>
       <div class="field"><label for="rawMode">RAW development</label>
         <select class="tinput" id="rawMode">
@@ -803,6 +810,7 @@ const STATE={look:'',served:false,dir:null,mode:'folder',files:[],sel:-1,style:'
   cull:{input:null,out:'',mode:'best',count:200,scanLimit:'',recursive:true,emitXmp:false,model:''},
   followups:{},         /* photo path -> list of follow-up clauses (kept in local storage) */
   everyEdit:'',         /* instruction text for every photo */
+  reveal:false,         /* the "Check before sharing" switch (F21) */
   translator:'',        /* '' = the configured default; 'auto' | 'off' once the switch is used (F20) */
   translatorInfo:null,  /* {available, model} of the local instruction reader, from the server */
   hasPairs:false};
@@ -818,15 +826,16 @@ const editOptions=()=>({
   concepts:selectedConcepts(),raw_mode:STATE.rawMode,
   backend:'sam3',compose:true,out_format:STATE.outFormat,consistent:STATE.consistent,
   ...(STATE.everyEdit.trim()?{edit:STATE.everyEdit.trim()}:{}),
-  ...(STATE.translator?{translator:STATE.translator}:{})
+  ...(STATE.translator?{translator:STATE.translator}:{}),
+  ...(STATE.reveal?{reveal_check:true}:{})
 });
 /* ---- follow-up edits (F19) ---- */
-const FU_KEY='autoedit.followups.v1',FU_MAX=2000,FU_MARKS=20;
+const FU_KEY='autoedit.followups.v1',FU_MAX=2000,MARK_LIM={min_side:0.01,max_chars:300,max_marks:20};   /* fallback; the server's values replace them at boot */
 /* A follow-up entry is a sentence (string) or a mark {box:[x0,y0,x1,y1] in shares of the frame, kind:'auto'|'area', edit} */
 const isMark=e=>!!e&&typeof e==='object';
 const okMark=x=>isMark(x)&&Array.isArray(x.box)&&x.box.length===4&&x.box.every(v=>typeof v==='number'&&isFinite(v)&&v>=0&&v<=1)
-  &&x.box[2]-x.box[0]>=0.01&&x.box[3]-x.box[1]>=0.01&&(x.kind==='auto'||x.kind==='area')
-  &&typeof x.edit==='string'&&x.edit.trim()!==''&&x.edit.length<=300;
+  &&x.box[2]-x.box[0]>=MARK_LIM.min_side&&x.box[3]-x.box[1]>=MARK_LIM.min_side&&(x.kind==='auto'||x.kind==='area')
+  &&typeof x.edit==='string'&&x.edit.trim()!==''&&x.edit.length<=MARK_LIM.max_chars;
 try{const raw=localStorage.getItem(FU_KEY);if(raw){const o=JSON.parse(raw);
   if(o&&typeof o==='object')for(const k in o)if(Array.isArray(o[k]))STATE.followups[k]=o[k]
     .filter(x=>typeof x==='string'||okMark(x)).map(x=>typeof x==='string'?x:{box:[...x.box],kind:x.kind,edit:x.edit});}}catch(e){}
@@ -893,6 +902,7 @@ let intentT=null;
 $('#intentInput').addEventListener('input',e=>{STATE.prompt=e.target.value;renderChips();
   clearTimeout(intentT);intentT=setTimeout(intentChanged,600);});
 function intentChanged(){markPreviewStale();}
+$('#revealCk').addEventListener('change',e=>{STATE.reveal=e.target.checked;markPreviewStale();});
 $('#consistSeg').addEventListener('click',e=>{const b=e.target.closest('[data-c]');if(b)STATE.consistent=b.dataset.c==='1';});
 
 /* ---- palette picker (regional OKLab split-tone) ------------------------ */
@@ -1001,7 +1011,7 @@ $('#markBtn').onclick=()=>{if(STATE.loading)return;setMarkTool(!markTool);};
   ba.addEventListener('pointermove',e=>{if(!a)return;const q=pt(e);if(!q)return;
     placeOval($('#markPend'),boxOf(a,q));$('#markPend').hidden=false;});
   ba.addEventListener('pointerup',e=>{if(!a)return;const q=pt(e)||a,box=boxOf(a,q).map(v=>Math.round(v*1e4)/1e4);a=null;
-    if(box[2]-box[0]<0.01||box[3]-box[1]<0.01)clearPending();else setPending(box);});   /* under 1 % on a side: a slip */
+    if(box[2]-box[0]<MARK_LIM.min_side||box[3]-box[1]<MARK_LIM.min_side)clearPending();else setPending(box);});   /* under 1 % on a side: a slip */
   ba.addEventListener('pointercancel',()=>{a=null;clearPending();});})();
 
 let maskOn=false;
@@ -1034,7 +1044,7 @@ function markPreviewStale(){
   markReset();
   STATE.preview=null; STATE.previewDirty=true; STATE.previewToken++;
   $('#previewError').textContent='';
-  renderMaskOverlay();updateMaskButton();renderConcepts();
+  renderReveal();renderMaskOverlay();updateMaskButton();renderConcepts();
   if(STATE.loading){$('#ba').classList.remove('gen');STATE.loading=false;}
   if(real()&&STATE.sel>=0){
     setPreviewState('Needs update','stale');
@@ -1055,7 +1065,7 @@ function showSourceOnly(markDirty){
   $('#why').innerHTML='<div class="tip">No notes yet.</div>';
   $('#stScene').textContent='';$('#sbScene').textContent='';$('#sbQuality').textContent='';
   STATE.preview=null; STATE.previewDirty=!!markDirty; STATE.previewToken++;
-  renderMaskOverlay();updateMaskButton();renderConcepts();
+  renderReveal();renderMaskOverlay();updateMaskButton();renderConcepts();
   setPreviewState(markDirty?'Ready':'No preview', markDirty?'stale':'');
 }
 function previewLoading(){const src=thumbURL(STATE.files[STATE.sel].thumbPath,1100);
@@ -1086,11 +1096,37 @@ async function loadPreview(){
 }
 $('#genPreviewBtn').onclick=()=>loadPreview();
 
+/* ---- "Check before sharing" (F21): boxes over the photo, and the list of what was found ---- */
+/* the label comes with each finding (reveal.toml); a kind named only in looked_for shows its name */
+const revealLabel=f=>f.label||f.kind.replace(/_/g,' ');
+/* one line per finding: the label, who it is, and "may miss" for a weak kind */
+function revealLine(f){const parts=[];
+  if(f.kind==='people'||f.kind==='face')parts.push(f.subject?'the subject':'other people');
+  if(f.weak)parts.push('may miss');
+  return revealLabel(f)+(parts.length?': '+parts.join(', '):'');}
+/* fills parent with the list (or the not-run / nothing-found line); the picture is never changed */
+function revealList(rv,parent){
+  if(rv.picture==='not_run'){parent.appendChild(T('div','tip','The picture was not checked'+(rv.reason?': '+rv.reason:'')+'.'));return;}
+  const fs=rv.findings||[];
+  if(!fs.length)parent.appendChild(T('div','tip','Nothing on the list was found. It looked for: '
+    +((rv.looked_for||[]).map(k=>revealLabel({kind:k})).join(', ')||'the listed things')+'. It can miss things.'));
+  else{const ul=T('ul');fs.forEach(f=>ul.appendChild(T('li',null,revealLine(f))));parent.appendChild(ul);
+    if(rv.more)parent.appendChild(T('div','tip',rv.more+' more not shown.'));}}
+function renderReveal(){
+  const rv=STATE.preview?.reveal,ov=$('#revealOv'),pn=$('#revealPanel'),body=$('#revealBody');
+  ov.replaceChildren();body.replaceChildren();pn.style.display=rv?'':'none';if(!rv)return;
+  /* boxes are shares of the source frame: a straightened or cropped picture does not fit them */
+  const warped=!!STATE.preview?.result?.geometry;
+  if(rv.picture!=='not_run'&&!warped)(rv.findings||[]).forEach(f=>{const b=T('div','rv-box'),x=f.box;b.title=revealLine(f);
+    b.style.left=x[0]*100+'%';b.style.top=x[1]*100+'%';b.style.width=(x[2]-x[0])*100+'%';b.style.height=(x[3]-x[1])*100+'%';
+    ov.appendChild(b);});
+  revealList(rv,body);if(warped&&(rv.findings||[]).length)body.appendChild(T('div','tip','Boxes not shown: the photo was straightened or cropped.'));
+  body.appendChild(T('div','tip','Nothing was done to the picture.'));}
 function applyPreview(res){const r=res.result||{};const ba=$('#ba');
   STATE.previewDirty=false;
   $('#baBefore').src=res.before;$('#baAfter').src=res.after;$('#baSizer').src=res.after;
   ba.classList.remove('gen');setView('split');
-  renderMaskOverlay();updateMaskButton();
+  renderMaskOverlay();updateMaskButton();renderReveal();
   setPreviewState('Current','ready');
   $('#stScene').textContent=r.scene?'· '+r.scene:'';
   $('#sbScene').textContent=r.scene?'Scene: '+r.scene:'';
@@ -1334,7 +1370,7 @@ function fuChanged(path,list){
 function fuApply(){const p=STATE.files[STATE.sel],inp=$('#fuInput'),t=inp.value.trim();if(!p||!t)return;
   const old=fuList(p.path);
   if(pending){
-    if(fuMarks(old).length>=FU_MARKS){$('#previewError').textContent='Too many marks on this photo; remove one first.';return;}
+    if(fuMarks(old).length>=MARK_LIM.max_marks){$('#previewError').textContent='Too many marks on this photo; remove one first.';return;}
     const box=pending;markReset();inp.value='';
     fuChanged(p.path,[...old,{box,kind:'auto',edit:t}]);return;}
   const list=[...old,t];
@@ -1601,6 +1637,9 @@ function renderReport(){
   // regions found
   const cs=r.concepts||[];
   if(cs.length)out.push('<h5>What it looked for</h5><table>'+cs.map(c=>`<tr><td>${esc(niceName(c.name))}</td><td class="n">${c.present?'found':'not found'}</td><td class="n">${c.present?pct(c.score)+' sure':''}</td><td class="n">${c.present?pct(c.coverage)+' of frame':''}</td></tr>`).join('')+'</table>');
+  // reveal check
+  const rvBox=T('div');if(res.reveal){revealList(res.reveal,rvBox);rvBox.appendChild(T('div','tip','Nothing was done to the picture.'));
+    out.push('<h5>What it found</h5><div id="rvFound"></div>');}
   // consistency
   const wb=r.wb_bias||[0,0];
   if(r.batch_group||r.exposure_bias||wb[0]||wb[1])out.push(`<h5>Batch consistency</h5><div class="lead">Group ${esc(r.batch_group||'—')}: exposure nudged ${signed('exposure',r.exposure_bias||0)}, white balance ${num(wb[0],1)} / ${num(wb[1],1)}.</div>`);
@@ -1612,6 +1651,7 @@ function renderReport(){
   if(tm.length)out.push('<h5>Time per step</h5><table>'+tm.map(([k,v])=>`<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="n">${(v/1000).toFixed(2)} s</td></tr>`).join('')+'</table>');
   out.push(`<h5>Full record</h5><details><summary class="tip">Show everything as JSON (the same record a batch run writes next to each photo)</summary><pre>${esc(JSON.stringify(r,null,2))}</pre></details>`);
   b.innerHTML=out.join('');
+  const slot=$('#rvFound');if(slot)slot.replaceChildren(...rvBox.childNodes);
 }
 /* ---- "Show me how" (F37): what one follow-up entry did, step by step ---- */
 const HOW={tok:0,opener:null};
@@ -1752,6 +1792,8 @@ window.addEventListener('keydown',e=>{
 
 /* ---- boot --------------------------------------------------------------- */
 renderStyles();renderChips();renderPalettes();renderFilm();
+fetch('/api/v1/version').then(r=>r.ok?r.json():null).then(v=>{const l=v&&v.mark_limits;
+  if(l&&l.min_side>0&&l.max_chars>0&&l.max_marks>0){Object.assign(MARK_LIM,l);$('#fuInput').maxLength=l.max_chars;}}).catch(()=>{});
 fetch('/api/styles').then(r=>r.ok?r.json():null).then(s=>{if(Array.isArray(s)&&s.length){STATE.served=true;
   STATE.styleConcepts=Object.fromEntries(s.map(style=>[style.name,style.concepts||[]]));renderConcepts();syncRun();loadTranslatorInfo();}
   if(!STATE.served)standaloneNote();}).catch(()=>standaloneNote());

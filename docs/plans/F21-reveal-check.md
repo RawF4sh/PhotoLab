@@ -129,6 +129,8 @@ they cannot say whether the check finds a plate. That needs photos that have the
 | With the stub segmenter | The file part runs. The picture part is reported as "not run: needs SAM 3", never as "nothing found" | none intended |
 | Reading text in the picture | Not in F21. It needs a local text reader the engine does not have | a later feature |
 | An exit code | `autoedit check --strict` ends with 2 when any photo has a finding; without it, 0 | the flag |
+| T2 after a partial measurement (unattended run, 2026-11-18) | T2 and T3 are built on the first part of T0: the five measured kinds get their measured `min_score`; the seven kinds without a labelled photo get `weak = true` ("may miss"). A second labelled set can still change the values | `configs/reveal.toml`: remove `weak` or change `min_score` per kind |
+| Tiles (T4) | Not built: they added no hit to any measured kind and cost 44 s per photo | build T4 if a second set shows small plates missed |
 
 ## Design
 
@@ -569,3 +571,52 @@ labelling page's previews, one left out because its plates could not be judged f
   and the seven unmeasured kinds ship with `weak = true` ("may miss"), or a second set with at
   least 20 screens, 20 documents and 6 more plates is labelled and run first (the script resumes,
   only the new photos are measured).
+
+### T2 and T3, built in the unattended run of 2026-11-18
+
+The owner asked for an overnight run before answering the question above, so T2 and T3 were built
+on the first part of T0 (see "Decisions taken without the owner"). T4 (tiles) is not built.
+
+- **Built** by two Builders (Sonnet, medium): sections 6 to 8 (T2) and section 10 (T3), tests 9
+  to 17. The reveal check is off by default.
+- **Checked** by the Checker (Opus, high). Its three must-fix findings were fixed by a third
+  Builder (Sonnet, high), each with a test:
+  - with SAM 3 and more than one render worker, the workers read `open_vocabulary` as false and
+    reported "not run";
+  - `check --strict` ended with 0 when the picture part had not run;
+  - Studio kept the last photo's boxes after a switch of photo.
+
+  Four should-fix findings were fixed the same way:
+  - no boxes over a straightened or cropped photo;
+  - the photos of a resumed run that were made before the check are named;
+  - the file part says so when nothing was found;
+  - findings carry their label, so Studio no longer repeats `reveal.toml`.
+- **Default output is byte-identical**: the stub corpus rendered before T2 and after the fixes.
+  Both suites passed (1045 tests).
+- **Acceptance check 3**, `autoedit check` with SAM 3 on the 137 labelled photos: done in one
+  process, 2,533 s in all, about 18 s per photo with the check on, decoding of large JPEGs
+  included.
+  - 85 of 137 photos have findings: people 65, face 48, child 41, writing 22, plate 18, badge 10,
+    address 10, code 4, document 4, screen 3, card 1.
+  - Plate 18 matches the measurement: 17 photos with a plate (14 labelled, plus three not labelled
+    that show one) and one false alarm.
+  - The file part found a GPS position in 16 sources and in none of the exports. Capture time,
+    camera and description stay in the export, as the `shareable` mode intends.
+  - The page reads as the wording rules ask. Its only "safe" is the spec's negated closing
+    sentence.
+- **Seen on that page:** the "may miss" kinds fire on photos without them (name badge on 10,
+  house number on 10, screen and document on a boat). At the default `min_score` of 0.5 they are
+  false alarms. A second labelled set would set their scores; until then, a profile can set
+  `off = true` for them.
+- **Acceptance check 2**, `autoedit check` with SAM 3 on the repo's 110 landscape JPEGs, 1,648 s in
+  all (about 15 s per photo): 8 photos with findings (people 6, face 1, address 1, writing 1).
+  Against the probe of "Step one": people 6 of the probe's 10 (the score bar is now 0.8), face 1
+  (the one human face; none of the animals), the trail sign and the summit lettering, and no child
+  and no ID card (both were under the new bars). As expected from the new scores.
+- **Acceptance check 4**, Studio in the browser with SAM 3: with "Check before sharing" on, the
+  photo with a car lists 20 findings. The number plate's box lies on the plate: the overlay has the
+  image's exact size and the box is at the finding's shares. Switching photos clears the boxes. The
+  mark limits now come from the server (`/api/v1/version`). Checked at one window size, not two.
+- **Acceptance check 5:** about 15 to 18 s per photo with the check on, in a run that also decodes
+  and edits. With the check off the same style costs the image pass and the style's words only;
+  F36's numbers put the check's own share at about 7 s.

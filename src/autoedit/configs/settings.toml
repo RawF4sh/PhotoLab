@@ -5,7 +5,7 @@
 
 # Not for a person: config file paths, the API key (never shown) and a fixed internal value.
 hidden = ["rules_path", "looks_path", "concepts_path", "styles_path", "compose_path", "intents_path",
-          "palettes_path", "instructions_path", "exports_path", "api_key", "emit", "profile_dir", "rule_sets"]
+          "palettes_path", "instructions_path", "exports_path", "reveal_path", "api_key", "emit", "profile_dir", "rule_sets"]
 
 [groups]
 look = "Look"
@@ -208,6 +208,11 @@ help = "What camera data stays in the export: keep all, share without location a
 label = "Crop to shape"
 group = "output"
 help = "Crops the export to a shape such as 4:5 or 1:1, placed on the subject. Empty keeps the photo's own shape."
+
+[setting.reveal_check]
+label = "Check before sharing"
+group = "output"
+help = "Lists photos that show plates, screens, documents, people or file metadata. It looks only for what is on its list. It changes no picture."
 
 [setting.history]
 label = "Keep a history of your edits"
