@@ -21,18 +21,28 @@ from .contract import GlobalStatsModel, RegionStatsModel, Settings
 RuleSet = dict[str, dict[str, dict[str, str]]]
 
 
-def load(path: str, enable=()) -> RuleSet:
+def load(path: str, enable=(), require=()) -> RuleSet:
     """Load rules.toml. `enable` names opt-in rule sets: the tables under `[opt_in.<name>]` hold
     the rules of features that are off by default. They are merged into the scene blocks only
     when the feature is enabled, so a default run (and any tool that reads the file with a plain
-    `load(path)`) never sees them."""
+    `load(path)`) never sees them. `require` names the rule sets of a genre (F30): merged the same
+    way, but a name the file does not define is an error, because the pack would then run without
+    its rules and say nothing."""
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
     opt_in = data.pop("opt_in", {})
-    for name in enable:
-        for scene, blocks in opt_in.get(name, {}).items():
-            for block, entries in blocks.items():
-                data.setdefault(scene, {}).setdefault(block, {}).update(entries)
+    missing = [n for n in require if n not in opt_in]
+    if missing:
+        raise ValueError(f"{path}: no opt-in rule set named {', '.join(missing)} "
+                         f"(the file has: {', '.join(opt_in) or 'none'})")
+    for name in (*enable, *require):
+        try:
+            for scene, blocks in opt_in.get(name, {}).items():
+                for block, entries in blocks.items():
+                    data.setdefault(scene, {}).setdefault(block, {}).update(entries)
+        except (AttributeError, TypeError, ValueError):   # a value where a table of rules belongs
+            raise ValueError(f"{path}: opt-in rule set {name} must hold [opt_in.{name}.<scene>.<block>] "
+                             "tables of rules") from None
     return data
 
 
@@ -204,3 +214,23 @@ def apply(
         if settings:
             region_settings[concept] = settings
     return global_settings, region_settings
+
+
+def block(rules: dict, name: str, defaults: dict, ranges: dict) -> dict:
+    """The block of plain values `[name]` of rules.toml over `defaults`. Each key of `ranges` (key to
+    (lowest, highest)) must be a number in that range: a bool, a string or a value outside it is a
+    ValueError, so a run stops before a photo is read."""
+    given = rules.get(name) or {}
+    if not isinstance(given, dict):
+        raise ValueError(f"rules.toml [{name}] must be a table of values (got {given!r})")
+    out = {**defaults, **given}
+    for key, (lo, hi) in ranges.items():
+        v = out[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:   # NaN fails the comparison
+            raise ValueError(f"rules.toml [{name}] {key} must be a number from {lo:g} to {hi:g} (got {v!r})")
+        if isinstance(defaults.get(key), int) and not isinstance(defaults[key], bool) and v != int(v):
+            raise ValueError(f"rules.toml [{name}] {key} must be a whole number (got {v!r})")
+    for key, d in defaults.items():       # a list of words stays a list of words: a string would be read letter by letter
+        if isinstance(d, list) and not (isinstance(out[key], list) and all(isinstance(x, str) and x for x in out[key])):
+            raise ValueError(f"rules.toml [{name}] {key} must be a list of words (got {out[key]!r})")
+    return out

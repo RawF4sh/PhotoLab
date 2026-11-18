@@ -226,7 +226,7 @@ test photos exist. "Pack only" means the pack needs no new tool.
   star cores, clean noise without eating stars, stack frames.
 - **Today:** expected to be wrong; no night-sky photo has been run. The exposure rules read a
   dark frame as underexposed and lift it; noise reduction and sharpening have no notion of stars.
-- **Pack `astro`:** find sky, mountain, trees, foreground; a look with `preserve_exposure`.
+- **Pack `astro`:** built (F31), untested: the landscape set, the `astro` look (without `preserve_exposure`, an open owner question), `night_sky` and noise reduction on.
 - **Waits for:** F31 (sky gradient, hot pixels, star protection), F33 (stacking, trails).
 - **Stays out:** adding or enlarging stars, drawn star spikes, sky replacement, telescope
   processing with calibration frames.

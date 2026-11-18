@@ -5,9 +5,12 @@ Commands:
   autoedit adjust PHOTO [--set T.OP=V] [--edit TEXT] [--mark X0,Y0,X1,Y1 [--mark-kind K]] [--explain] [--reset]
                                              re-render one photo
   autoedit curate INPUT_DIR OUT_DIR          copy a diverse subset for review/training
+  autoedit pick FOLDER [-o DIR] [--copy]     rank the frames of each burst and pick the keepers
+  autoedit merge FOLDER [-o DIR] [--mode M]  merge brackets, stacks, focus series or star trails into TIFFs
   autoedit doctor                            report device + backend availability
   autoedit models status|download|remove     SAM 3 weights
   autoedit presets                           list concept presets
+  autoedit genres list                       list genre packs
 
 Config layering: CLI flags > --config run.toml > configs/defaults.toml.
 """
@@ -34,8 +37,9 @@ def _flatten(d: dict) -> dict:
         if src in dec:
             kw[dst] = dec[src]
     for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
-              "decider", "emit", "consistency", "levels", "denoise", "highlight_hold", "light_shaping",
-              "translator"):
+              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "light_shaping",
+              "translator", "grain", "grain_size", "lut", "lut_amount", "history", "genre", "straighten", "neutral", "wb", "backdrop",
+              "consistency_wb", "colour_report"):
         if k in run:
             kw[k] = run[k]
     for k in ("backend", "device", "analysis_long_edge", "mask_cache"):
@@ -49,7 +53,7 @@ def _flatten(d: dict) -> dict:
     if "quality" in out:
         kw["quality"] = out["quality"]
     for src, dst in (("metadata", "metadata"), ("long_edge", "out_long_edge"), ("name", "out_name"),
-                     ("subdir", "out_subdir"), ("export", "export")):
+                     ("subdir", "out_subdir"), ("export", "export"), ("aspect", "out_aspect")):
         if src in out:
             kw[dst] = out[src]
     _llm_map = {"mode": "llm_mode", "model": "llm_model", "temperature": "llm_temperature",
@@ -82,6 +86,16 @@ def load_run_config(args) -> RunConfig:
         paths.read_config(defaults_path, profile)   # only to reject an overlay that cannot merge
     if getattr(args, "config", None):
         explicit.update(_flatten(_read_toml(args.config)))
+    # A genre (F30) sits directly above the packaged defaults: the export preset, the files and the
+    # flags win over it. `--genre ""` switches off a genre that a file names.
+    genre = getattr(args, "genre", None)
+    if genre is None:
+        genre = explicit.get("genre") or kw.get("genre")
+    if genre:
+        from . import genres
+
+        kw.update(genres.run_kwargs(
+            genre, kw, style_named="style" in explicit or getattr(args, "style", None) is not None))
     # Order, lowest to highest: the packaged defaults, the preset, what the files say, the flags.
     # A preset named by a flag or a file can be switched off with `--export ""`.
     preset = getattr(args, "export", None)
@@ -94,6 +108,7 @@ def load_run_config(args) -> RunConfig:
             preset, kw.get("exports_path") or paths.config_path("exports.toml", packaged_fallback=True)))
     kw.update(explicit)
     kw["export"] = preset or None
+    kw["genre"] = genre or None
 
     # CLI overrides (only when explicitly provided)
     overrides = {
@@ -131,7 +146,19 @@ def load_run_config(args) -> RunConfig:
         "vignette": getattr(args, "vignette", None),
         "sharpen": getattr(args, "sharpen", None),
         "levels": getattr(args, "levels", None),
+        "straighten": getattr(args, "straighten", None),
+        "neutral": getattr(args, "neutral", None),
+        "backdrop": getattr(args, "backdrop", None),
+        "consistency_wb": getattr(args, "consistency_wb", None),
+        "colour_report": getattr(args, "colour_report", None),
+        "out_aspect": getattr(args, "aspect", None),
         "denoise": getattr(args, "denoise", None),
+        "night_sky": getattr(args, "night_sky", None),
+        "grain": getattr(args, "grain", None),
+        "grain_size": getattr(args, "grain_size", None),
+        "lut": getattr(args, "lut", None),
+        "lut_amount": getattr(args, "lut_amount", None),
+        "history": getattr(args, "history", None),
         "highlight_hold": getattr(args, "highlight_hold", None),
         "light_shaping": getattr(args, "light_shaping", None),
         "translator": getattr(args, "translator", None),
@@ -142,13 +169,25 @@ def load_run_config(args) -> RunConfig:
     concepts = getattr(args, "concepts", None)
     if concepts:
         kw["concepts"] = [c.strip() for c in concepts.split(",") if c.strip()]
+    kw["profile_dir"] = profile
     return RunConfig(**kw)
+
+
+def _spot(text: str) -> list[float]:
+    from . import neutral
+
+    try:
+        return neutral.parse(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
 
 
 def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("input_dir")
     p.add_argument("out_dir", nargs="?", default="out")
     p.add_argument("--style", help="style profile from styles.toml (look + concepts + brief)")
+    p.add_argument("--genre", help="genre pack from genres.toml (`autoedit genres list`): the things to find, "
+                   "a look and run settings for one kind of photo; other flags win over it")
     p.add_argument("--prompt", help='free-text intent, layered on the style brief (e.g. "moody, warm, lift shadows")')
     p.add_argument("--edit", help='plain-language region instructions, e.g. "brighten the jacket, darken the sky slightly"')
     p.add_argument("--translator", choices=["auto", "local", "off"],
@@ -156,7 +195,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                         "auto (when it is running) | local (also when --decider llm is on) | off")
     p.add_argument("--preset", help="concept-set override from concepts.toml")
     p.add_argument("--concepts", help='comma-separated, overrides --preset (e.g. "sky,skin,dress")')
-    p.add_argument("--look", help="magnitude profile override (defaults to the style's look)")
+    p.add_argument("--look", help="magnitude profile override (defaults to the style's look); "
+                                  '"surprise" with --seed N takes a look the seed picks and names it')
+    p.add_argument("--seed", type=int, help="with --look surprise: a whole number that picks the look (the same number, the same look)")
     p.add_argument("--palette", help='palette grade from palettes.toml ("auto", "cool_blue", "teal_orange"; "off" disables)')
     p.add_argument("--palette-strength", dest="palette_strength", type=float,
                    help="palette strength 0..1 (default 0.8)")
@@ -198,8 +239,37 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="disable output sharpening")
     p.add_argument("--levels", dest="levels", action="store_true", default=None,
                    help="pull the measured black (and white) point of each frame to a true black (opt-in)")
+    p.add_argument("--straighten", dest="straighten", action="store_true", default=None,
+                   help="turn the export so a clear waterline or horizon is level, at most 5 degrees; the edges are cut (opt-in)")
+    p.add_argument("--neutral", type=_spot, metavar="X,Y",
+                   help="a spot that is grey or white, as shares of the frame from the top left (0.42,0.61): the white "
+                        "balance makes it neutral. A spot it cannot use is reported and left")
+    p.add_argument("--neutral-from", dest="neutral_from", metavar="FILE",
+                   help="measure the --neutral spot once, on this photo, and give every photo of the run that white balance")
+    p.add_argument("--backdrop", dest="backdrop", action="store_true", default=None,
+                   help="even out a light background and take it to a set white, 245 of 255 (opt-in; nothing is cut out)")
+    p.add_argument("--consistency-wb", dest="consistency_wb", action="store_true", default=None,
+                   help="bring the photos of a group to one white balance, the median cast of its frames (opt-in)")
+    p.add_argument("--colour-report", dest="colour_report", action="store_true", default=None,
+                   help="measure the subject colour of every photo and report how far each group spreads (opt-in)")
+    p.add_argument("--aspect", help='crop the export to a shape W:H, e.g. 4:5, placed on the subject; "" keeps the photo\'s shape')
     p.add_argument("--denoise", dest="denoise", action="store_true", default=None,
                    help="reduce colour and luma noise on high-ISO frames, chroma first (opt-in)")
+    p.add_argument("--night-sky", dest="night_sky", action="store_true", default=None,
+                   help="night sky tools: night frames keep their darkness, a town's glow comes off the sky, stuck pixels are repaired, "
+                        "and noise reduction and sharpening spare the stars (opt-in; the astro pack sets it)")
+    p.add_argument("--grain", type=float,
+                   help="film grain on the finished photo, 0 to 100 (25 is light); added to the export after the resize. "
+                        "Not scaled by --intensity; 0 switches a look's grain off")
+    p.add_argument("--grain-size", dest="grain_size", type=float,
+                   help="how coarse the grain is, 0.5 to 4 (1 is fine; it follows the size of the export)")
+    p.add_argument("--lut", help="a .cube 3D LUT file laid over the finished photo")
+    p.add_argument("--lut-amount", dest="lut_amount", type=float,
+                   help="how much of the LUT is blended in, 0 to 100 (default 100). Not scaled by --intensity")
+    p.add_argument("--history", dest="history", action="store_true", default=None,
+                   help="keep one line per exported photo in your profile, for `autoedit style suggest` (opt-in)")
+    p.add_argument("--no-history", dest="history", action="store_false", default=None,
+                   help="do not keep a history, whatever the config files say")
     p.add_argument("--highlight-hold", dest="highlight_hold", action="store_true", default=None,
                    help="keep highlights that are blown in the source white instead of letting the edit grey them (opt-in)")
     p.add_argument("--light-shaping", dest="light_shaping", action="store_true", default=None,
@@ -222,11 +292,33 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
 
 
+def _surprise(cfg: RunConfig, seed: int | None) -> RunConfig:
+    """`--look surprise --seed N` (F26): the run gets the first of the looks the seed picks, by
+    name. The config that comes back never holds the word, so no sidecar does."""
+    from . import looks as looks_mod, variants
+
+    if cfg.look != variants.SURPRISE or variants.SURPRISE in looks_mod.load(cfg.looks_path):
+        return cfg   # not asked for, or a look of your own has that name
+    if seed is None:
+        raise ValueError("--look surprise needs --seed N (any whole number from 0 up): "
+                         "the seed picks the look, so the run can be repeated")
+    picks = variants.surprise_for(cfg, variants.surprise_seed(seed))
+    if not picks:
+        raise ValueError("--look surprise: the look library holds no other look")
+    print(f"surprise, seed {seed}: {', '.join(picks)}\nthis run uses {picks[0]}, the same as --look {picks[0]}")
+    return cfg.model_copy(update={"look": picks[0]})
+
+
 def _cmd_run(args) -> int:
     from . import batch
 
     try:
-        cfg = load_run_config(args)
+        cfg = _surprise(load_run_config(args), getattr(args, "seed", None))
+        if getattr(args, "neutral_from", None):
+            from . import neutral
+
+            cfg, line = neutral.for_run(cfg, args.neutral_from)
+            print(line)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -259,7 +351,8 @@ def _cmd_adjust(args) -> int:
                             mark=mark, mark_kind=args.mark_kind, explain=args.explain,
                             source=args.source, configs_dir=args.configs_dir,
                             reference=args.reference, recipe_model=args.recipe_model,
-                            allow_cloud=args.allow_cloud, profile=args.profile)
+                            allow_cloud=args.allow_cloud, profile=args.profile,
+                            lut=args.lut, neutral=args.neutral)
     except (FileNotFoundError, ValueError, OSError) as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -377,6 +470,50 @@ def _cmd_curate(args) -> int:
     return 0
 
 
+def _cmd_pick(args) -> int:
+    from . import pick
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    try:
+        r = pick.run(args.folder, args.out, load_run_config(args), model_path=args.aesthetic_model,
+                     copy=args.copy, configs_dir=args.configs_dir, profile=args.profile, log=print)
+    except (ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(f"\n{len(r['bursts'])} bursts, {len(r['singles'])} single frames, {len(r['picks'])} picked files"
+          + (f", {len(r['failed'])} could not be judged" if r["failed"] else ""))
+    print("No photo was moved or changed.")
+    for f in pick.FILES:
+        print(os.path.abspath(os.path.join(args.out, f)))
+    if args.copy:
+        print(os.path.abspath(os.path.join(args.out, "picked")))
+    return 0
+
+
+def _cmd_merge(args) -> int:
+    from . import merge
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    try:
+        r = merge.run(args.folder, args.out, mode=args.mode, everything=args.all, align=not args.no_align,
+                      dry_run=args.dry_run, configs_dir=args.configs_dir, profile=args.profile)
+    except (ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    if args.dry_run:
+        print(f"\n{len(r['groups'])} groups found; nothing was written")
+        return 0
+    print(f"\n{len(r['merged'])} of {len(r['groups'])} groups merged into {os.path.abspath(args.out)}"
+          + (f"; {len(r['flagged'])} flagged" if r["flagged"] else "")
+          + (f"; {len(r['failed'])} not merged" if r["failed"] else ""))
+    print("No photo was moved or changed.")
+    return 1 if r["failed"] else 0
+
+
 def _cmd_train_aesthetic(args) -> int:
     # Thin wrapper over critic.train_from_csv — the web API uses the same function, so the CSV
     # column detection / AVA parsing / feature extraction can't drift between CLI and UI.
@@ -408,7 +545,7 @@ def _cmd_doctor(args) -> int:
     # a stray ./configs in the CWD silently overrides packaged tuning — always show which won
     print(f"  configs: {os.path.abspath(args.configs_dir or paths.configs_dir())}")
     if args.profile:
-        known = {f"{n}.toml" for n in paths._CONFIG_FILES} | {"defaults.toml"}
+        known = {f"{n}.toml" for n in paths._CONFIG_FILES} | {"defaults.toml", "style.toml", "history.jsonl", "calibrate.toml", "pick.toml", "merge.toml"}
         print(f"  profile: {args.profile}")
         for f in sorted(os.listdir(args.profile)):
             print(f"    {f}" + ("" if f in known else "  (not a config file, ignored)"))
@@ -464,6 +601,99 @@ def _cmd_doctor(args) -> int:
 
 def _gb(n: int) -> str:
     return f"{n / 1e9:.1f} GB"
+
+
+def _kb(n: int) -> str:
+    return f"{n / 1000:.0f} kB"
+
+
+def _days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
+
+
+def _cmd_history(args) -> int:
+    from . import history
+
+    try:
+        st = history.status(args.profile)
+        if args.history_cmd == "status":
+            if history.wanted(args.configs_dir, args.profile):
+                print("history: on")
+            else:
+                print("history: off (turn it on with `history = true` under [run] in your profile's "
+                      "defaults.toml, or --history on a run)")
+            if not os.path.isfile(st["path"]):
+                print(f"file: none yet ({st['path']})")
+                return 0
+            print(f"file: {st['path']}")
+            if st["unreadable"]:
+                print(f"unreadable lines: {st['unreadable']} (skipped)")
+            span = f" ({st['first']} to {st['last']})" if st["first"] else ""
+            print(f"photos: {st['photos']} on {_days(st['days'])}{span}, {_kb(st['bytes'])}")
+            return 0
+        if not os.path.isfile(st["path"]):
+            print("no history to clear")
+            return 0
+        if not args.yes:
+            print(f"would delete the history of {st['photos']} photos ({_kb(st['bytes'])}) at {st['path']}; "
+                  "run again with --yes to delete")
+            return 1
+        history.clear(args.profile)
+        print(f"deleted the history of {st['photos']} photos")
+        return 0
+    except (ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+
+def _cmd_style(args) -> int:
+    from . import style
+
+    try:
+        ov = style.overview(args.profile, args.configs_dir, args.look)
+        by_id = {s["id"]: s for s in ov["suggestions"]}
+        unknown = [i for i in args.only if i not in by_id]
+        if unknown:
+            print(f"no such suggestion: {', '.join(unknown)} (known: {', '.join(by_id) or 'none'})", file=sys.stderr)
+            return 2
+        if args.yes:
+            r = style.add_to_look(args.profile, args.yes, args.only or None, args.look, args.configs_dir)
+            print(f"saved look {r['name']} in {r['path']}: the look {r['base']} plus {', '.join(r['added'])}")
+            if r["replaced"]:
+                print(f"  it replaced the look '{r['name']}' that was in the profile")
+            print(f"Nothing uses it yet. Try it with: autoedit run <in> <out> --look {r['name']}")
+            return 0
+        if not ov["photos"]:
+            print("No history yet." + ("" if ov["on"] else " It is off: turn it on with `history = true` under "
+                  "[run] in your profile's defaults.toml, or --history on a run."))
+            return 0
+        pl = lambda n, w: f"{n} {w}" if n == 1 else f"{n} {w}s"  # noqa: E731
+        line = f"History: {pl(ov['photos'], 'photo')} on {_days(ov['days'])}."
+        if ov["look"]:
+            line += f" Look {ov['look']}: {pl(ov['looks'][ov['look']], 'photo')}."
+        others = [f"{n} ({c})" for n, c in ov["looks"].items() if n != ov["look"]]
+        if others:
+            line += f" Other looks: {', '.join(others)}; see them with --look NAME."
+        print(line)
+        lo = ov["left_out"]
+        if lo["mark"] or lo["word"]:
+            print(f"Not counted: {pl(lo['mark'], 'change')} made with a mark, {lo['word']} on things your "
+                  "config files do not name.")
+        shown = [by_id[i] for i in args.only] if args.only else ov["suggestions"]
+        if not shown:
+            r = ov["suggest"]
+            print(f"No suggestion yet. A change shows up here when you made it in the same direction on at least "
+                  f"{r['min_photos']} photos, on at least {r['min_days']} days, and on at least "
+                  f"{r['min_share'] * 100:.0f} % of the photos it could have been made on.")
+            return 0
+        for s in shown:
+            print(f"\n{s['id']}\n  {s['ask']}\n  {s['fact']}")
+        print("\nTo add them to a new look: autoedit style suggest --yes NAME   (--only ID for some)")
+        print("Nothing has changed.")
+        return 0
+    except (ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
 
 
 def _cmd_models(args) -> int:
@@ -528,6 +758,25 @@ def _cmd_exports(args) -> int:
     return 0
 
 
+def _cmd_genres(args) -> int:
+    import json
+
+    from . import genres
+
+    try:
+        rows = genres.listing(args.configs_dir, args.profile)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    for g in rows:
+        bits = [f"{k}={g[k]}" for k in ("preset", "look") if g[k]]
+        bits += [f"{k}={','.join(g[k])}" for k in ("rule_sets", "reveal") if g[k]]
+        bits += [f"{k}={json.dumps(v)}" for k, v in g["run"].items()]
+        print(f"{g['name']}  ({g['origin']}, {'tested' if g['tested'] else 'untested'})  " + "  ".join(bits))
+        print("    " + g["description"])
+    return 0
+
+
 def _cmd_settings(args) -> int:
     import json
 
@@ -551,10 +800,11 @@ def _profile_looks(profile: str | None) -> dict:
     return paths.read_config(path) if path else {}
 
 
-def write_look(profile: str, name: str, fields: dict) -> tuple[str, bool]:
+def write_look(profile: str, name: str, fields: dict, habit: dict | None = None) -> tuple[str, bool]:
     """Write look `name` with ALL its fields into <profile>/looks.toml, keeping the other looks in
     the file. All fields, because a profile table is merged over a packaged look of the same name:
     a table with only the changed fields would let the packaged values come back.
+    `habit` (F27, scene -> target -> op -> value) is written as the look's habit table.
     Returns (path, whether the file existed)."""
     from dataclasses import asdict
 
@@ -566,6 +816,8 @@ def write_look(profile: str, name: str, fields: dict) -> tuple[str, bool]:
     existed = os.path.isfile(path)
     data = paths.read_config(path) if existed else {}
     data[name] = {k: fields.get(k, defaults[k]) for k in looks_mod.FIELDS}
+    if habit:
+        data[name][looks_mod.HABIT] = habit
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(paths.dump_toml(data))
     return path, existed
@@ -574,6 +826,7 @@ def write_look(profile: str, name: str, fields: dict) -> tuple[str, bool]:
 def _cmd_looks(args) -> int:
     from dataclasses import asdict
 
+    from . import lookcard, lookfile
     from . import looks as looks_mod
 
     base_path = os.path.join(args.configs_dir or paths.configs_dir(), "looks.toml")
@@ -581,6 +834,7 @@ def _cmd_looks(args) -> int:
         packaged = _read_toml(base_path)
         merged = looks_mod.load(paths.config_paths(args.configs_dir, args.profile)["looks_path"])
         own = _profile_looks(args.profile)
+        habits = looks_mod.load_habits(paths.config_paths(args.configs_dir, args.profile)["looks_path"])
         if args.looks_cmd == "list":
             defaults = asdict(looks_mod.Look())
             for name, look in merged.items():
@@ -588,6 +842,9 @@ def _cmd_looks(args) -> int:
                     else "packaged"
                 diff = ", ".join(f"{k}={v}" for k, v in asdict(look).items() if v != defaults[k])
                 print(f"{name}  ({origin})  {diff}")
+                if name in habits:
+                    print("  habit: " + "; ".join(f"{scene} {target} {op} {v:+g}" for scene, ts in habits[name].items()
+                                                  for target, ops in ts.items() for op, v in ops.items()))
             return 0
         if args.looks_cmd == "delete":
             if args.name not in own:
@@ -597,6 +854,58 @@ def _cmd_looks(args) -> int:
             del own[args.name]
             with open(os.path.join(args.profile, "looks.toml"), "w", encoding="utf-8") as fh:
                 fh.write(paths.dump_toml(own))
+            return 0
+        if args.looks_cmd == "export":
+            text, notes = lookfile.export(args.name, args.configs_dir, args.profile, args.palette,
+                                          args.author, args.licence)
+            out = args.out or args.name + lookfile.EXT
+            lookfile.write(out, text)
+            print(f"wrote {out}: look {args.name}" + (f" with palette {args.palette}" if args.palette else ""))
+            for note in notes:
+                print(note)
+            return 0
+        if args.looks_cmd == "import":
+            lf = lookfile.read(args.file)
+            r = lookfile.install(lf, args.profile or paths.default_profile_dir(), args.new_name, args.force,
+                                 args.configs_dir)
+            print(f"imported look {r['name']} into {r['look_path']}")
+            if lf.author:
+                print(f"  author: {lf.author}")
+            if lf.licence:
+                print(f"  licence: {lf.licence}")
+            if lf.habit:
+                print("  it repeats changes of its own on some scenes (habits); `autoedit looks list` shows them")
+            if r["palette_path"]:
+                print(f"  with the palette {r['name']} in {r['palette_path']}")
+            for kind in r["replaced"]:
+                print(f"  it replaced the {kind} {r['name']!r} that was in the profile")
+            if r["rewritten"]:
+                print("note: the file was rewritten, so comments in it are gone")
+            print(f"use it with: autoedit run <in> <out> --look {r['name']}"
+                  + (f" --palette {r['name']}" if r["palette_path"] else ""))
+            return 0
+        if args.looks_cmd == "card":
+            cfg = load_run_config(argparse.Namespace(configs_dir=args.configs_dir, profile=args.profile,
+                                                     backend=args.backend, look=args.name, palette=args.palette))
+            r = lookcard.render(args.name, args.photos, args.out, cfg, log=print)
+            if not r["photos"]:
+                print("no photo was named: the card shows a drawn sample frame")
+            for n, reason in r["flagged"]:
+                print(f"photo {n} is flagged for review with this look: {reason}")
+            print(f"wrote {r['png']}")
+            print(f"wrote {r['html']}  ({max(r['photos'], 1)} before-and-after, segmenter: {r['backend']})")
+            return 0
+        if args.looks_cmd == "lut":
+            from . import lut as lut_mod
+
+            if args.name not in merged:
+                print(f"look {args.name!r} not found (known: {', '.join(merged)})", file=sys.stderr)
+                return 2
+            table, comments = lut_mod.look_cube(args.name, merged[args.name])
+            lut_mod.write_cube(args.out, table, f"AutoEdit {args.name}", comments)
+            print(f"wrote {args.out}: the whole-picture colour part of look {args.name}, {table.shape[0]} points")
+            print(comments[1].strip())
+            print("not in the file: region edits, what the rules decide per photo, clarity, sharpening, grain")
             return 0
         # save
         if not _LOOK_NAME.fullmatch(args.name):
@@ -625,7 +934,8 @@ def _cmd_looks(args) -> int:
                       file=sys.stderr)
                 return 2
             fields[field] = value
-        path, existed = write_look(args.profile or paths.default_profile_dir(), args.name, fields)
+        path, existed = write_look(args.profile or paths.default_profile_dir(), args.name, fields,
+                                   habit=habits.get(args.base))
         print(f"saved look {args.name} in {path}")
         if existed:
             print("note: the file was rewritten, so comments in it are gone")
@@ -716,6 +1026,9 @@ def main(argv: list[str] | None = None) -> int:
     adj_p.add_argument("--source", help="source photo (default: found through run.json)")
     adj_p.add_argument("--reference", help="reference photo, if the run used one")
     adj_p.add_argument("--recipe-model", dest="recipe_model", help="recipe model, if the run used one")
+    adj_p.add_argument("--lut", help="the LUT file, if the run used one")
+    adj_p.add_argument("--neutral", type=lambda t: t if t == "none" else _spot(t), metavar="X,Y|none",
+                       help="make the spot X,Y (shares of the frame) of this photo neutral; none drops the run's pick, also one taken with --neutral-from")
     adj_p.add_argument("--allow-cloud", dest="allow_cloud", action="store_true",
                        help="allow the LLM decider again, if the run used it")
     adj_p.add_argument("--configs-dir", dest="configs_dir", help="directory with rules/looks/concepts/defaults")
@@ -740,6 +1053,29 @@ def main(argv: list[str] | None = None) -> int:
     cur_p.add_argument("--aesthetic-model", dest="aesthetic_model",
                        help="JSON model from train-aesthetic; required for --mode aesthetic")
     cur_p.set_defaults(func=_cmd_curate)
+
+    pick_p = sub.add_parser("pick", help="find the bursts of a folder and pick the keeper of each")
+    pick_p.add_argument("folder")
+    pick_p.add_argument("-o", "--out", default="out-picks", help="where the results go (default: out-picks)")
+    pick_p.add_argument("--copy", action="store_true", help="also copy the picks into OUT/picked")
+    pick_p.add_argument("--aesthetic-model", dest="aesthetic_model", help="JSON model from train-aesthetic; adds its score")
+    pick_p.add_argument("--concepts", help='comma-separated, what the sharpness is judged on (default: "subject")')
+    pick_p.add_argument("--backend", choices=["stub", "sam3", "auto"])
+    pick_p.add_argument("--device")
+    pick_p.add_argument("--configs-dir", dest="configs_dir")
+    pick_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
+    pick_p.set_defaults(func=_cmd_pick)
+
+    merge_p = sub.add_parser("merge", help="merge the frames of a folder (brackets, stacks, focus series, star trails) into TIFFs")
+    merge_p.add_argument("folder")
+    merge_p.add_argument("-o", "--out", default="out-merge", help="where the results go (default: out-merge)")
+    merge_p.add_argument("--mode", choices=["auto", "average", "brackets", "focus", "trails"], default="auto")
+    merge_p.add_argument("--all", action="store_true", help="treat every photo of the folder as one group")
+    merge_p.add_argument("--no-align", dest="no_align", action="store_true", help="frames are already aligned")
+    merge_p.add_argument("--dry-run", dest="dry_run", action="store_true", help="list the groups, write nothing")
+    merge_p.add_argument("--configs-dir", dest="configs_dir")
+    merge_p.add_argument("--profile", help="profile folder with your own config differences")
+    merge_p.set_defaults(func=_cmd_merge)
 
     ds_p = sub.add_parser("dataset", help="build/validate a training dataset from originals + edited targets")
     ds_sub = ds_p.add_subparsers(dest="ds_cmd", required=True)
@@ -803,6 +1139,12 @@ def main(argv: list[str] | None = None) -> int:
     exp_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
     exp_p.set_defaults(func=_cmd_exports)
 
+    gen_p = sub.add_parser("genres", help="list genre packs")
+    gen_p.add_argument("genres_cmd", choices=["list"])
+    gen_p.add_argument("--configs-dir", dest="configs_dir")
+    gen_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
+    gen_p.set_defaults(func=_cmd_genres)
+
     set_p = sub.add_parser("settings", help="describe every run setting (type, default, range)")
     set_p.add_argument("--configs-dir", dest="configs_dir")
     set_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
@@ -820,7 +1162,26 @@ def main(argv: list[str] | None = None) -> int:
     ls_p.add_argument("--set", action="append", default=[], metavar="FIELD=VALUE", help="field to change (repeatable)")
     ld_p = look_sub.add_parser("delete", help="remove a look from the profile")
     ld_p.add_argument("name")
-    for action_p in (ll_p, ls_p, ld_p):
+    lu_p = look_sub.add_parser("lut", help="write the whole-picture colour part of a look as a .cube LUT file")
+    lu_p.add_argument("name")
+    lu_p.add_argument("-o", "--out", required=True, metavar="FILE.cube")
+    le_p = look_sub.add_parser("export", help="write a look (and optionally a palette) as a look file")
+    le_p.add_argument("name")
+    le_p.add_argument("-o", "--out", metavar="FILE.aelook", help="file to write (default: NAME.aelook)")
+    le_p.add_argument("--palette", help="a palette to put in the file")
+    le_p.add_argument("--author", default="")
+    le_p.add_argument("--licence", default="")
+    li_p = look_sub.add_parser("import", help="check a look file and put its look into the profile")
+    li_p.add_argument("file", metavar="FILE.aelook")
+    li_p.add_argument("--name", dest="new_name", help="keep the look under this name")
+    li_p.add_argument("--force", action="store_true", help="replace a look or palette of the profile with that name")
+    lc_p = look_sub.add_parser("card", help="render a before-and-after sheet (PNG and HTML) for a look")
+    lc_p.add_argument("name")
+    lc_p.add_argument("photos", nargs="*", metavar="PHOTO_OR_FOLDER", help="at most 12 are shown (default: a drawn frame)")
+    lc_p.add_argument("-o", "--out", required=True, metavar="DIR")
+    lc_p.add_argument("--palette", help="a palette to show with the look")
+    lc_p.add_argument("--backend", choices=["stub", "sam3", "auto"])
+    for action_p in (ll_p, ls_p, ld_p, lu_p, le_p, li_p, lc_p):
         # Also after the action (`looks save NAME --profile DIR`), which is where people write it.
         # SUPPRESS: when it is not given here, the value given before the action stays.
         action_p.add_argument("--profile", default=argparse.SUPPRESS, help="profile folder (as for `looks`)")
@@ -841,6 +1202,26 @@ def main(argv: list[str] | None = None) -> int:
     cal_p.add_argument("--configs-dir", dest="configs_dir")
     cal_p.add_argument("--profile", help="profile folder the look is saved into (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit)")
     cal_p.set_defaults(func=_cmd_calibrate)
+
+    hist_p = sub.add_parser("history", help="the history of your own edits (off by default): status, clear")
+    hist_sub = hist_p.add_subparsers(dest="history_cmd", required=True)
+    hs_p = hist_sub.add_parser("status", help="is it on, where it lives, how much it holds")
+    hc_p = hist_sub.add_parser("clear", help="delete the history")
+    hc_p.add_argument("--yes", action="store_true", help="delete without the dry-run stop")
+    for p_ in (hs_p, hc_p):
+        p_.add_argument("--configs-dir", dest="configs_dir")
+        p_.add_argument("--profile", help="profile folder that holds the history (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit)")
+    hist_p.set_defaults(func=_cmd_history)
+
+    sty2_p = sub.add_parser("style", help="what your own edits show you keep doing (needs the history)")
+    sty2_sub = sty2_p.add_subparsers(dest="style_cmd", required=True)
+    ss_p = sty2_sub.add_parser("suggest", help="name the changes you keep making; --yes NAME adds them to a new look")
+    ss_p.add_argument("--look", help="the look your history was made with (default: the most used)")
+    ss_p.add_argument("--yes", metavar="NAME", help="write the suggestions into a new look NAME of the profile")
+    ss_p.add_argument("--only", action="append", default=[], metavar="ID", help="only this suggestion (repeatable)")
+    ss_p.add_argument("--configs-dir", dest="configs_dir")
+    ss_p.add_argument("--profile", help="profile folder that holds the history (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit)")
+    sty2_p.set_defaults(func=_cmd_style)
 
     mod_p = sub.add_parser("models", help="SAM 3 weights: status, download, remove")
     mod_sub = mod_p.add_subparsers(dest="models_cmd", required=True)
@@ -864,7 +1245,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(args, "profile"):
         try:
             # `looks save` and `calibrate` may create the profile folder, so a --profile that does not exist yet is fine there.
-            if args.profile and (args.cmd == "calibrate" or (args.cmd == "looks" and args.looks_cmd == "save")):
+            if args.profile and (args.cmd == "calibrate" or (args.cmd == "looks" and args.looks_cmd in ("save", "import"))):
                 pass
             else:
                 args.profile = paths.profile_dir(args.profile)

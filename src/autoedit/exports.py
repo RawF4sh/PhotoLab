@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 
 _KEYS = {"format": "out_format", "quality": "quality", "long_edge": "out_long_edge",
-         "name": "out_name", "subdir": "out_subdir", "metadata": "metadata"}
+         "name": "out_name", "subdir": "out_subdir", "metadata": "metadata", "aspect": "out_aspect"}
 
 
 def load(path: str) -> dict[str, dict]:

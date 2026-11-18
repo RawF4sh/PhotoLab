@@ -101,6 +101,11 @@ tint = 100
 words = ["bluer", "more blue"]
 temp = -50
 
+# Grain (F23) is for the whole photo. Aimed at a part of it, the clause is not understood.
+[verbs.grain]
+words = ["grain", "grainy", "grainier", "add grain", "more grain", "some grain", "film grain", "a grainy look"]
+grain = 25
+
 [places.top]
 words = ["top", "upper part", "upper half", "sky side"]
 shape = "gradient"

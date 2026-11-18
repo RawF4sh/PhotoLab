@@ -1,0 +1,27 @@
+# Merge frames (F33): `autoedit merge FOLDER`. Tuning values of that command only; `autoedit run` reads none.
+
+[groups]                # which frames belong together: the burst finder of F9 (consistency.find_bursts)
+max_gap_s = 30          # pause between the starts of two frames; the folder's longest exposure time is added
+min_similarity = 0.8    # how alike two thumbnails must be (at one exposure when the settings differ)
+bracket_min_ev = 0.5    # --mode auto: settings further apart than this (stops) make a group a bracket
+
+[align]                 # whole pixels, against the reference frame, by phase correlation
+proxy_px = 512          # long edge of the small copies: the first search, and the movement and exposure checks
+window_px = 1024        # side of the full-size window the answer is refined in, where the reference has most detail
+max_shift = 0.01        # share of the long edge; a frame further off refuses its group (frames from a tripod)
+phase_wins = 0.8        # a far shift whose difference is under this share of the near one's wins: the frame is that far off
+
+[moved]                 # judged on the small copies, the tones of each frame matched to the reference's
+blur = 1.0              # sigma, in pixels of the small copy
+tolerance = 0.08        # a difference in display luma larger than this counts as changed
+max_share = 0.01        # share of the judged pixels that may change before the group is flagged
+
+[brackets]              # what "well exposed" means, in the frame's own display values (0..1)
+low = [0.02, 0.10]      # a frame counts not at all below low[0], fully from low[1] (the brightest frame always)
+high = [0.90, 0.98]     # fully up to high[0], not at all from high[1] in any channel (the darkest frame always)
+min_overlap = 0.005     # share of the small copy two frames must both expose well to be compared
+
+[focus]                 # sharpness: the fine detail of the luma, squared, averaged over a neighbourhood
+detail_sigma = 1.0      # pixels: what counts as fine detail
+window = 0.004          # share of the long edge: the neighbourhood sharpness is judged over
+soften = 0.002          # share of the long edge: blur of the map that says which frame a pixel comes from

@@ -56,6 +56,17 @@
       "advanced": false
     },
     {
+      "key": "genre",
+      "label": "Kind of photo",
+      "group": "look",
+      "type": "choice",
+      "default": null,
+      "choices": [],
+      "max_length": 40,
+      "help": "A pack for one kind of photography: what to find, a look and which tools are on. Your own choices win over it.",
+      "advanced": false
+    },
+    {
       "key": "look",
       "label": "Look",
       "group": "look",
@@ -66,7 +77,16 @@
         "punchy",
         "soft_portrait",
         "dramatic",
-        "cinematic_preserved"
+        "cinematic_preserved",
+        "astro",
+        "bw_classic",
+        "bw_red_filter",
+        "bw_soft",
+        "film_warm",
+        "film_cool",
+        "film_faded",
+        "cross_process",
+        "instant"
       ],
       "help": "Overrides how strong the edit is for this style, for example punchy or soft.",
       "advanced": false
@@ -129,6 +149,48 @@
       "min": 0.0,
       "max": 1.0,
       "help": "How closely to follow the reference photo. 0 ignores it, 1 matches it fully.",
+      "advanced": false
+    },
+    {
+      "key": "grain",
+      "label": "Grain",
+      "group": "look",
+      "type": "float",
+      "default": null,
+      "min": 0.0,
+      "max": 100.0,
+      "help": "Film grain on the finished photo, 0 to 100. Empty uses the look's own; 25 is light, 100 is heavy.",
+      "advanced": false
+    },
+    {
+      "key": "grain_size",
+      "label": "Grain size",
+      "group": "look",
+      "type": "float",
+      "default": 1.0,
+      "min": 0.5,
+      "max": 4.0,
+      "help": "How coarse the grain is. 1 is fine, 2 is twice as coarse. It follows the size of the export.",
+      "advanced": false
+    },
+    {
+      "key": "lut",
+      "label": "LUT file",
+      "group": "look",
+      "type": "string",
+      "default": null,
+      "help": "A .cube colour filter file laid over the finished photo. Empty uses none.",
+      "advanced": false
+    },
+    {
+      "key": "lut_amount",
+      "label": "LUT strength",
+      "group": "look",
+      "type": "float",
+      "default": 100.0,
+      "min": 0.0,
+      "max": 100.0,
+      "help": "How much of the LUT file is blended in, 0 to 100.",
       "advanced": false
     },
     {
@@ -259,6 +321,53 @@
       "advanced": false
     },
     {
+      "key": "night_sky",
+      "label": "Night sky",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Night photos stay dark and lose a town's glow and stuck pixels; noise reduction and sharpening spare the stars.",
+      "advanced": false
+    },
+    {
+      "key": "backdrop",
+      "label": "Clean backdrop",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Evens out a light background and takes it to a clean white. Nothing is cut out; a photo without a light background is left alone.",
+      "advanced": false
+    },
+    {
+      "key": "straighten",
+      "label": "Straighten",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Turns the photo so that a clear waterline or horizon is level, at most 5 degrees. The edges are cut.",
+      "advanced": false
+    },
+    {
+      "key": "neutral",
+      "label": "Neutral spot",
+      "group": "quality",
+      "type": "list",
+      "default": null,
+      "max_length": 2,
+      "help": "A spot that is grey or white, X and Y as shares of the frame from the top left. The white balance makes it neutral.",
+      "advanced": false
+    },
+    {
+      "key": "wb",
+      "label": "White balance",
+      "group": "quality",
+      "type": "list",
+      "default": null,
+      "max_length": 2,
+      "help": "Temp and tint for every photo, in place of the rules' own. A neutral spot measured once gives these two numbers.",
+      "advanced": true
+    },
+    {
       "key": "consistency",
       "label": "Consistency",
       "group": "batch",
@@ -269,6 +378,24 @@
         "bursts"
       ],
       "help": "Brightness evens out the whole shoot; bursts also evens out frames shot of the same scene.",
+      "advanced": false
+    },
+    {
+      "key": "consistency_wb",
+      "label": "Same white balance",
+      "group": "batch",
+      "type": "bool",
+      "default": false,
+      "help": "Brings the photos of a group to one white balance, so the same product keeps the same colour from photo to photo.",
+      "advanced": false
+    },
+    {
+      "key": "colour_report",
+      "label": "Colour report",
+      "group": "batch",
+      "type": "bool",
+      "default": false,
+      "help": "After the run, shows how far the colour of the subject differs inside each group of photos.",
       "advanced": false
     },
     {
@@ -355,6 +482,25 @@
         "none"
       ],
       "help": "What camera data stays in the export: keep all, share without location and serial numbers, or none.",
+      "advanced": false
+    },
+    {
+      "key": "out_aspect",
+      "label": "Crop to shape",
+      "group": "output",
+      "type": "string",
+      "default": null,
+      "max_length": 7,
+      "help": "Crops the export to a shape such as 4:5 or 1:1, placed on the subject. Empty keeps the photo's own shape.",
+      "advanced": false
+    },
+    {
+      "key": "history",
+      "label": "Keep a history of your edits",
+      "group": "output",
+      "type": "bool",
+      "default": false,
+      "help": "One line per exported photo in your profile: what you changed, no picture, no file name. It never leaves this computer.",
       "advanced": false
     },
     {

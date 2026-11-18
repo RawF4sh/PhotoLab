@@ -328,3 +328,51 @@ def test_post_region_stats_and_luma_notes(tmp_path):
     assert post and post <= pre
     assert any("luma" in n and "→" in n for n in result.notes)
     assert result.post_edit_stats.band_bottom_p50 >= 0.0 and result.decode_ev == 0.0
+
+
+def _noisy_photo(path, w, h, seed=3):
+    rng = np.random.default_rng(seed)
+    a = np.zeros((h, w, 3), np.float32)
+    a[: h * 55 // 100] = [100, 140, 200]
+    a[h * 55 // 100:] = [60, 110, 70]
+    yy, xx = np.mgrid[0:h, 0:w]
+    a[(((xx - w / 2) / (w * .22)) ** 2 + ((yy - h * .62) / (h * .28)) ** 2) <= 1.0] = [200, 150, 120]
+    a = np.clip(a + rng.normal(0, 6, a.shape), 0, 255).astype(np.uint8)
+    PILImage.fromarray(a, "RGB").save(path, quality=95)
+
+
+def _analysis(result):
+    d = result.model_dump()
+    return (d["scene"], d["confidence"], d["concepts"], d["global_settings"],
+            [(m["target"], m["coverage"], m["confidence"], m["ops"]) for m in d["masks"]],
+            [(r["name"], r["coverage"]) for r in d["region_stats"]],
+            d["global_stats"])
+
+
+def test_a_given_analysis_picture_is_used(tmp_path):
+    from autoedit.imageio import downscale_long_edge, load_image
+    path = str(tmp_path / "big.jpg")
+    _noisy_photo(path, 600, 400)
+    cfg = RunConfig(backend="stub", analysis_long_edge=96)
+    full = load_image(path)
+    work = downscale_long_edge(full, 256)
+    proxy = downscale_long_edge(full, 96)
+
+    _, ref = Pipeline.build(cfg).process_one(path, do_apply=False)
+    _, given = Pipeline.build(cfg).process_one(path, do_apply=False, image=work, proxy=proxy)
+    _, plain = Pipeline.build(cfg).process_one(path, do_apply=False, image=work)
+    assert _analysis(given) == _analysis(ref)
+    assert _analysis(plain) != _analysis(ref)      # the test bites
+
+    # shape case: the 256 copy gives an analysis picture one pixel shorter than the original's
+    # (601 x 400, analysis 100: (67, 100) against (66, 100))
+    path2 = str(tmp_path / "odd.jpg")
+    _noisy_photo(path2, 601, 400)
+    cfg2 = RunConfig(backend="stub", analysis_long_edge=100)
+    full2 = load_image(path2)
+    work2 = downscale_long_edge(full2, 256)
+    proxy2 = downscale_long_edge(full2, 100)
+    assert downscale_long_edge(work2, 100).rgb.shape != proxy2.rgb.shape
+    _, res = Pipeline.build(cfg2).process_one(path2, do_apply=True, image=work2, proxy=proxy2)
+    assert res.post_region_stats
+    assert res.post_edit_stats is not None

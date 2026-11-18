@@ -12,7 +12,7 @@ import sys
 
 PRIVATE_DIRS = {".tmp", ".claude", ".codex", ".agents", "testImages", "output",
                 "outputs", "out", "eval_3way", "split_before_after_landscapes"}
-PRIVATE_NAMES = {"NEW_CHAT_HANDOFF.md", "PROJECT_ASSESSMENT.md", "run.json"}
+PRIVATE_NAMES = {"NEW_CHAT_HANDOFF.md", "PROJECT_ASSESSMENT.md", "run.json", "history.jsonl"}
 PRIVATE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff",
                     ".cr2", ".cr3", ".nef", ".arw", ".dng", ".xmp", ".pem",
                     ".key", ".pt", ".pth", ".safetensors", ".onnx", ".npz",
@@ -28,7 +28,7 @@ def private_path(name: str) -> bool:
         or (path.name.startswith(".env") and path.name != ".env.example")
         or path.name.lower().startswith("credentials")
         or "service-account" in path.name.lower()
-        or path.name.endswith(".autoedit.json")
+        or path.name.endswith((".autoedit.json", ".merge.json"))
         or path.suffix.lower() in PRIVATE_SUFFIXES
     )
 

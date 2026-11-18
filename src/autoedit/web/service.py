@@ -16,9 +16,9 @@ import threading
 import numpy as np
 from PIL import Image as PILImage
 
-from .. import batch, curate, emit, instructions, lessons, paths
+from .. import batch, curate, emit, geometry, history, instructions, lessons, looks as looks_mod, paths, teach, variants
 from ..concepts import load_concepts
-from ..contract import RunConfig
+from ..contract import Adjustment, RunConfig
 from ..imageio import downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
 from ..pipeline import Pipeline
 from ..segment.base import parse_mark
@@ -29,28 +29,41 @@ _ALLOWED = (
     "style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
-    "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "raw_mode",
+    "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "night_sky", "raw_mode",
     "highlight_hold", "light_shaping", "out_long_edge", "out_name", "out_subdir",
-    "translator",
+    "translator", "grain", "grain_size", "lut", "lut_amount", "history", "straighten", "out_aspect",
+    "neutral", "wb", "backdrop", "consistency_wb", "colour_report",
 )
 
 
 def make_cfg(opts: dict, configs_dir: str | None = None, profile: str | None = None) -> RunConfig:
     kw: dict = paths.config_paths(configs_dir, profile)
+    if opts.get("lut"):     # a file path from a request: inside a folder the user picked, like every photo
+        ensure_allowed(str(opts["lut"]))
+    if opts.get("genre"):   # a genre first (F30): the export preset and explicit options win over it
+        from .. import genres as _genres
+        kw.update(_genres.run_kwargs(str(opts["genre"]), kw, style_named=opts.get("style") is not None))
+        kw["genre"] = str(opts["genre"])
     if opts.get("export"):
         from .. import exports as _exports   # preset first: explicit options win over it
         kw.update(_exports.preset_kwargs(opts["export"], kw.get("exports_path")
                                          or paths.config_path("exports.toml", packaged_fallback=True)))
         kw["export"] = opts["export"]
+    kw["history"] = history.wanted(configs_dir, profile)
     for k in _ALLOWED:
         if opts.get(k) is not None:
             kw[k] = opts[k]
+    kw["profile_dir"] = profile
     concepts = opts.get("concepts")
     if isinstance(concepts, str) and concepts.strip():
         kw["concepts"] = [c.strip() for c in concepts.split(",") if c.strip()]
     elif isinstance(concepts, list):
         kw["concepts"] = concepts
     cfg = RunConfig(**kw)
+    if cfg.look == variants.SURPRISE and cfg.look not in looks_mod.load(cfg.looks_path):
+        # F26: the word is not a look, unless the library has one of that name. It never reaches a sidecar.
+        raise ValueError('"surprise" is not a look: POST /api/v1/variants with "surprise": true, '
+                         'then send the name of the look that was picked')
     if cfg.backend == "auto":   # the service builds its own segmenter, so it needs the real name
         from .. import segment
         cfg = cfg.model_copy(update={"backend": segment.resolve_backend("auto")})
@@ -145,6 +158,11 @@ def list_presets(configs_dir: str | None = None, profile: str | None = None) -> 
     return presets
 
 
+def list_genres(configs_dir: str | None = None, profile: str | None = None) -> list[dict]:
+    from .. import genres
+    return genres.listing(configs_dir, profile)
+
+
 def list_images(folder: str) -> list[str]:
     if not folder or not os.path.isdir(folder):
         return []
@@ -188,11 +206,13 @@ def group_images(folder: str) -> list[dict]:
     return out
 
 
-def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: int = 90) -> str:
+def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: int = 90,
+             grain: tuple[float, float, int] | None = None, geo=None) -> str:
     """Encode a working RGB array as a base64 data-URL. JPEG at q90 keeps a 1600px preview small
     (~200–500 KB) so we can show it sharp; PNG stays available for lossless needs."""
     from ..imageio import _to_u8
     rgb = np.clip(rgb01.astype(np.float32), 0.0, 1.0)
+    rgb = geometry.warp(rgb, geo)       # F32: the export's frame first, as `emit.write_image` does
     h, w = rgb.shape[:2]
     if max(h, w) > max_px:
         scale = max_px / max(h, w)
@@ -205,6 +225,9 @@ def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: 
             for c in range(3)
         ]
         rgb = np.stack(chans, axis=-1)
+    if grain:
+        from ..edit import ops
+        rgb = ops.grain(rgb, *grain)
     pil = PILImage.fromarray(_to_u8(rgb), "RGB")  # final-size dither → no preview sky banding
     buf = io.BytesIO()
     if fmt in ("jpg", "jpeg"):
@@ -244,7 +267,14 @@ def check_image(path: str) -> None:
                          f"not a sidecar like .xmp")
 
 
-def _mask_previews(resolved) -> list[dict]:
+def _in_frame(alpha: np.ndarray, geo) -> np.ndarray:
+    """A uint8 overlay in the export's frame (F32); as it is for `geo is None`."""
+    if geo is None:
+        return alpha
+    return (geometry.warp(alpha[..., None].astype(np.float32) / 255.0, geo)[..., 0] * 255.0 + 0.5).astype(np.uint8)
+
+
+def _mask_previews(resolved, geo=None) -> list[dict]:
     """Lossless transparent proxy masks, after overlap arbitration, from this render's resolve.
 
     White RGB with an alpha channel lets the UI tint each named region in its legend color.
@@ -252,7 +282,7 @@ def _mask_previews(resolved) -> list[dict]:
     """
     overlays = []
     for region in resolved.regions:
-        alpha = PILImage.fromarray(region.mask.astype(np.uint8) * 255)
+        alpha = PILImage.fromarray(_in_frame(region.mask.astype(np.uint8) * 255, geo))
         mask = PILImage.new("RGBA", alpha.size, (255, 255, 255, 0))
         mask.putalpha(alpha)
         buf = io.BytesIO()
@@ -281,6 +311,7 @@ def photo_adjustments(pipe: Pipeline, text) -> tuple[list, list[str]]:
 
 
 MAX_PHOTO_MARKS = 20         # marks on one photo (F37)
+PREVIEW_LONG_EDGE = 4096     # a preview applies on a copy of at most this size; the export applies at full size
 _RANK = ["not_found", "blocked", "clamped", "applied"]
 
 
@@ -320,7 +351,7 @@ def _png_alpha(alpha: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def _mark_answer(facts, seen, shape, vocab) -> tuple[list[dict], list[dict]]:
+def _mark_answer(facts, seen, shape, vocab, geo=None) -> tuple[list[dict], list[dict]]:
     """The preview's `marks` and `mark_overlays` from the mark facts and what the render reported."""
     if not facts:
         return [], []
@@ -350,7 +381,7 @@ def _mark_answer(facts, seen, shape, vocab) -> tuple[list[dict], list[dict]]:
             else:
                 alpha = (np.clip(instructions.place_alpha(instructions.layer_spec(t, vocab), shape), 0, 1)
                          * 255 + 0.5).astype(np.uint8)
-            overlays.append({"target": t, "alpha": _png_alpha(alpha)})
+            overlays.append({"target": t, "alpha": _png_alpha(_in_frame(alpha, geo))})
     return marks, overlays
 
 
@@ -361,31 +392,39 @@ def translator_status(configs_dir: str | None = None, profile: str | None = None
     return {"available": cfg.translator != "off" and translate_local.available(cfg), "model": cfg.local_model}
 
 
-def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560,
-            profile: str | None = None) -> dict:
-    """Render a single-image before/after preview + the decision sidecar.
+_PENDING = "\0pending"      # a step picture that waits for the export's frame (F32)
+TRY_DROPS = ("edit", "prompt", "reference", "lut", "neutral", "wb", "backdrop")            # run options that edit: a try starts without them
+TRY_FIXED = {"decider": "rules", "allow_cloud": False, "compose": False, "palette": "none", "grain": 0.0}
+NOT_THE_ENGINE = ("try", "steps", "photo_edit", "photo_marks")   # request keys that are the user's own
 
-    The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
-    preview shows the real result — no proxy-scaling softness. The before/after ship as **lossless
-    WebP** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
-    re-introduces contour banding, so a quality-critical preview must stay lossless — WebP is
-    pixel-exact like PNG but a much smaller payload. Capped at max_px (retina-sharp at the on-screen
-    stage). Segmentation is cached, so re-previews are fast."""
-    check_image(image_path)
-    cfg = make_cfg(opts, configs_dir, profile)
+
+def _edit(image_path: str, opts: dict, configs_dir: str | None, profile: str | None, trial=None, steps=None,
+          geo_box: list | None = None) -> dict:
+    """One preview render: what `preview` answers from. `trial`: a checked `try` (F29), edited by nothing but
+    its sliders and sentences. `steps`: a `teach.Steps` that listens to it (F29). `geo_box` (F32): a list that gets the
+    export's geometry as soon as the render has decided it, so the step pictures can be turned before it ends."""
+    cfg = make_cfg({**{k: v for k, v in opts.items() if k not in TRY_DROPS}, **TRY_FIXED} if trial is not None else opts,
+                   configs_dir, profile)
     pipe = build_pipeline(cfg)
+    if trial is not None:
+        pipe.decider, pipe.looks, pipe.habits = teach.NoEdit(), {}, {}
     photo_adjs, photo_problems = photo_adjustments(pipe, opts.get("photo_edit"))
     vocab = pipe.vocab()
     mark_adjs, facts = mark_adjustments(pipe, check_marks(opts.get("photo_marks"), vocab))
     photo_adjs = photo_adjs + mark_adjs
+    if trial and trial["sliders"]:      # a direct adjustment, as `autoedit adjust --set global.OP=VALUE` makes it
+        photo_adjs.insert(0, Adjustment(target=instructions.GLOBAL, ops=dict(trial["sliders"]), scope="photo"))
     work = load_image(image_path, decode=raw_opts_from(cfg))
-    if work.long_edge > 4096:                       # bound apply cost on very large files
-        work = downscale_long_edge(work, 4096)
-    overlays, seen, walk, shape = [], [], [], [(0, 0)]
+    proxy = None
+    if work.long_edge > PREVIEW_LONG_EDGE:          # bound apply cost on very large files
+        proxy = downscale_long_edge(work, cfg.analysis_long_edge)   # as the export analyses it
+        work = downscale_long_edge(work, PREVIEW_LONG_EDGE)
+    seen, walk, shape, union, regions = [], [], [(0, 0)], {}, []
 
     def _resolved(resolved):
-        overlays.extend(_mask_previews(resolved))
+        regions.append(resolved)        # drawn after the render: they follow the export's frame (F32)
         shape[0] = resolved.shape
+        union.update(resolved.union)
 
     def _planned(*args):        # made here: later steps may still change the settings it reads
         seen.append(args)
@@ -393,19 +432,92 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
             paths.config_path("lessons.toml", packaged_fallback=True))))
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(
-            image_path, do_apply=True, image=work, adjustments=photo_adjs or None,
-            on_resolved=_resolved, on_plan=_planned)
-    marks, mark_overlays = _mark_answer(facts, seen[0] if seen else None, shape[0], vocab)
-    return {
-        "before": _img_b64(work.rgb, max_px, fmt="webp"),
-        "after": _img_b64(out_rgb, max_px, fmt="webp"),
-        "mask_overlays": overlays,
-        "result": result.model_dump(),
-        "instruction_problems": [*pipe.adjust_problems, *photo_problems],
-        "walkthrough": walk,
-        "mark_overlays": mark_overlays,
-        "marks": marks,
+            image_path, do_apply=True, image=work, proxy=proxy, adjustments=photo_adjs or None,
+            on_resolved=_resolved, on_plan=_planned,
+            on_stage=steps.stage if steps else None, on_step=steps.step if steps else None,
+            on_geometry=(lambda g: geo_box.__setitem__(slice(None), [g])) if geo_box is not None else None)
+    geo = result.geometry
+    overlays = [o for resolved in regions for o in _mask_previews(resolved, geo)]
+    marks, mark_overlays = _mark_answer(facts, seen[0] if seen else None, shape[0], vocab, geo)
+    return {"cfg": cfg, "pipe": pipe, "work": work, "proxy": proxy, "out": out_rgb, "result": result,
+            "union": union, "walk": walk, "overlays": overlays,
+            "problems": [*pipe.adjust_problems, *photo_problems], "marks": marks, "mark_overlays": mark_overlays}
+
+
+def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px: int = 2560,
+            profile: str | None = None) -> dict:
+    """Render a single-image before/after preview + the decision sidecar.
+
+    The edit is applied at FULL resolution (bounded to a 4096px long edge for monster files), so the
+    preview shows the real result — no proxy-scaling softness. Above that bound the analysis picture
+    is still made from the original, as the export makes it, so both see the same masks, stats and
+    decisions. The before/after ship as **lossless
+    WebP** (not JPEG): JPEG's DCT quantizes away the anti-banding dither in flat areas like sky and
+    re-introduces contour banding, so a quality-critical preview must stay lossless — WebP is
+    pixel-exact like PNG but a much smaller payload. Capped at max_px (retina-sharp at the on-screen
+    stage). Segmentation is cached, so re-previews are fast.
+
+    `opts["steps"]` (F29): true, or {"px": 256 to 2560, "lossless": bool}, adds the answer's `steps`: the
+    render again, one step at a time, with a lesson on each. It changes no pixel of the other keys.
+
+    `opts["try"]` (F29): {"sliders": {op: value}, "compare": bool}. The photo is edited by those sliders and the
+    typed sentences alone, and the answer's `before`, `after`, `result` describe that try; `try` gives the sliders,
+    `compare` (on request) the engine's edit beside it. Only this function reads `try`: an export never does."""
+    check_image(image_path)
+    trial = table = les = None
+    px, lossless = teach.check_steps(opts.get("steps"))     # first: {} is a valid steps value, and asks for steps
+    if opts.get("try") is not None or px:
+        les = lessons.load(paths.config_path("lessons.toml", packaged_fallback=True))
+    if opts.get("try") is not None:
+        table = teach.sliders(les)
+        trial = teach.check_try(opts["try"], table)
+    px = min(px, max_px)
+
+    geo_box, held = [], []      # F32: the export's frame, once the render has decided it; the source picture, held for it
+
+    def small(rgb, grain=None):
+        return _img_b64(rgb, px, fmt="webp" if lossless else "jpeg", grain=grain, geo=geo_box[0] if geo_box else None)
+
+    def encode(rgb):
+        if not held:            # the first picture is shown before the frame is decided: it is encoded at the end
+            held.append(rgb)
+            return _PENDING
+        return small(rgb)
+    walk = teach.Steps(encode) if px else None
+    r = _edit(image_path, opts, configs_dir, profile, trial, walk, geo_box)
+    geo = r["result"].geometry
+    grain = emit.grain_args(r["result"], r["cfg"])
+    answer = {
+        "before": _img_b64(r["work"].rgb, max_px, fmt="webp", geo=geo),
+        "after": _img_b64(r["out"], max_px, fmt="webp", grain=grain, geo=geo),
+        "mask_overlays": r["overlays"],
+        "result": r["result"].model_dump(),
+        "instruction_problems": r["problems"],
+        "walkthrough": r["walk"],
+        "mark_overlays": r["mark_overlays"],
+        "marks": r["marks"],
     }
+    if walk is not None:
+        answer["steps"] = walk.done(r["result"], les, r["pipe"].guard_ops, r["walk"],
+                                    small(r["out"], grain) if grain else None)
+        if held:
+            source = small(held[0])
+            for step in answer["steps"]:
+                if step["after"] == _PENDING:
+                    step["after"] = source
+    if trial is not None:
+        answer["try"] = {"sliders": [{"op": op, "min": lo, "max": hi, "step": st,
+                                      "value": trial["sliders"].get(op, 0.0), **lessons._lines(les, "op", op)}
+                                     for op, (lo, hi, st) in table.items()]}
+    if trial and trial["compare"]:
+        e = _edit(image_path, {k: v for k, v in opts.items() if k not in NOT_THE_ENGINE}, configs_dir, profile)
+        m = [teach.measure(x["work"].rgb, x["out"], x["proxy"] or downscale_long_edge(x["work"], x["cfg"].analysis_long_edge),
+                           x["union"], x["pipe"]) for x in (r, e)]
+        answer["compare"] = {"engine": _img_b64(e["out"], max_px, fmt="webp", grain=emit.grain_args(e["result"], e["cfg"]),
+                                           geo=e["result"].geometry),
+                             **teach.compare(r["result"], e["result"], m[0], m[1], les, trial["sliders"],
+                                             r["pipe"].quality_gate)}
+    return answer
 
 
 def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None = None,
@@ -513,10 +625,18 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
     """Render several recipe variants for one photo, score each (safety gate + optional aesthetic
     critic), rank, auto-pick the best, and flag uncertain cases for review (M7). Non-generative —
     every variant is an ordinary bounded edit."""
-    from .. import variants
-
     check_image(image_path)
-    specs = variants.resolve_specs(opts.get("variants"))
+    seed = picks = None
+    if opts.get("surprise"):   # F26: the specs are looks of the library, picked by the seed
+        if opts.get("variants"):
+            raise ValueError("give surprise or variants, not both")
+        seed = variants.surprise_seed(opts.get("seed"))
+        picks = variants.surprise_for(make_cfg(opts, configs_dir, profile), seed)
+        if not picks:
+            raise ValueError("surprise: the look library holds no other look")
+        specs = [{"name": n, "look": n} for n in picks]
+    else:
+        specs = variants.resolve_specs(opts.get("variants"))
     model = None
     if opts.get("aesthetic_model"):
         from .. import aesthetic
@@ -543,13 +663,17 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
         item = {"name": spec["name"], "opts": variants.spec_opts(spec), "scene": result.scene,
                 **variants.score_variant(result, out_rgb, model)}
         if with_images:
-            item["after"] = _img_b64(out_rgb, 1100, fmt="jpeg", quality=88)
+            item["after"] = _img_b64(out_rgb, 1100, fmt="jpeg", quality=88, grain=emit.grain_args(result, cfg),
+                                     geo=result.geometry)
         scored.append(item)
 
     scored.sort(key=lambda d: d["score"], reverse=True)
     review = variants.is_uncertain(scored)
-    return {"image": os.path.abspath(image_path), "best": scored[0]["name"] if scored else None,
-            "review": review, "variants": scored}
+    out = {"image": os.path.abspath(image_path), "best": scored[0]["name"] if scored else None,
+           "review": review, "variants": scored}
+    if picks is not None:
+        out.update(seed=seed, looks=picks)
+    return out
 
 
 def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None = None,

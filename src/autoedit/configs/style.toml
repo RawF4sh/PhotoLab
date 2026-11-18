@@ -1,0 +1,25 @@
+# Style from your edits (F27): when `autoedit style suggest` names a change you keep making.
+# A profile file of the same name is merged over this one.
+
+[suggest]
+# the change was made, in one direction, on at least this many photos
+min_photos = 12
+# and the photos were exported on at least this many days (a day of exporting is one run)
+min_days = 3
+# and on at least this share of the photos it could have been made on
+min_share = 0.70
+
+# [words]: an op -> what a lower value and a higher value are called. No entry, no suggestion.
+[words]
+exposure = ["darker", "brighter"]
+temp = ["cooler", "warmer"]
+tint = ["more magenta", "greener"]
+saturation = ["more muted", "more colourful"]
+clarity = ["softer", "crisper"]
+contrast = ["flatter", "more contrasty"]
+
+# [scenes]: a scene -> how a list of its photos reads. No entry reads "SCENE photos".
+[scenes]
+landscape = "landscapes"
+people = "photos of people"
+other = "other photos"

@@ -96,7 +96,7 @@ def test_shapes_and_small_frames():
 def test_registered_before_sharpen():
     assert "denoise" in ops.OP_NAMES and ops.OP_BOUNDS["denoise"] == (0.0, 100.0)
     assert "denoise" in ops.SPATIAL_OPS
-    assert ops.STEPS[-2] == ("denoise",)
+    assert ops.STEPS[ops.STEPS.index(("sharpen", "sharpen_stars")) - 1] == ("denoise", "denoise_stars")
     x = _noisy((0.30, 0.30, 0.30), shape=(96, 96), seed=5)
     got = ops.apply_ops(x, {"denoise": 60, "sharpen": 10})
     assert np.array_equal(got, ops.sharpen(ops.denoise(x, 60), 10))

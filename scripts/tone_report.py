@@ -395,6 +395,9 @@ def _parse_sets(pairs, error):
     out = {}
     for pair in pairs:
         key, eq, raw = pair.partition("=")
+        if eq and key == "genre":
+            error(f"--set {pair}: this names a genre without applying it, use --genre {raw}")
+            continue
         if not eq or key not in RunConfig.model_fields:
             error(f"--set {pair}: expected KEY=VALUE with KEY a RunConfig field")
             continue
@@ -403,6 +406,22 @@ def _parse_sets(pairs, error):
         except ValueError:
             out[key] = raw
     return out
+
+
+def _render_kwargs(args, extra) -> dict:
+    kw = {"backend": args.backend}
+    if args.genre:   # F30: below what --style, --intensity and --set say
+        from autoedit import genres
+
+        kw.update(genres.run_kwargs(args.genre, kw, style_named=bool(args.style) or "style" in extra), genre=args.genre)
+    if args.raw_mode:
+        kw["raw_mode"] = args.raw_mode
+    if args.style:
+        kw["style"] = args.style
+    if args.intensity is not None:
+        kw["intensity"] = args.intensity
+    kw.update(extra)
+    return kw
 
 
 def main() -> int:
@@ -414,6 +433,7 @@ def main() -> int:
     ap.add_argument("--backend", choices=["stub", "sam3"], default="stub")
     ap.add_argument("--raw-mode", dest="raw_mode", choices=list(RAW_MODES), default=None)
     ap.add_argument("--style", default=None)
+    ap.add_argument("--genre", default=None, help="genre pack from genres.toml (F30), applied below the other flags")
     ap.add_argument("--intensity", type=float, default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--max-px", dest="max_px", type=int, default=1024)
@@ -437,15 +457,7 @@ def main() -> int:
     errors: list[dict] = []
     metadata: dict = {}
     if args.render:
-        kw = {"backend": args.backend}
-        if args.raw_mode:
-            kw["raw_mode"] = args.raw_mode
-        if args.style:
-            kw["style"] = args.style
-        if args.intensity is not None:
-            kw["intensity"] = args.intensity
-        kw.update(extra)
-        rows = rows_by_render(args.src, RunConfig(**kw), limit=args.limit, max_px=args.max_px,
+        rows = rows_by_render(args.src, RunConfig(**_render_kwargs(args, extra)), limit=args.limit, max_px=args.max_px,
                               camera=args.camera, thr=thr, errors=errors, unsafe_control=args.unsafe_control)
     elif args.out:
         rows = rows_from_sidecars(args.src, args.out, camera=args.camera, thr=thr, errors=errors, metadata=metadata)

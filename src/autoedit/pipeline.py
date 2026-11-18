@@ -15,14 +15,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import (compose, emit, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
-               palette as palette_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
+from . import (backdrop as backdrop_mod, compose, consistency, emit, geometry, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
+               lut as lut_mod, neutral as neutral_mod, night, palette as palette_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
 from .concepts import load_concepts, meta_for
 from .contract import Adjustment, Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
 from .edit import apply_image, banding, build_alpha, gates, ops, par, reference as ref_match, linear_alpha
-from .imageio import Image, downscale_long_edge, load_image, luma, raw_opts_from
+from .imageio import Image, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
 from .notes import build_notes
 from .segment import ResolvedRegions, make_segmenter, resolve
 from . import segment as segment_mod
@@ -43,13 +43,13 @@ def _config_digest(cfg: RunConfig) -> str:
 
 
 # Run settings that switch on an opt-in rule set of the same name in rules.toml.
-_OPT_IN_RULES = ("levels", "denoise")
+_OPT_IN_RULES = ("levels", "denoise", "night_sky")
 _TRANSLATIONS = instructions._TRANSLATIONS   # the process cache of translated clauses lives next to its helper
 
 # Never written into a sidecar: local paths and the secret. `adjust` takes the config paths from
 # the current environment and asks for the two input files again.
 _NOT_STORED = {name for name in RunConfig.model_fields if name.endswith("_path")} | {
-    "api_key", "reference", "recipe_model", "workers", "threads"}
+    "api_key", "reference", "recipe_model", "workers", "threads", "lut", "history", "profile_dir"}
 
 # High-risk global ops the skin-safe guard holds off protected (skin/face) regions when no
 # [guard] block is present in rules.toml. Exposure/tone/contrast are intentionally NOT guarded —
@@ -103,10 +103,17 @@ class Pipeline:
     highlight_hold: tuple[float, float] | None = None  # (start, full) of the F6 hold; None → off
     light_cfg: dict = field(default_factory=dict)  # compose.toml [light]: thresholds of the light finder (F18)
     place_light_cfg: dict = field(default_factory=dict)  # the same, loaded on the first instruction that asks for a light
+    lut: lut_mod.Lut | None = None  # the .cube file of cfg.lut (F25), read once per run
+    habits: dict = field(default_factory=dict)  # scene -> the look's habit as adjustments of scope "look" (F27)
+    geometry_cfg: dict = field(default_factory=dict)  # [geometry] of rules.toml; {} when neither straighten nor a crop is on (F32)
+    neutral_cfg: dict = field(default_factory=lambda: dict(neutral_mod.DEFAULTS))  # [neutral] of rules.toml, checked (F34)
+    backdrop_cfg: dict | None = None  # [backdrop] of rules.toml, checked; None when the clean backdrop is off (F34)
+    night_cfg: dict = field(default_factory=dict)  # [night_sky] of rules.toml, checked (F31)
 
     @classmethod
     def build(cls, cfg: RunConfig) -> "Pipeline":
         par.set_threads(cfg.threads)
+        lut = lut_mod.read_cube(cfg.lut) if cfg.lut else None   # a broken file stops the run here (F25)
         if cfg.backend == "auto":
             cfg = cfg.model_copy(update={"backend": segment_mod.resolve_backend(cfg.backend)})
         presets, meta = load_concepts(cfg.concepts_path)
@@ -115,7 +122,8 @@ class Pipeline:
             moves = [m for m in moves if "vignette" not in m.name]
         # Opt-in rule sets ([opt_in.<name>] in rules.toml) join the rules only when their run
         # setting is on; a default run never sees them.
-        rules = rules_mod.load(cfg.rules_path, enable=[n for n in _OPT_IN_RULES if getattr(cfg, n, False)])
+        rules = rules_mod.load(cfg.rules_path, enable=[n for n in _OPT_IN_RULES if getattr(cfg, n, False)],
+                               require=cfg.rule_sets)
         # which global ops the skin-safe guard holds off protected regions (rules-as-data; the
         # [guard] block in rules.toml, with a sane default so older config files still work).
         guard_ops = set(rules.get("guard", {}).get("ops", []) or _DEFAULT_GUARD_OPS)
@@ -136,13 +144,18 @@ class Pipeline:
         if vocab is not None:   # clauses the word list missed or guessed at go to a model (F17, F20)
             adjustments, problems = instructions.translate_problems(
                 problems, vocab, known, decider=decider, cfg=cfg, adjustments=adjustments)
+        styles = load_styles(cfg.styles_path)
+        look_name = cfg.look or style_for(cfg.style, styles).look
+        habit = looks_mod.load_habits(cfg.looks_path).get(look_name)
+        habits = instructions.habit_adjustments(
+            habit, look_name, vocab or instructions.load_vocab(cfg.instructions_path)) if habit else {}
         return cls(
             cfg=cfg,
             rules=rules,
             looks=looks_mod.load(cfg.looks_path),
             presets=presets,
             meta=meta,
-            styles=load_styles(cfg.styles_path),
+            styles=styles,
             compose_moves=moves,
             light_cfg=compose.load_light_config(cfg.compose_path) if any(m.at == "light" for m in moves) else {},
             segmenter=make_segmenter(cfg.backend, cfg.device),
@@ -161,6 +174,13 @@ class Pipeline:
             adjustments=adjustments,
             config_digest=_config_digest(cfg),
             adjust_problems=problems,
+            lut=lut,
+            habits=habits,
+            geometry_cfg=geometry.config(rules) if (cfg.straighten or cfg.out_aspect) else {},
+            neutral_cfg=rules_mod.block(rules, "neutral", neutral_mod.DEFAULTS, neutral_mod.RANGES),
+            backdrop_cfg=(rules_mod.block(rules, "backdrop", backdrop_mod.DEFAULTS, backdrop_mod.RANGES)
+                          if cfg.backdrop else None),
+            night_cfg=rules_mod.block(rules, "night_sky", night.DEFAULTS, night.RANGES),
         )
 
     def vocab(self) -> instructions.Vocab:
@@ -184,7 +204,8 @@ class Pipeline:
     def presegment(self, path: str) -> None:
         """Decode and segment one photo, nothing else: fills the mask cache for a render worker."""
         concepts = self.concepts_for(style_for(self.cfg.style, self.styles))
-        extra = self._with_light_concept(instructions.extra_concepts(self.adjustments, concepts), concepts)
+        extra = self._with_light_concept(instructions.extra_concepts(self.adjustments + self._all_habits(), concepts), concepts)
+        extra = self._with_geometry_concepts(extra, concepts)
         if concepts or extra:
             img = load_image(path, decode=raw_opts_from(self.cfg))
             self.segmenter.segment(downscale_long_edge(img, self.cfg.analysis_long_edge),
@@ -193,11 +214,23 @@ class Pipeline:
             # the reference's masks too, once per run: a render worker reads them from the cache
             self._reference_concept_features(concepts)
 
+    def _all_habits(self) -> list[Adjustment]:
+        """The look's habits of every scene: what to segment for before the scene is known."""
+        return [a for scene in self.habits.values() for a in scene]
+
     def _with_light_concept(self, extra: list[str], concepts: list[str]) -> list[str]:
         """A move placed on the light (`at = "light"`) makes SAM look for the concept `sun` too."""
         if self.light_cfg and "sun" not in extra and "sun" not in concepts:
             return extra + ["sun"]
         return extra
+
+    def _with_geometry_concepts(self, extra: list[str], concepts: list[str]) -> list[str]:
+        """Straighten reads the water and the sky, a crop is placed on the subject: the segmenter looks for
+        them too (F32). They never become regions. The stub's masks are brightness guesses: none is asked for."""
+        if not self.geometry_cfg or self.cfg.backend == "stub":
+            return extra
+        want = (geometry.LEVEL if self.cfg.straighten else ()) + (self.geometry_cfg["subject"] if self.cfg.out_aspect else ())
+        return extra + [n for n in want if n not in concepts and n not in extra]
 
     def _find_light(self, proxy_rgb: np.ndarray, raw: list, union: dict,
                     asked: bool = False) -> light_mod.Light | None:
@@ -231,6 +264,9 @@ class Pipeline:
                     on_stage=None,
                     adjustments: list[Adjustment] | None = None,
                     on_plan=None,
+                    proxy: Image | None = None,
+                    on_step=None,
+                    on_geometry=None,
                     ) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
@@ -246,14 +282,19 @@ class Pipeline:
         img: Image = image if image is not None else load_image(path, decode=raw_opts_from(cfg))
         if on_stage is not None:
             on_stage("candidate_decode", img.rgb)
-        proxy = downscale_long_edge(img, cfg.analysis_long_edge)
+        # `proxy`: the analysis picture, when the caller made it from a larger original than `image`
+        # (a preview applies on a smaller copy).
+        given_proxy = proxy is not None
+        if proxy is None:
+            proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         concepts = self.concepts_for(style)
         adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
-        extra = self._with_light_concept(instructions.extra_concepts(adjs, concepts), concepts)
+        extra = self._with_light_concept(instructions.extra_concepts(adjs + self._all_habits(), concepts), concepts)
         if getattr(self.segmenter, "open_vocabulary", False) and any(
                 (parse_mark(a.target) or ("",))[0] == "thing" for a in adjs):
             # A thing mark keeps the limits of skin and snow inside it, also where the run found none (F37).
             extra += [n for n, cm in self.meta.items() if cm.guard_global and n not in concepts and n not in extra]
+        extra = self._with_geometry_concepts(extra, concepts)
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
@@ -273,9 +314,13 @@ class Pipeline:
         stage_timings["stats"] = (time.perf_counter() - stage_started) * 1000
         present = set(region_stats.keys())
         stage_started = time.perf_counter()
-        sc = scene_mod.classify(gstats, present, region_stats)
+        # Night sky (F31): with the run setting on, a night frame takes the scene "night", whose rules
+        # are the [opt_in.night_sky.night.*] blocks; any other frame keeps the usual scene.
+        night_frame = cfg.night_sky and night.is_night(gstats, self.night_cfg)
+        sc = scene_mod.classify(gstats, present, region_stats, override="night" if night_frame else None)
         stage_timings["scene"] = (time.perf_counter() - stage_started) * 1000
         region_rule = {name: meta_for(name, self.meta).region() for name in present}
+        adjs = [a.model_copy() for a in self.habits.get(sc.name, [])] + adjs   # the look first, typed changes add to it
 
         thumb = None
         if cfg.decider == "llm":
@@ -299,8 +344,10 @@ class Pipeline:
 
         if not cfg.sharpen:  # strip the sharpen op when output sharpening is disabled
             global_settings.pop("sharpen", None)
+            global_settings.pop("sharpen_stars", None)
             for s in region_settings.values():
                 s.pop("sharpen", None)
+                s.pop("sharpen_stars", None)
         if not cfg.levels:  # black and white point is opt-in until it has passed a blind vote (F5)
             for s in (global_settings, *region_settings.values()):
                 s.pop("black_point", None)
@@ -308,6 +355,52 @@ class Pipeline:
         if not cfg.denoise:  # noise reduction is opt-in until it has passed a blind vote (F7)
             for s in (global_settings, *region_settings.values()):
                 s.pop("denoise", None)
+                s.pop("denoise_stars", None)
+        if not night_frame:  # the night tools are opt-in (F31), and only a night frame takes them, whoever proposed them
+            for s in (global_settings, *region_settings.values()):
+                for k in night.OPS:
+                    s.pop(k, None)
+        # Grain (F23) is asked for by the run setting, the look or an instruction, never by a
+        # decider. Here it is a value in the global settings and no pixel: emit adds it to the
+        # picture it writes, after the checks below and after the export resize.
+        for s in (global_settings, *region_settings.values()):
+            s.pop("grain", None)
+        grain = cfg.grain if cfg.grain is not None else self.looks.get(look, looks_mod.Look()).grain * cfg.intensity
+        if grain > 0.0:
+            global_settings["grain"] = grain
+        # Black and white (F24) comes from the look, an instruction or --set, never from a decider.
+        # It is taken as written, not scaled by intensity: a black and white look is black and
+        # white at every strength.
+        for s in (global_settings, *region_settings.values()):
+            for k in ops.BW_KEYS:
+                s.pop(k, None)
+        bw_look = self.looks.get(look, looks_mod.Look())
+        if bw_look.bw > 0.0:
+            global_settings.update({k: getattr(bw_look, k) for k in ops.BW_KEYS if getattr(bw_look, k)})
+        # A LUT (F25) is asked for by the run setting, never by a decider or a look. Here it is a
+        # value in the global settings and no pixel: it is laid over the finished picture below.
+        for s in (global_settings, *region_settings.values()):
+            s.pop("lut", None)
+        if self.lut is not None and cfg.lut_amount > 0.0:
+            global_settings["lut"] = cfg.lut_amount
+
+        # A neutral pick (F34) replaces the white balance of the baseline: the spot the user says is grey or white is
+        # measured on the analysis picture, and the temp and tint that make it neutral become the global ones. Regions
+        # lose theirs: one white balance for the photo. What the user types or sets afterwards still adds to it.
+        pick, pick_notes = None, []
+        if cfg.neutral is not None:
+            pick, why = neutral_mod.measure(proxy.rgb, cfg.neutral, self.neutral_cfg)
+            if pick is None:
+                pick_notes.append(f"neutral pick at {cfg.neutral[0]:.3f}, {cfg.neutral[1]:.3f}: not used, {why}")
+        if pick is None and cfg.wb is not None:
+            pick = neutral_mod.Pick(float(cfg.wb[0]), float(cfg.wb[1]))
+        if pick is not None:
+            was = (global_settings.get("temp", 0.0), global_settings.get("tint", 0.0))
+            for name, s in region_settings.items():
+                gone = [k for k in ("temp", "tint") if s.pop(k, None)]
+                if gone:
+                    pick_notes.append(f"neutral pick: {' and '.join(gone)} of {name} dropped, the pick sets the white balance")
+            global_settings["temp"], global_settings["tint"] = pick.temp, pick.tint
 
         # Free-text look intent (e.g. "warm sunset, moody") → bounded GLOBAL nudges on top of the
         # rule baseline, so typing what you want works fully offline. Scaled by intensity; the
@@ -385,6 +478,59 @@ class Pipeline:
             if on_plan is not None:
                 on_plan(adjs, adj_plan, adj_plan.before, region_settings)
         policy_notes += [f"instruction {p}" for p in self.adjust_problems]
+        for rs in region_settings.values():     # stuck pixels and the sky's gradient are the whole photo's (F31)
+            rs.pop("hot_pixels", None)
+            rs.pop("sky_gradient", None)
+        # The grain that is added: the base above plus what instructions asked for, inside 0..100.
+        grain = min(max(global_settings.pop("grain", 0.0), 0.0), ops.OP_BOUNDS["grain"][1])
+        for rs in region_settings.values():     # grain is for the whole photo: a stored region value is dropped
+            rs.pop("grain", None)
+        if grain > 0.0:
+            global_settings["grain"] = grain
+        # Black and white (F24): the look's amount plus what instructions asked for, inside 0..100.
+        # At 100 the photo ends neutral, so no palette grade is laid over it.
+        bw_amount = min(max(global_settings.pop("bw", 0.0), 0.0), ops.OP_BOUNDS["bw"][1])
+        bw_full = bw_amount >= ops.OP_BOUNDS["bw"][1]
+        if bw_amount > 0.0:
+            global_settings["bw"] = bw_amount
+            weights = ", ".join(f"{k[3:]} {global_settings[k]:+g}" for k in ops.BW_KEYS[1:] if global_settings.get(k))
+            policy_notes.append(f"black and white: {bw_amount:g} of 100" + (f" ({weights})" if weights else ""))
+        else:   # the colour weights act only inside black and white: alone they are dropped, and said so
+            idle = [k for k in ops.BW_KEYS[1:] if global_settings.pop(k, None)]
+            if idle:
+                policy_notes.append(f"black and white: {', '.join(idle)} dropped, they act only with bw above 0")
+        if bw_full and palette_arg is not None:
+            palette_arg, palette_note = None, "palette: none, the photo is black and white"
+
+        # The LUT amount (F25): the run setting plus what this photo's own --set asked for, inside
+        # 0..100. A LUT is for the whole photo, and without a LUT file there is nothing to blend.
+        lut_amount = min(max(global_settings.pop("lut", 0.0), 0.0), ops.OP_BOUNDS["lut"][1])
+        for rs in region_settings.values():
+            rs.pop("lut", None)
+        if lut_amount > 0.0 and self.lut is None:
+            policy_notes.append("lut: this run has no LUT file, the amount is ignored")
+        elif lut_amount > 0.0:
+            global_settings["lut"] = lut_amount
+            policy_notes.append(
+                f"lut: {self.lut.name} ({self.lut.points} points, digest {self.lut.digest}), {lut_amount:g} of 100, "
+                "laid over the finished picture after the oversaturation gate; the review check reads the result")
+
+        # Geometry (F32): how the finished picture is turned and cut on its way out. Decided here,
+        # from the masks; no pixel moves in this function. emit.py and the preview do it, after
+        # every check below, so the gates and the stats compare two pictures of the source's shape.
+        geo = None
+        if self.geometry_cfg:
+            stub = cfg.backend == "stub"
+            wanted = set(geometry.LEVEL) | set(self.geometry_cfg["subject"])
+            geo_masks = {} if stub else {r.name: r.mask for r in raw if r.name in wanted and r.mask.any()
+                                         and r.score >= meta_for(r.name, self.meta).min_score}
+            geo, geo_notes = geometry.decide(geo_masks, (img.height, img.width), cfg.straighten and not stub,
+                                             cfg.out_aspect, self.geometry_cfg)
+            if stub and cfg.straighten:
+                geo_notes.insert(0, "straighten: not done, the stub backend cannot find water or sky (use --backend sam3)")
+            policy_notes += geo_notes
+            if on_geometry is not None:      # the preview turns every picture it shows the same way (F32)
+                on_geometry(geo)
 
         # Shoot-consistency: a bounded exposure nudge toward this image's batch group target,
         # so a folder doesn't drift in brightness photo-to-photo (batch normalization, F5).
@@ -394,13 +540,20 @@ class Pipeline:
             policy_notes.append(
                 f"batch normalize: {exposure_bias:+.2f} EV toward group {batch_group or '?'}")
 
+        if pick is not None and (wb_bias[0] or wb_bias[1]):
+            wb_bias = (0.0, 0.0)
+            policy_notes.append("batch normalize: white balance not moved, the neutral pick sets it")
         if wb_bias[0] or wb_bias[1]:
             global_settings["temp"] = global_settings.get("temp", 0.0) + wb_bias[0]
             global_settings["tint"] = global_settings.get("tint", 0.0) + wb_bias[1]
             policy_notes.append(f"batch normalize: white balance {wb_bias[0]:+.1f} temp, "
                                 f"{wb_bias[1]:+.1f} tint toward group {batch_group or '?'}")
 
-        notes_extra: list[str] = list(policy_notes)
+        notes_extra: list[str] = list(policy_notes) + pick_notes
+        if cfg.night_sky:
+            notes_extra.append(
+                f"night sky: {'a' if night_frame else 'not a'} night frame (median {gstats.lum_p50:.2f}, ISO "
+                f"{gstats.iso:.0f}): {'the night rules' if night_frame else 'the usual rules'}")
 
         # Reference feedback: before touching full-res pixels, learn a bounded set of ordinary
         # edit-slider nudges from the reference look. This captures "make this image feel like
@@ -523,6 +676,11 @@ class Pipeline:
         residual_banding: tuple[float, str, bool] | None = None
         stage_started = time.perf_counter()
         if do_apply:
+            # Night sky (F31): stuck pixels and the sky's gradient are corrections of the capture. They
+            # are made once, to the decoded photo, before every region, the global pass and the checks.
+            if global_settings.get("hot_pixels") or global_settings.get("sky_gradient"):
+                img, night_notes = night.correct(img, proxy, resolved.regions, global_settings, self.night_cfg, self.meta)
+                notes_extra += night_notes
             guide = luma(img.rgb)  # full-res structure reference for edge-aware mask feathering
             regions_apply = []
             if adj_plan is not None:
@@ -588,7 +746,13 @@ class Pipeline:
             # (the banding re-render, the gate after a reference match), so it is made once.
             gate_src = None
             if self.chroma_max is not None and global_settings.get("denoise", 0.0):
-                gate_src = ops.denoise(img.rgb.astype(np.float32), global_settings["denoise"])
+                gate_src = ops.denoise(img.rgb.astype(np.float32), global_settings["denoise"],
+                                       global_settings.get("denoise_stars", 0.0))
+            if self.chroma_max is not None and pick is not None:
+                # The gate compares with the source AS THE PICK SHOWS IT: against the plain source it would take
+                # the correction back on every colour the cast had made grey (up to 15 of 255).
+                gate_src = ops.light(gate_src if gate_src is not None else img.rgb.astype(np.float32),
+                                     pick.temp, pick.tint)
             out_rgb = apply_image(
                 img.rgb, regions_apply, global_settings,
                 compositional=[(a, s) for _n, a, s in comp],
@@ -598,7 +762,7 @@ class Pipeline:
                 protect_chroma=guard_mask,
                 palette=palette_arg, report=gate_report,
                 on_stage=on_stage, highlight_hold=self.highlight_hold,
-                chroma_reference=gate_src,
+                chroma_reference=gate_src, on_step=on_step,
             )
             if guard_mask is not None:
                 guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
@@ -648,7 +812,7 @@ class Pipeline:
                         protect_chroma=guard_mask,
                         palette=palette_arg, report={},
                         on_stage=on_stage, highlight_hold=self.highlight_hold,
-                        chroma_reference=gate_src,
+                        chroma_reference=gate_src, on_step=on_step,
                     )
                     # The sidecar must report the settings that actually rendered the pixels —
                     # swap in the damped values so the JSON matches the output, not the plan.
@@ -659,7 +823,7 @@ class Pipeline:
                     band_remediated = True
                     band_pre_score = bscore
                     band_reduce_factor = red
-                elif baction == "warn" and not cfg.reference:
+                elif baction == "warn" and not (cfg.reference or global_settings.get("lut")):
                     # No remediation to attempt and nothing left that could still change out_rgb
                     # (no reference match queued) — this IS the final verdict; report it now. When
                     # cfg.reference IS set, defer: reference matching could still change the final
@@ -734,13 +898,52 @@ class Pipeline:
             except Exception as e:
                 ref_note = f"reference match skipped ({e})"
 
+        # A full black and white ends neutral (F24). Two steps after the global pass work against
+        # the colour source and can hand a little of its colour back: the highlight hold and a
+        # reference match. Every pixel is set to its own luma, so the tone they made stays.
+        if bw_full and out_rgb is not None:
+            out_rgb = np.repeat(luma(out_rgb)[..., None], 3, axis=-1)
+
+        # Clean backdrop (F34): the light background of the finished picture is evened out and taken to the set white,
+        # after the gates and a reference match, before a LUT. Outside the soft edge of the backdrop no pixel changes.
+        # The review check below reads the result; the banding verdict does not (it reads a flat backdrop as a plateau).
+        backdrop_report = None
+        if do_apply and out_rgb is not None and self.backdrop_cfg is not None:
+            small = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
+            if given_proxy:
+                small = resize_to(small, *proxy.rgb.shape[:2])
+            keep = None
+            if cfg.backend != "stub" and small.rgb.shape[:2] == resolved.shape:
+                # What a model found is never backdrop. The stub's subject is an oval in the middle of every frame.
+                found = [resolved.union[n] for n in self.backdrop_cfg["keep"] if n in resolved.union]
+                keep = np.logical_or.reduce(found) if found else None
+            out_rgb, backdrop_report, _weight = backdrop_mod.even(out_rgb, self.backdrop_cfg, keep=keep, small=small.rgb)
+            if backdrop_report["applied"]:
+                lo, hi = backdrop_report["level"]
+                glo, ghi = backdrop_report["gain"]
+                notes_extra.append(
+                    f"backdrop: {backdrop_report['coverage'] * 100:.0f}% of the frame evened out and taken to "
+                    f"{backdrop_report['white'] * 255:.0f} of 255; it was {lo * 255:.0f} to {hi * 255:.0f} "
+                    f"(gain {glo:.2f} to {ghi:.2f})"
+                    + ("; where it needed more than the limit it stays darker" if backdrop_report["limited"] else ""))
+            else:
+                notes_extra.append(f"backdrop: nothing changed, {backdrop_report['why']}")
+
+        # A LUT file (F25) is laid over the finished picture: after the gates and after a reference
+        # match, which judged and shaped the edit, not the LUT. The banding verdict and the review
+        # check below read the result.
+        if do_apply and out_rgb is not None and global_settings.get("lut", 0.0):
+            shift = self.lut.shift      # made on first use, here and not in a strip thread
+            out_rgb = par.rows(lambda a: ops.lut_map(a, shift, global_settings["lut"], self.lut.lo, self.lut.hi),
+                               out_rgb)
+
         # Final banding verdict — deliberately AFTER reference matching (if any), on whatever
         # out_rgb actually is now. Runs whenever the gate is on and either remediation touched
         # the pixels or a reference match could have (cfg.reference): those are the only ways
         # out_rgb can differ from what the FIRST assess() already judged, so a "pass"-and-untouched
         # photo doesn't pay for a second identical assessment. Reuses band_smooth/band_s_small
         # (the source doesn't change) — never recomputes the smoothness mask.
-        if self.banding and band_smooth is not None and (band_remediated or cfg.reference):
+        if self.banding and band_smooth is not None and (band_remediated or cfg.reference or global_settings.get("lut")):
             e_final_small = downscale_long_edge(Image(rgb=out_rgb), 1280).rgb
             final_score, final_action, _ = banding.assess(
                 band_s_small, e_final_small, self.banding, smooth=band_smooth)
@@ -765,6 +968,8 @@ class Pipeline:
         quality_score, needs_review, review_reason, warnings = 1.0, False, "", []
         if do_apply and out_rgb is not None:
             post_proxy = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
+            if given_proxy:
+                post_proxy = resize_to(post_proxy, *proxy.rgb.shape[:2])
             # Same masks as the source stats, so the sidecar shows per-region pre→post luma
             # (the diagnostics the dark-RAW investigation lacked). Masks are proxy-res; the
             # post proxy has the proxy's shape by construction — guard anyway.
@@ -779,6 +984,31 @@ class Pipeline:
             quality_score, needs_review, review_reason, warnings = gates.assess(
                 gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate,
                 preserve_exposure=preserve)
+        subject_colour = None
+        if cfg.colour_report and post_stats is not None and same_shape:     # F34: the colour report reads this
+            subject_colour = consistency.subject_colour(
+                post_proxy.rgb, resolved.union, (self.rules.get("consistency") or {}).get("colour_of", ["subject", "person"]))
+        neutral_audit = None
+        if pick is not None:       # what the pick did, and where the spot ended (F34)
+            neutral_audit = {"temp": round(pick.temp, 3), "tint": round(pick.tint, 3),
+                             "rules": [round(was[0], 3), round(was[1], 3)]}
+            said = (f"white balance temp {pick.temp:+.1f}, tint {pick.tint:+.1f} "
+                    f"(the rules: {was[0]:+.1f}, {was[1]:+.1f})")
+            if pick.xy is None:
+                notes_extra.append(f"neutral pick: {said}, given for the run")
+            else:
+                neutral_audit.update(x=round(pick.xy[0], 4), y=round(pick.xy[1], 4), source=list(pick.source))
+                line = f"neutral pick at {pick.xy[0]:.3f}, {pick.xy[1]:.3f}: {said}; the spot was " + \
+                       ", ".join(f"{v:.0f}" for v in pick.source) + " of 255"
+                if post_stats is not None and same_shape:
+                    after = [round(float(v) * 255.0, 1)
+                             for v in neutral_mod.spot_mean(post_proxy.rgb, pick.xy, self.neutral_cfg["patch"])]
+                    off = round(max(after) - min(after), 1)
+                    neutral_audit.update(result=after, off=off)
+                    line += " and is " + ", ".join(f"{v:.0f}" for v in after)
+                    if off > 1:
+                        line += f", {off:.1f} from neutral: something after the white balance adds colour there"
+                notes_extra.append(line)
         if residual_banding is not None:
             bscore, baction, was_remediated = residual_banding
             warnings = list(warnings) + [f"smooth-region banding {bscore:.2f} ({baction})"]
@@ -795,6 +1025,8 @@ class Pipeline:
                 quality_score = max(0.0, quality_score - 0.05)
 
         notes = build_notes(gstats, region_stats, resolved.detected)
+        if cfg.genre:
+            notes.append(f"genre: {cfg.genre}")
         if img.decode_ev:
             notes.append(f"raw develop: {cfg.raw_mode} {img.decode_ev:+.2f} EV at decode")
         for name, pre_r in region_stats.items():  # where did the brightness actually move?
@@ -847,10 +1079,17 @@ class Pipeline:
         )
         stage_timings["assess_result"] = (time.perf_counter() - stage_started) * 1000
         result.adjustments = adjs
+        result.geometry = geo
         result.stage_timings_ms.update(stage_timings)
         result.audit.update(decode_info=getattr(img, "decode_info", {}),
                             source_format=os.path.splitext(path)[1].lower().lstrip("."),
                             decode_injected=image is not None)
+        if neutral_audit is not None:
+            result.audit["neutral"] = neutral_audit
+        if backdrop_report is not None:
+            result.audit["backdrop"] = backdrop_report
+        if subject_colour is not None:
+            result.audit["subject_colour"] = subject_colour
         result.exposure_bias = float(exposure_bias)
         result.wb_bias = [float(wb_bias[0]), float(wb_bias[1])]
         result.audit.update(
@@ -859,6 +1098,9 @@ class Pipeline:
                         for k, v in (("reference", cfg.reference),
                                      ("recipe_model", cfg.recipe_model if cfg.decider == "learned" else None))},
             config_digest=self.config_digest)
+        if self.lut is not None:   # the file's name and digest, never its folder; `adjust` asks for the file again
+            result.audit["run_inputs"]["lut"] = self.lut.name
+            result.audit["lut"] = {"name": self.lut.name, "digest": self.lut.digest, "points": self.lut.points}
         return out_rgb, result
 
     def _get_ref_proxy(self) -> Image | None:

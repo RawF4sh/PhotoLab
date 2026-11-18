@@ -16,6 +16,16 @@ _SHADOW = 0.02
 _HIGHLIGHT = 0.98
 
 
+def wb_correction(r_m: float, g_m: float, b_m: float, limit: float = 100.0) -> tuple[float, float]:
+    """(temp, tint), in the units of `ops.light`, that make a patch with the LINEAR means r_m, g_m, b_m neutral. Each
+    is held inside +-limit; tint is solved after the (possibly held) temp. Needs r_m + b_m > 0 and g_m > 0."""
+    temp = float(np.clip(500.0 * (b_m - r_m) / (b_m + r_m), -limit, limit))
+    # Solve tint against the red/blue level AFTER the (possibly clipped) temperature correction.
+    # Using the original arithmetic mean can give tint the wrong sign.
+    rb_target = (r_m * (1.0 + 0.002 * temp) + b_m * (1.0 - 0.002 * temp)) / 2.0
+    return temp, float(np.clip(1000.0 * (rb_target - g_m) / g_m, -limit, limit))
+
+
 def _saturation(rgb: np.ndarray) -> np.ndarray:
     """HSV-style saturation per pixel, HxW, in [0,1]."""
     mx = rgb.max(axis=2)
@@ -167,13 +177,7 @@ def compute(
         ref = lin[ref_mask]  # reuse the frame's already-decoded linear light, not a fresh decode
         r_m, g_m, b_m = (float(ref[:, c].mean()) for c in range(3))
         if r_m + b_m > 1e-6 and g_m > 1e-6:
-            wb_temp = float(np.clip(500.0 * (b_m - r_m) / (b_m + r_m), -100.0, 100.0))
-            # Solve tint against the red/blue level AFTER the (possibly clipped) temperature
-            # correction. Using the original arithmetic mean can give tint the wrong sign.
-            r_target = r_m * (1.0 + 0.002 * wb_temp)
-            b_target = b_m * (1.0 - 0.002 * wb_temp)
-            rb_target = (r_target + b_target) / 2.0
-            wb_tint = float(np.clip(1000.0 * (rb_target - g_m) / g_m, -100.0, 100.0))
+            wb_temp, wb_tint = wb_correction(r_m, g_m, b_m)
             wb_conf = float(np.clip(float(ref_mask.mean()) / 0.05, 0.0, 1.0))
             wb_conf *= 1.0 if ref_is_snow else 0.6
 

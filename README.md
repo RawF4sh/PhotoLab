@@ -94,6 +94,22 @@ autoedit calibrate ./photos --out ./calib                      # fit a personal 
 autoedit models status # SAM 3 weights: status | download | remove
 autoedit settings      # every run setting with its type, default and range (--json for the schema)
 autoedit run ./photos ./out --highlight-hold --denoise --levels   # three quality options, all off by default
+autoedit run ./photos ./out --grain 25                         # film grain (0-100), added after the export resize
+autoedit run ./photos ./out --look bw_red_filter               # black and white with a red filter (dark skies); also film_warm, film_faded, instant…
+autoedit run ./photos ./out --lut film.cube --lut-amount 70     # a .cube colour LUT over the finished picture
+autoedit looks lut film_faded -o film_faded.cube              # a look's whole-picture colour as a LUT for other programs
+autoedit run ./photos ./out --look surprise --seed 7          # prints six looks drawn by the seed, runs the first
+autoedit run ./photos ./out --history                          # keep a local history of your own changes (off by default)
+autoedit style suggest                                         # habits found in that history; --yes NAME saves them as a look
+autoedit looks export film_faded -o film_faded.aelook          # a look as one file to give away; looks import FILE takes one in
+autoedit looks card film_faded ./photos -o ./card              # before-and-after sheet (PNG + HTML) of a look on your photos
+autoedit run ./photos ./out --genre alpine                     # a genre pack: things to find, look and settings for a kind of photo
+autoedit run ./photos ./out --straighten --aspect 4:5          # level a horizon (SAM 3) and crop to a shape; both off by default
+autoedit run ./products ./out --neutral 0.12,0.85 --neutral-from ./products/card.jpg --backdrop   # grey card sets the white balance; backdrop evened to white
+autoedit run ./night ./out --genre astro                       # night frames: town glow off the sky, stuck pixels repaired, stars spared
+autoedit merge ./brackets -o ./merged                         # tripod brackets, repeats, focus series or trails into one 16-bit TIFF each
+autoedit genres list                                           # the packs, packaged and your own
+autoedit pick ./shoot -o ./picks                               # per burst, the sharpest well-exposed frame; sources never touched
 autoedit doctor        # check device + backend availability
 autoedit presets       # list concept presets
 ```
@@ -102,6 +118,10 @@ autoedit presets       # list concept presets
 does not teach the editor how to transform an original into an edit; it acts as a critic/ranker
 for culling huge folders, filtering generated/reference edits, prioritizing human review, and
 choosing the best variants from a batch.
+
+**AutoEdit Lab** (`http://localhost:8765/lab` while `autoedit ui` runs) is a calm second page for
+trying the newer features: one box to say what to change, ovals, looks, Surprise me, How it was
+done, Try it yourself, straighten and crop, export and batch. Studio stays at `/`.
 
 Launch **Studio** with `pip install -e '.[ui]'` and `autoedit ui`. Open a folder, pick a style,
 add or toggle named concepts, generate a before/after preview, and run the checked photos.
@@ -143,6 +163,7 @@ local `./configs` dir or `--configs-dir`):
 - [compose.toml](src/autoedit/configs/compose.toml) — radial/linear compositional moves (vignette, sky grad).
 - [concepts.toml](src/autoedit/configs/concepts.toml) — concept presets + per-concept priority/feather/rule mapping.
 - [instructions.toml](src/autoedit/configs/instructions.toml) — the words `--edit` understands (verbs, amounts, limits per op), and the gates and words for marks.
+- [style.toml](src/autoedit/configs/style.toml) — when a habit in your history becomes a suggestion (12 photos, 3 days, 70 %).
 - [lessons.toml](src/autoedit/configs/lessons.toml) — what each tool does, when to use it and what to watch for (the "Show me how" walk-through).
 - [exports.toml](src/autoedit/configs/exports.toml) — export presets for `--export` (`full`, `web`, `social`, `archive`, `webp`).
 - [calibrate.toml](src/autoedit/configs/calibrate.toml) — dimensions and step sizes of `autoedit calibrate`.

@@ -3,6 +3,133 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Night sky tools (F31)
+
+### Added
+- **`--night-sky`** and the **`astro`** pack (untested): night frames keep their darkness, lose a
+  town's glow in the sky, get stuck pixels repaired, and keep their stars through noise reduction
+  and sharpening. Four new op values: `hot_pixels`, `sky_gradient`, `denoise_stars`, `sharpen_stars`.
+
+## [Unreleased] — Exact colour and clean backgrounds (F34)
+
+### Added
+- **`--neutral X,Y`** and **`--neutral-from FILE`**: a grey or white spot sets the white balance of one
+  photo or the whole set; refused with its numbers when it cannot be met.
+- **`--backdrop`**: a light backdrop evened out and taken to a set white; the product untouched.
+- **`--consistency-wb`** evens white balance across a group; **`--colour-report`** reports how far
+  each photo's subject colour is from its group's. All off by default.
+
+## [Unreleased] — Merge frames (F33)
+
+### Added
+- **`autoedit merge FOLDER`**: sets of frames from a tripod (exposure brackets, repeats against
+  noise, focus series, star trails) merged into one TIFF each, with a record of the frames used.
+  Hand-held sets that are too far off are refused; things that moved are flagged. Settings in
+  `configs/merge.toml`.
+
+## [Unreleased] — AutoEdit Lab (F38)
+
+### Added
+- **`/lab`**, a minimal second page beside Studio: say what to change (sentences and ovals),
+  looks and Surprise me, strength, straighten and crop, hold for the original, "How it was done"
+  and "Try it yourself", export one photo or edit the checked ones. Studio and the API unchanged.
+
+## [Unreleased] — Straighten and crop (F32)
+
+### Added
+- **`--straighten`** levels a clear waterline or horizon by up to 5 degrees (SAM 3's water and
+  sky masks), and **`--aspect W:H`** crops to a shape placed on the subject; `aspect` in an
+  export preset too. Both off by default; the sidecar's `geometry` gives the angle and the share
+  kept. Done to the finished picture at the export, after every check.
+
+## [Unreleased] — Genre packs (F30)
+
+### Added
+- **`--genre NAME`** and `autoedit genres list`: a genre pack names the things to find, a look,
+  opt-in rule sets and run settings, as data in `configs/genres.toml`; own packs in the profile.
+  Two packs, `landscape` (the same bytes as `--preset landscape`) and `alpine` (adds the
+  highlight hold). Both are marked untested: each pulls one photo of the tone gate back that a run
+  without a genre does not, so no menu offers them yet. `GET /api/v1/genres` lists them.
+
+## [Unreleased] — Teaching mode (F29) and Pick the keepers (F35)
+
+### Added
+- **Teaching mode** as engine and API: `"steps"` on `POST /preview` replays the edit one step at a
+  time with a lesson on each tool (the last step equals the preview, byte for byte); `"try"` renders
+  your own slider version and compares it with the engine's, with facts from the existing checks.
+  Every op now has a lesson in `lessons.toml`.
+- **`autoedit pick FOLDER`**: ranks the frames of each burst by the sharpness of the subject and
+  their exposure, writes a ranking and a contact sheet, and copies the picks only with `--copy`.
+  Source files are never moved or changed.
+
+## [Unreleased] — Look files (F28)
+
+### Added
+- **`autoedit looks export NAME`** writes a look as one `.aelook` file (TOML), with its palette
+  and habits if asked; **`autoedit looks import FILE`** checks a file from someone else whole
+  (known keys, limits, 16 kB, a plain name) before anything is written; **`autoedit looks card`**
+  renders a look on your photos as a before-and-after sheet to show or share.
+
+## [Unreleased] — Style from your edits (F27)
+
+A run without `--history` and without a habit look renders and writes the same as before.
+
+### Added
+- **A local history of your own changes** (`--history`, off by default): one line per export in
+  the profile's `history.jsonl`, holding no paths, file names, pixels or typed words.
+  `autoedit history status`, `autoedit history clear --yes`.
+- **`autoedit style suggest`**: habits found in the history (12 photos, 3 days, 70 % by default,
+  in `style.toml`), worded as a question; `--yes NAME` saves them into a new look.
+- **A look can carry habits** (a `habit` table per scene and target), replayed as typed
+  instructions within `[limits]`.
+
+## [Unreleased] — Surprise me (F26)
+
+### Added
+- **Six looks you would not have picked**, drawn from the look library by a seed: a Surprise
+  button in Studio, `"surprise": true` on `POST /api/variants`, and `--look surprise --seed N`
+  (it prints the six and runs the batch with the first). The pick is a named look, so a batch can
+  be repeated; the sidecar records the name, never the word "surprise".
+
+## [Unreleased] — LUT files (F25)
+
+A run without a LUT, or with an identity LUT, renders the same bytes as before.
+
+### Added
+- **`.cube` LUT files**: `--lut FILE.cube` and `--lut-amount N` (0 to 100). The LUT is laid over
+  the finished picture (after the oversaturation gate, before the review check), with tetrahedral
+  interpolation, so greys stay grey. The reader is strict: text only, 16 MB at most, known
+  keywords only, finite numbers, the right number of rows. The sidecar names the file and its
+  digest, never its folder. In an API request the file must lie in a picked folder.
+- **`autoedit looks lut NAME -o FILE.cube`** writes the whole-picture colour part of a look as a
+  33-point LUT for other programs; the file lists what it leaves out (region edits, the rules'
+  per-photo decisions, clarity, sharpening, grain).
+
+## [Unreleased] — Black and white, and film looks (F24)
+
+A run with one of the five old looks renders the same bytes as before.
+
+### Added
+- **Black and white with a choice of how colours turn grey**: an op `bw` with six colour weights
+  (red, yellow, green, cyan, blue, magenta). A weight lightens or darkens its colour, and never
+  darkens the shadows. A full black and white export is exactly grey after every later step.
+- **Eight looks**, chosen with `--look`: `bw_classic`, `bw_red_filter` (darker blue skies),
+  `bw_soft`, `film_warm`, `film_cool`, `film_faded`, `cross_process`, `instant`. The film casts are
+  mild by design: the oversaturation gate allows about 5 of 255 on neutral tones.
+- A look can lift its blacks for a faded look (`dehaze_add`).
+
+## [Unreleased] — Grain (F23)
+
+A run without grain renders the same bytes as before.
+
+### Added
+- **Film grain**, off by default: `--grain N` (0 to 100) and `--grain-size`, a look's `grain`, or
+  "add grain" / "more grain" / "grainy" in the instruction boxes. Luma only, strongest in the
+  midtones, the same pattern on every rerun of a photo. It is added to the written picture after
+  the resize, so a web export and a full-size export look alike, and after every check, so no
+  gate mistakes it for noise or banding. Grain is for the whole photo: "add grain to the sky" is
+  refused with a reason.
+
 ## [Unreleased] — Point and tell (F37)
 
 A run without a mark or an instruction renders the same bytes as before.
@@ -34,6 +161,12 @@ A run without a mark or an instruction renders the same bytes as before.
 - **Named places keep the limits of skin and snow too.** "Make the top pink" used to tint the snow
   and the skin under the gradient. Now those parts get the change after their policy and the rest
   gets it in full. "Darken the top" and "add a vignette" render as before.
+
+### Fixed
+- **A preview of a photo above 4096 pixels is analysed on the picture the export analyses.** It
+  used to analyse a smaller copy, so a mask could differ between preview and export (measured: an
+  overlap of 0.92 on a 22 megapixel photo; now 1.00). A single-photo export of a previewed photo
+  now also finds its masks in memory. Exports themselves are unchanged.
 
 ## [Unreleased] — Faster segmentation (F36)
 

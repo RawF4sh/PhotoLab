@@ -9,6 +9,9 @@ and unit-testable without building a pipeline.
 
 from __future__ import annotations
 
+import hashlib
+import random
+
 import numpy as np
 
 # A small, diverse set of recipes spanning the look space. Each spec's non-`name` keys are ordinary
@@ -23,6 +26,39 @@ DEFAULT_VARIANTS = [
 
 # How close the top two combined scores can be before we call it a toss-up and send it to review.
 _UNCERTAIN_MARGIN = 0.04
+
+
+SURPRISE = "surprise"     # F26: the word after --look; never a run setting, so never in a sidecar
+SURPRISE_COUNT = 6
+_SEED_END = 2 ** 32
+
+
+def surprise_seed(seed=None) -> int:
+    """The seed, checked. None draws one below a million, so every answer can be repeated."""
+    if seed is None:
+        return random.randrange(1_000_000)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < _SEED_END:
+        raise ValueError(f"seed must be a whole number from 0 to {_SEED_END - 1}")
+    return seed
+
+
+def surprise_looks(names, seed: int, count: int = SURPRISE_COUNT, skip=()) -> list[str]:
+    """Up to `count` different names, in the order the seed gives them, without those in `skip`.
+    A name's place is a digest of the seed and the name: the same on every machine and Python
+    version, and a look that is added, removed or skipped leaves the order of the others alone."""
+    def place(name: str):
+        return hashlib.blake2b(f"{seed}:{name}".encode("utf-8"), digest_size=8).digest(), name
+    return sorted((n for n in names if n not in skip), key=place)[:count]
+
+
+def surprise_for(cfg, seed: int) -> list[str]:
+    """The looks the seed picks for a run config: out of its library, without the look it has now."""
+    from .looks import load as load_looks
+    from .styles import load_styles, style_for
+
+    library = load_looks(cfg.looks_path)
+    now = cfg.look if cfg.look in library else style_for(cfg.style, load_styles(cfg.styles_path)).look
+    return surprise_looks(library, seed, skip=(now,))
 
 
 def spec_opts(spec: dict) -> dict:

@@ -51,3 +51,16 @@ def test_proxy_downscale_keeps_16bit_precision(tmp_path):
     assert proxy.rgb.shape[1] == 512
     uniq = np.unique(np.round(proxy.rgb[..., 0] * 65535).astype(np.int64))
     assert uniq.size > 256, f"proxy collapsed to {uniq.size} levels (8-bit quantization)"
+
+
+def test_resize_to():
+    from autoedit.imageio import Image, downscale_long_edge, resize_to
+    rng = np.random.default_rng(1)
+    img = Image(rgb=rng.random((120, 200, 3)).astype(np.float32))
+    assert resize_to(img, 120, 200) is img
+    for h, w in ((60, 100), (67, 101), (300, 250)):
+        out = resize_to(img, h, w)
+        assert out.rgb.shape == (h, w, 3)
+        assert out.rgb.min() >= 0.0 and out.rgb.max() <= 1.0
+    ref = downscale_long_edge(img, 100)
+    assert np.array_equal(resize_to(img, *ref.rgb.shape[:2]).rgb, ref.rgb)

@@ -43,10 +43,10 @@ def config_path(name: str, packaged_fallback: bool = False) -> str:
     return path
 
 
-_CONFIG_FILES = ("rules", "looks", "concepts", "styles", "compose", "intents", "palettes", "instructions", "exports", "reveal")
+_CONFIG_FILES = ("rules", "looks", "concepts", "styles", "compose", "intents", "palettes", "instructions", "exports", "reveal", "genres")
 
 
-_OPTIONAL = ("instructions", "exports", "reveal")
+_OPTIONAL = ("instructions", "exports", "reveal", "genres")
 
 
 def _app_dir(create: bool) -> str | None:
@@ -149,12 +149,15 @@ def _load(path: str) -> dict:
 
 
 def _check_looks(data: dict, path: str) -> None:
-    from .looks import FIELDS
+    from .looks import FIELDS, HABIT, check_habit
 
     for name, body in data.items():
         if not isinstance(body, dict):
             raise ValueError(f"{path}: {name} must be a table of look fields")
         for field, val in body.items():
+            if field == HABIT:
+                check_habit(val, f"{path}: look {name}")
+                continue
             if field not in FIELDS:
                 raise ValueError(f"{path}: look {name} has unknown field {field!r}; "
                                  f"valid fields: {', '.join(FIELDS)}")
@@ -242,6 +245,10 @@ def _overlay(base_name: str, profile: str | None) -> tuple[str, dict] | None:
         _check_looks(data, path)
     elif base_name == "reveal.toml":
         _check_reveal(data, path)
+    elif base_name == "genres.toml":
+        from . import genres   # inside the branch: genres imports contract, which imports paths
+
+        genres.check(data, path)
     return path, data
 
 

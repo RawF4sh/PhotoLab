@@ -247,3 +247,40 @@ def test_check_image_rejects_non_image_and_missing(tmp_path):
         service.check_image(str(tmp_path / "missing.jpg"))
     with pytest.raises(ValueError):
         service.run_one(str(xmp), str(tmp_path / "o"), {"backend": "stub"})
+
+
+def test_preview_analyses_what_the_export_analyses(tmp_path):
+    from autoedit.pipeline import Pipeline
+    rng = np.random.default_rng(5)
+    # 2000 x 1334: above the lowered bound of 1600, so the analysis picture (1536, the default) is a
+    # real downscale of the original, and the one made from the working copy would differ from it
+    a = np.zeros((1334, 2000, 3), np.float32)
+    a[:733] = [100, 140, 200]
+    a[733:] = [60, 110, 70]
+    yy, xx = np.mgrid[0:1334, 0:2000]
+    a[(((xx - 1000) / 433) ** 2 + ((yy - 833) / 367) ** 2) <= 1.0] = [200, 150, 120]
+    a = np.clip(a + rng.normal(0, 6, a.shape), 0, 255).astype(np.uint8)
+    p = tmp_path / "big.jpg"
+    PILImage.fromarray(a, "RGB").save(str(p), quality=95)
+    opts = {"style": "editorial", "backend": "stub"}
+
+    seen, orig, old = [], Pipeline.process_one, service.PREVIEW_LONG_EDGE
+
+    def spy(self, *args, **kw):
+        seen.append(kw.get("proxy"))
+        return orig(self, *args, **kw)
+    Pipeline.process_one = spy
+    try:
+        service.PREVIEW_LONG_EDGE = 1600
+        pre = service.preview(str(p), opts)["result"]
+        exp = service.run_one(str(p), str(tmp_path / "out"), opts)["result"]
+        service.PREVIEW_LONG_EDGE = 2000         # at the bound: no proxy given
+        service.preview(str(p), opts)
+    finally:
+        Pipeline.process_one = orig
+        service.PREVIEW_LONG_EDGE = old
+    assert seen[0] is not None and seen[1] is None and seen[2] is None
+    for k in ("scene", "concepts", "global_settings"):
+        assert pre[k] == exp[k], k
+    assert [(m["target"], m["coverage"], m["ops"]) for m in pre["masks"]] == \
+           [(m["target"], m["coverage"], m["ops"]) for m in exp["masks"]]

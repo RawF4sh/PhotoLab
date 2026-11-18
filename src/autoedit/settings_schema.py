@@ -42,7 +42,7 @@ def _limits(info) -> dict:
 
 
 def _choices(configs_dir: str | None, profile: str | None) -> dict[str, list[str]]:
-    from . import exports, palette
+    from . import exports, genres, palette
     from .concepts import load_concepts
     from .looks import load as load_looks
     from .styles import load_styles
@@ -50,6 +50,7 @@ def _choices(configs_dir: str | None, profile: str | None) -> dict[str, list[str
     p = paths.config_paths(configs_dir, profile)
     return {
         "style": list(load_styles(p["styles_path"])),
+        "genre": [g["name"] for g in genres.listing(configs_dir, profile) if g["offered"]],
         "look": list(load_looks(p["looks_path"])),
         "palette": ["auto", "off", *palette.load_palettes(p["palettes_path"])],
         "preset": list(load_concepts(p["concepts_path"])[0]),

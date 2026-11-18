@@ -13,7 +13,7 @@ SPEC.loader.exec_module(guard)
 def test_publication_guard_blocks_private_inputs_and_preserves_code_paths():
     for path in [".env.production", "nested/portrait.JPG", "out-test/run.json",
                  ".claude/settings.json", "eval_3way/scores.csv", "credentials-prod.json",
-                 "models/model.safetensors", "nested/edit.autoedit.json"]:
+                 "models/model.safetensors", "nested/edit.autoedit.json", "nested/a0_brackets.merge.json"]:
         assert guard.private_path(path), path
     for path in ["src/autoedit/imageio.py", "src/autoedit/configs/rules.toml",
                  ".github/workflows/privacy.yml", "test-corpus/.gitkeep", ".env.example"]:

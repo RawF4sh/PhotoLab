@@ -123,6 +123,11 @@ def render_safe(path: str, cfg: RunConfig, workflow: str = "current", image: Ima
         proposal, result = engine.process(path, image=image, common_source=reference)
         engine._quality_backend_error = backend_error
         holder._quality_fallback_engine = engine
+    if result.global_settings.pop("grain", None):   # F23: this workflow checks the pixels it writes
+        result.notes.append("grain: not added by the safety workflow, which checks the pixels it writes")
+    if result.geometry is not None:                 # F32: the pixels written are the pixels checked
+        result.geometry = None
+        result.notes.append("geometry: not done by the safety workflow, which checks the pixels it writes")
     # Requested configuration does not establish that segmentation was invoked.
     actual_backend = getattr(engine, "last_backend", "unknown")
     thresholds = {**load_quality_config(quality_config), **(quality_thresholds or {})}

@@ -32,6 +32,7 @@ outputs/
 eval_3way/
 dist/
 *.autoedit.json
+*.merge.json
 run.json
 
 # Local curation/reference outputs
@@ -89,3 +90,6 @@ test-corpus/*.tiff
 Thumbs.db
 .idea/
 *.swp
+
+# F27: the history of your own edits (lives in the profile, never in the repo)
+history.jsonl

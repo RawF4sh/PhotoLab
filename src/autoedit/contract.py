@@ -29,6 +29,10 @@ class RunConfig(BaseModel):
 
     # selection / look
     style: str = "natural"  # styles.toml profile: look + default concepts + brief
+    # The genre pack this config was built from (genres.toml, F30). Like `export` it is applied where the
+    # config is built (cli.py, web/service.py): the name alone changes nothing.
+    genre: str | None = Field(default=None, max_length=40)
+    rule_sets: list[str] = Field(default_factory=list, max_length=20)  # opt-in rule sets of rules.toml a genre switched on
     prompt: str | None = None  # free-text intent, combined with the style brief for the LLM
     edit: str | None = Field(default=None, max_length=400)
     # plain-language region instructions, e.g. "brighten the jacket" (instructions.toml)
@@ -102,6 +106,20 @@ class RunConfig(BaseModel):
     levels: bool = False  # black and white point (F5); off → the rule-driven black_point is dropped after decide
     light_shaping: bool = False  # a soft warm glow where the sun is (F18); off → the sun glow move does not exist
     denoise: bool = False  # noise reduction (F7); off → the rule set is not loaded and the op is dropped after decide
+    night_sky: bool = False  # night sky tools (F31): night frames take the night rules; off → the rule set is not loaded and the ops are dropped after decide
+    grain: float | None = Field(default=None, ge=0.0, le=100.0)  # film grain on the written picture (F23); None = the look's own, 0 = none
+    grain_size: float = Field(default=1.0, ge=0.5, le=4.0)  # one grain clump in two-thousandths of the export's long edge
+    lut: str | None = None  # path of a .cube 3D LUT laid over the finished photo (F25); None or "" = none
+    lut_amount: float = Field(default=100.0, ge=0.0, le=100.0)  # how much of the LUT is blended in; not scaled by intensity
+    neutral: list[float] | None = Field(default=None, min_length=2, max_length=2)  # a spot, X,Y as shares of the frame, that is grey or white: the white balance makes it neutral (F34)
+    wb: list[float] | None = Field(default=None, min_length=2, max_length=2)  # [temp, tint] given for the whole run, e.g. measured once by --neutral-from (F34)
+    backdrop: bool = False  # even out a light backdrop and take it to a set white, on the finished picture (F34)
+    consistency_wb: bool = False  # a group of photos gets one white balance, the median cast of its frames (F34)
+    colour_report: bool = False  # measure the subject colour of every photo and report the spread per group (F34)
+    straighten: bool = False  # turn the export so a clear waterline or horizon is level (F32); off → no turn
+    out_aspect: str | None = Field(default=None, max_length=7)  # crop the export to this W:H shape (F32); None or "" = the photo's own
+    history: bool = False  # one line per exported photo in the profile (F27)
+    profile_dir: str | None = None  # the profile folder this config was built with; set by the code
 
     # paths to config assets — resolved to ./configs or the packaged configs (see paths.py)
     rules_path: str = Field(default_factory=lambda: config_path("rules.toml"))
@@ -147,6 +165,32 @@ class RunConfig(BaseModel):
             # named "{style}" is never what was meant.
             raise ValueError(f"out_subdir {v!r} must be a relative folder name (no '..', no leading '/' "
                              "or drive, no {fields}, at most 100 characters)")
+        return v
+
+    @field_validator("neutral")
+    @classmethod
+    def _check_neutral(cls, v: list[float] | None) -> list[float] | None:
+        if v is not None and not all(0.0 <= n <= 1.0 for n in v):      # the comparison also refuses NaN
+            raise ValueError(f"neutral {v!r} must be X,Y as shares of the frame, each from 0 to 1")
+        return v
+
+    @field_validator("wb")
+    @classmethod
+    def _check_wb(cls, v: list[float] | None) -> list[float] | None:
+        if v is not None and not all(-100.0 <= n <= 100.0 for n in v):  # NaN and infinity fail it too
+            raise ValueError(f"wb {v!r} must be [temp, tint], each from -100 to 100")
+        return v
+
+    @field_validator("out_aspect")
+    @classmethod
+    def _check_out_aspect(cls, v: str | None) -> str | None:
+        if not v:
+            return None
+        if not re.fullmatch(r"[1-9][0-9]{0,2}:[1-9][0-9]{0,2}", v, re.ASCII):
+            raise ValueError(f"out_aspect {v!r} must be W:H in whole numbers, for example 4:5")
+        a, b = (int(n) for n in v.split(":"))
+        if not 0.2 <= a / b <= 5:
+            raise ValueError(f"out_aspect {v!r} is outside 1:5 to 5:1")
         return v
 
 
@@ -265,7 +309,7 @@ class Adjustment(BaseModel):
     target: str                      # "global" or a concept name
     ops: Settings                    # op name -> delta
     source: str = ""                 # the instruction clause it came from; "" for a direct adjustment
-    scope: Literal["run", "photo"] = "run"   # "run": from the run's --edit; "photo": from `autoedit adjust`
+    scope: Literal["run", "photo", "look"] = "run"   # "run": from the run's --edit; "photo": from `autoedit adjust`; "look": the look's own habit (F27)
     status: Literal["", "applied", "clamped", "blocked", "not_found"] = ""   # filled in per photo
     size: float = Field(default=1.0, ge=0.25, le=4.0)  # F20: scales a place's extent ("a bigger gradient"); 1 = as in instructions.toml
     via: Literal["", "local", "cloud"] = ""   # F20: "" = the word list understood it; else which model translated it
@@ -288,6 +332,20 @@ class RevealReport(BaseModel):
     findings: list[RevealFinding] = []
     more: int = 0                     # findings left out by max_findings
     file: dict[str, dict[str, bool]] = {}
+
+
+class Geometry(BaseModel):
+    """How the finished picture is turned and cut on its way out (F32), in shares of the source photo."""
+
+    angle: float = 0.0       # degrees the levelled line sloped; positive: it fell to the right
+    line: str = ""           # "waterline" or "horizon"; "" = not turned
+    confidence: float = 0.0  # share of the line's points that lie on one straight line
+    aspect: str = ""         # the shape asked for; "" = the photo's own
+    cx: float = 0.5          # middle of the kept frame
+    cy: float = 0.5
+    w: float = 1.0           # width and height of the kept frame
+    h: float = 1.0
+    kept: float = 1.0        # share of the photo's area that is kept
 
 
 class Result(BaseModel):
@@ -323,3 +381,4 @@ class Result(BaseModel):
     timing_ms: float = 0.0
     audit: dict = Field(default_factory=dict)
     stage_timings_ms: dict[str, float] = Field(default_factory=dict)
+    geometry: Geometry | None = None  # straighten and crop, done to the export (F32); None = the photo as it is

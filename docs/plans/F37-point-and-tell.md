@@ -775,6 +775,61 @@ policy. On the synthetic test photo, "make the center pink" puts tint -100 over 
 - **F18's spec** gets one line under its decisions table: the row "Region policies on an
   instructed shape" was reversed for skin and snow by F37, T8, with the date.
 
+### 13. The follow-up: the preview analyses the export's picture (T9)
+
+Decided by the owner on 2026-11-17, after the build: acceptance check 4 had measured that the
+preview's mask and the export's mask of one mark overlap at 0.92 on a 22 megapixel photo.
+
+- **The cause.** `service.preview` bounds the cost of a preview: a photo above 4096 pixels is
+  applied on a 4096 pixel copy. `process_one` then makes its analysis picture from that copy. An
+  export makes it from the original. The two analysis pictures differ by up to 4 levels, which
+  is enough to move a mask where SAM 3 is unsure, and the stats and decisions with it.
+- **The change.** The preview makes the analysis picture from the original, the way the export
+  does, and hands it to the pipeline:
+
+  ```python
+  # web/service.py
+  PREVIEW_LONG_EDGE = 4096     # a preview applies on a copy of at most this size
+
+      full = load_image(image_path, decode=raw_opts_from(cfg))
+      work, proxy = full, None
+      if full.long_edge > PREVIEW_LONG_EDGE:
+          proxy = downscale_long_edge(full, cfg.analysis_long_edge)   # as the export analyses it
+          work = downscale_long_edge(full, PREVIEW_LONG_EDGE)
+      ... pipe.process_one(image_path, image=work, proxy=proxy, ...)
+  ```
+
+  ```python
+  # pipeline.py, process_one(..., proxy: Image | None = None)
+  given_proxy = proxy is not None
+  if proxy is None:
+      proxy = downscale_long_edge(img, cfg.analysis_long_edge)
+  ```
+
+  Nothing else of the analysis changes: segment, resolve, stats, scene and decide read `proxy`
+  as before, and masks are brought to the size of the picture that is edited, as before. No
+  stage is added or moved.
+- **The post-edit stats.** They compare the edited picture, at analysis size, with the masks.
+  Made from a 4096 pixel copy, that picture can be one pixel shorter or longer than the analysis
+  picture made from the original (3 of 36 sensor sizes tried, 10 % of free crops). So when the
+  caller gave the analysis picture, the post-edit picture is brought to its shape:
+
+  ```python
+  post_proxy = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
+  if given_proxy:
+      post_proxy = resize_to(post_proxy, *proxy.rgb.shape[:2])
+  ```
+
+  `imageio.resize_to(img, height, width)` is new: the bilinear resampling of
+  `downscale_long_edge`, to an exact shape, and the input itself when the shape is right already.
+- **What it gives besides.** The mask caches are keyed by the analysis picture. With one picture
+  for both, a Studio export of a photo that has had a preview finds its masks in memory.
+- **What does not change.** A photo of 4096 pixels or less (no copy is made, `proxy` stays
+  None). Every export and every `autoedit run`: byte-identical. `make_variants`, the contact
+  sheets and the reports, which analyse their own small copies on purpose. Only the preview of a
+  photo above 4096 pixels changes, toward what its export will be. This is not a change to
+  default renders, so the blind vote of `AGENT_ROUTING.md` does not apply.
+
 ## Config keys: `[marks]` and `[shapes]` in `configs/instructions.toml`
 
 ```toml
@@ -840,6 +895,11 @@ memory (64). They are limits of the service, beside `MAX_PHOTO_EDIT`.
 | `README.md`, `ARCHITECTURE.md`, `CHANGELOG.md` | the feature, the kinds of target, the three flags, the skin tint limit | T7 |
 | `src/autoedit/pipeline.py` | the guarded split for every instruction layer, named places included | T8 |
 | `docs/plans/F18-shaped-light.md`, `CHANGELOG.md` | one line each: places keep the limits of skin and snow | T8 |
+| `src/autoedit/imageio.py` | `resize_to` | T9 |
+| `src/autoedit/pipeline.py` | `process_one(..., proxy=)`; the post-edit picture takes the given picture's shape | T9 |
+| `src/autoedit/web/service.py` | `PREVIEW_LONG_EDGE`; the preview's analysis picture is made from the original | T9 |
+| `tests/test_pipeline.py`, `tests/test_web_service.py`, `tests/test_imageio_fidelity.py` | tests 26 to 28 | T9 |
+| `ARCHITECTURE.md`, `CHANGELOG.md` | the preview's analysis picture | T9 |
 
 Protected areas (`docs/AGENT_ROUTING.md`): only `pipeline.py` is touched, and its stage order is
 not. This spec is the Planner's part; the Checker reviews T3 without exception.
@@ -861,6 +921,7 @@ One after the other. F21's open tasks change the segmenters, `pipeline.py`, `web
 | T7 | Tweaker (Haiku, low) | The exact old and new strings from the session's brief | `PYTHONPATH=src python3 tests/run_all.py` |
 | Check | Checker (Opus, high) | The diff against this spec and the invariants of `CLAUDE.md`; the definition of done; the privacy check | Findings as `file:line` |
 | T8 | Builder (Sonnet, medium), then the Checker (Opus, high) on its diff | After the Check. Section 12; test 25 | `PYTHONPATH=src python3 -m pytest tests/test_marks.py tests/test_shaped_light.py tests/test_instruction_words.py tests/test_follow_up.py -q` |
+| T9 | Builder (Sonnet, medium), then the Checker (Opus, high) on its diff | After the owner's yes of 2026-11-17. Section 13; tests 26 to 28 | `PYTHONPATH=src python3 -m pytest tests/test_pipeline.py tests/test_web_service.py tests/test_imageio_fidelity.py tests/test_follow_up.py tests/test_marks.py -q` |
 
 Every task ends with `PYTHONPATH=src python3 tests/run_all.py` and
 `PYTHONPATH=src .venv/bin/python tests/run_all.py`. T0 is done and says "build as specified". The
@@ -897,6 +958,9 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 | 21 | `test_cli_adjust_mark` | `--mark 0.3,0.3,0.7,0.7 --edit "brighten this"` returns 0 and brightens the middle only; `--mark 0.3,0.3,0.2,0.7` returns 2; `--mark` without `--edit` returns 2; `--explain` prints the mask line and one line per tool |
 | 24 | `test_typed_colour_on_skin_is_limited` (T3, the golden test for the new limit) | Stub pipeline on the synthetic image, `edit="make the skin pinker"`: the skin region's `tint` in the result is the limit of `concepts.toml` (-6, where it is -100 today), a note reads `policy[skin]: clamped tint`, the status is `clamped`; without an instruction the same photo renders byte-identical with and without the limit |
 | 25 | `test_named_place_holds_guarded_regions` (T8) | Stub pipeline on the synthetic image, `edit="make the center pink"`: `composition` lists `instruction:center` and `instruction:center/guarded`, and inside the skin the tint is the held one; `edit="brighten the center"` gives one layer, and its pixels equal the run with `guard = false`; a run without instructions is byte-identical before and after T8 |
+| 26 | `test_a_given_analysis_picture_is_used` (T9, `tests/test_pipeline.py`) | Stub pipeline with a small analysis size, a noisy synthetic photo larger than the working copy. `process_one(path, image=<working copy>, proxy=<analysis picture made from the original>)`: the scene, the detected concepts, the regions with their coverage and the decided settings equal those of `process_one(path)`; without `proxy` at least one coverage differs (so the test bites); a size whose two analysis pictures differ by one pixel in shape still gives post-edit stats per region |
+| 27 | `test_preview_analyses_what_the_export_analyses` (T9, `tests/test_web_service.py`) | Stub; `service.PREVIEW_LONG_EDGE` lowered for the test, a photo above it: the preview's result and `run_one`'s result agree on scene, concepts, regions (target, coverage, settings) and global settings; a photo at or under the bound gives the same preview as before T9 (`proxy` is not passed) |
+| 28 | `test_resize_to` (T9, `tests/test_imageio_fidelity.py`) | The exact shape asked for; the input itself when the shape is right already; values stay in 0..1; the same pixels as `downscale_long_edge` when the target is the shape that function would give |
 
 `tests/test_lessons.py`:
 
@@ -931,6 +995,9 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 10. After T8: both suites green, default renders byte-identical, "make the top pink" on one real
     photo with snow under the gradient (the snow keeps its colour, the sky takes the pink), and
     the Checker's review of that diff.
+11. After T9: both suites green; exports and `autoedit run` byte-identical to the baseline; on
+    the 22 megapixel panel photo the preview's mask and the export's mask of the mark of check
+    4 overlap at 0.98 or more; the Checker's review of that diff.
 
 ## Known limits
 
@@ -947,7 +1014,8 @@ segmenter that returns given masks by name, with `open_vocabulary = True`.
 - **How purple.** One step is F20's colour step, and the ceiling is `[limits]`. A second "more
   purple" on the same mark adds little.
 - **Geometry.** A mark is tied to the frame. F32 (level, upright, crop) has to move marks with
-  the picture, or apply after them. Its spec must say which.
+  the picture, or apply after them. Its spec must say which. (F32 applies after them: marks are
+  read on the uncut picture, and the preview's mark overlays are turned and cut with it.)
 - **Weights.** The mask cache does not notice new SAM 3 weights (F3's limit).
 - **The test photos are mountain landscapes,** three of them with a person. Portraits, groups
   and rooms were not measured.
@@ -967,6 +1035,11 @@ answered "Yes, F37 first".
 | 3. Where F37 goes in the order: before or after F21's open tasks? They share files, so one after the other. F21's next tasks wait for the measurement on the owner's labelled photos, and F37 waits for nothing | F37 first | F37 is built next. F21's T2 onward start after F37 is closed |
 | 4. F18's named places protect skin and snow too. Until now "make the top pink" reached the skin and snow under the gradient with no region policy | Yes, as a small follow-up | T8, section 12, test 25 |
 | 5. This walk-through is enough until F29: the mask, the tools and amounts, a lesson on each, the change on and off. A picture before and after every single tool stays with F29 | Yes | Nothing to change |
+
+**A sixth decision followed the build,** on 2026-11-17. The build had measured that preview and
+export analyse two different pictures of a photo above 4096 pixels (check 4). Asked "Make the
+preview analyse large photos on the same picture as the export, here?", the owner answered "Yes,
+fix it". That is T9, section 13.
 
 ## Proposed plan entry
 
@@ -1015,6 +1088,26 @@ committed nothing; the owner drives git.
 | 9 | The Checker's review, with the privacy check | Done. No finding that had to be fixed. Three that should be, all fixed: a huge integer in a mark's box answered 500 and now answers 400; the status row in the plan; the API half of test 19 now sends every rule. One regular expression that slowed down on a very long number was replaced. Privacy: no local path, name or address in any changed or new file |
 | 10 | After T8 | Met. Both suites: 754 passed, 0 failed. Default renders are byte-identical, with the stub and with SAM 3 (above). "Make the top pink" on the panel photo with snow under the gradient: the sky moves 7.9 levels toward magenta, the mountain 5.4 and the snow 0.1 (3.2 with `guard = false`); the walk-through reads "snow +0 (blocked); the rest of it -100 (full)". The Checker's review of T8's diff: no finding that had to be fixed. Two on test 25 that should be, both done: the banding gate is off only where it must be, and the test now pins that the rest of the shape gets the change in full. One on the report, also done: the far tail of a glow counted as reaching snow, so a layer now reaches a region only above 0.0001, the alpha below which a layer is skipped at apply. The Checker read these changes again and confirmed them. It rendered six place instructions with the committed code and with T8: those the policies leave alone are identical, and with `guard = false` the pink ones are identical too |
 
+### T9: the preview analyses the export's picture (2026-11-17)
+
+Built at the owner's word ("Yes, fix it"), section 13; one Builder (Sonnet, medium), the Checker
+(Opus, high) on its diff.
+
+- **Check 11, met.** On the 22 megapixel panel photo, the preview's mask and the export's mask of
+  the mark of check 4 overlap at 1.0000 for all five words tried ("guy", "man", "person", "hiker",
+  "backpack"; 0.92 to 1.00 before). Preview and export agree on the regions, their coverage and
+  settings, the scene and the global settings. A single-photo export after a preview spends
+  0.065 s in segmentation (8.7 s in a fresh process) and is byte-identical to the export made in
+  a fresh process. Exports, `autoedit run` and previews of photos of 4096 pixels or less are
+  byte-identical to before (the Checker compared the committed code with T9 on photos of 1200 and
+  5000 pixels). 757 tests on both interpreters.
+- **The Checker's review:** no finding that had to be fixed. Two on test 27 that should be, both
+  done: it now uses a photo whose analysis picture is a real downscale (an option it passed was
+  ignored by the service), and it compares the region settings too; it fails without the fix. Two
+  wordings were made exact: the source stats are the same, the post-edit stats still come from
+  renders of two sizes (a quality warning can differ), and only a single-photo export finds the
+  masks of a preview in memory, not a folder export.
+
 ### Where the build left this spec's wording
 
 Each was decided by the session, and the Checker judged each as a decision.
@@ -1051,7 +1144,7 @@ Each was decided by the session, and the Checker judged each as a decision.
 
 For the owner to decide. None of them blocks the feature.
 
-1. **The preview and the export analyse two different pictures of a photo above 4096 pixels**
+1. **Done in T9 (2026-11-17).** ~~The preview and the export analyse two different pictures of a photo above 4096 pixels~~
    (check 4). Proposal: make the analysis picture from the original before the 4096 pixel working
    copy is made, so both see the same pixels. It moves every preview mask of a large photo a
    little, which is why it was not done here.

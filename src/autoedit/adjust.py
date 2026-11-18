@@ -7,7 +7,7 @@ import math
 import os
 import pathlib
 
-from . import emit, instructions, lessons, paths
+from . import emit, history, instructions, lessons, paths
 from .contract import Adjustment, Result, RunConfig
 from .edit.ops import OP_NAMES
 from .paths import config_paths
@@ -36,6 +36,8 @@ def parse_set(text: str) -> Adjustment:
         raise ValueError(f"--set {text!r}: {value!r} is not a number") from None
     if not math.isfinite(delta):
         raise ValueError(f"--set {text!r}: the value must be a finite number")
+    if op in instructions.WHOLE_PHOTO_OPS and target != instructions.GLOBAL:
+        raise ValueError(f"--set {text!r}: {op} is for the whole photo, use global.{op}")
     return Adjustment(target=target, ops={op: delta}, scope="photo")
 
 
@@ -52,7 +54,8 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
              source: str | None = None, configs_dir: str | None = None,
              reference: str | None = None, recipe_model: str | None = None,
              allow_cloud: bool = False, profile: str | None = None,
-             mark=None, mark_kind: str = "auto", explain: bool = False) -> dict:
+             mark=None, mark_kind: str = "auto", explain: bool = False, lut: str | None = None,
+             neutral=None) -> dict:
     """Render the photo behind `target` (its exported image or its sidecar) again. Stored
     per-photo adjustments are kept unless `reset`; `sets` and `edit` add new ones."""
     if mark is not None and not (edit and edit.strip()):
@@ -68,6 +71,10 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
                          "render the photo again with `autoedit run` first")
     # Consent for the cloud is given per command: what the batch was allowed does not carry over.
     stored = {**stored, "allow_cloud": bool(allow_cloud)}
+    if neutral is not None:     # the pick of this photo (F34): a run setting of its own, replayed from now on
+        stored["neutral"] = None if neutral == "none" else list(neutral)
+        if neutral == "none":   # also the numbers --neutral-from measured once for the whole run
+            stored["wb"] = None
     if stored.get("decider") == "llm" and not allow_cloud:
         raise ValueError("the run used the LLM decider; a re-render calls it again (a thumbnail "
                          "leaves the machine and your key is billed). Pass --allow-cloud to allow it")
@@ -83,7 +90,7 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     source = source or _source_from_manifest(out_dir, old.image)
     if not source or not os.path.isfile(source):
         raise FileNotFoundError(f"source photo for {old.image} not found; pass --source")
-    given = {"reference": reference, "recipe_model": recipe_model}
+    given = {"reference": reference, "recipe_model": recipe_model, "lut": lut}
     for key, name in (old.audit.get("run_inputs") or {}).items():
         if not name:
             continue
@@ -93,7 +100,8 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
         if os.path.basename(given[key]) != name:
             raise ValueError(f"the run used {flag} {name}, not {os.path.basename(given[key])}")
     cfg = RunConfig(**{**config_paths(configs_dir, profile), **stored,
-                       **{k: v for k, v in given.items() if v}})
+                       **{k: v for k, v in given.items() if v},
+                       "history": history.wanted(configs_dir, profile), "profile_dir": profile})
     pipe = Pipeline.build(cfg)
     pipe.use_mask_cache(out_dir)
     kept = [] if reset else [a.model_copy(update={"status": ""})
@@ -122,6 +130,9 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     warnings: list[str] = []
     if old.audit.get("config_digest") and old.audit["config_digest"] != pipe.config_digest:
         warnings.append("the config files differ from the ones the batch used; "
+                        "the re-render may differ from the batch output")
+    if (old.audit.get("lut") or {}).get("digest") != (result.audit.get("lut") or {}).get("digest"):
+        warnings.append("the LUT file differs from the one the batch used; "
                         "the re-render may differ from the batch output")
     result.notes += [f"re-render: {w}" for w in warnings]
     result.notes += [f"instruction {p}" for p in problems]

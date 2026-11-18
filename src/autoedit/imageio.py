@@ -547,6 +547,24 @@ def downscale_long_edge(img: Image, long_edge: int) -> Image:
                  decode_ev=img.decode_ev, decode_info=dict(img.decode_info))
 
 
+def resize_to(img: Image, height: int, width: int) -> Image:
+    """Return `img` at exactly (height, width), resampled as `downscale_long_edge` does it.
+
+    For a second analysis-size picture of one photo that must have the first one's shape."""
+    if img.rgb.shape[:2] == (height, width):
+        return img
+    chans = [
+        np.asarray(
+            PILImage.fromarray(np.ascontiguousarray(img.rgb[..., c]), mode="F")
+            .resize((width, height), PILImage.BILINEAR),
+            dtype=np.float32)
+        for c in range(3)
+    ]
+    rgb = np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
+    return Image(rgb=rgb, source_bits=img.source_bits, path=img.path, exif=img.exif,
+                 decode_ev=img.decode_ev, decode_info=dict(img.decode_info))
+
+
 def resize_long_edge(rgb: np.ndarray, long_edge: int) -> np.ndarray:
     """Downscale a float RGB image so its long edge is `long_edge` (never upscales). Lanczos on
     the float channels: an export wants a clean, sharp reduction; the analysis proxy keeps its

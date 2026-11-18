@@ -72,6 +72,13 @@ max_span_s = 120
 min_similarity = 0.8
 max_ev = 0.5
 max_wb = 4
+# With `consistency_wb` (F34): a frame's colour cast is what its neutral reference still needs after the decided white
+# balance; a group brings every frame to its median cast, by at most max_wb_cast units. A frame whose reference is
+# weaker than wb_min_confidence neither moves nor votes. colour_of: the first of these regions with a mask is the
+# "subject" whose colour `colour_report` measures.
+max_wb_cast = 8
+wb_min_confidence = 0.3
+colour_of = ["subject", "person"]
 
 # ─────────────────────────── skin-safe guard ───────────────────────────
 # Global finishing ops that must NOT hit skin/face at full strength (pros reject over-clarified,
@@ -363,6 +370,58 @@ clarity    = "8"
 contrast   = "5"
 shadows    = "6"
 
+# ─────────────────────────── geometry ───────────────────────────
+# Straighten and crop (F32, opt-in: `straighten` and `out_aspect` in the run settings).
+# Angles in degrees; spans and inliers are shares; tolerance is a share of the long side of the masks.
+[geometry]
+max_angle     = 5.0     # a line sloping more than this is left alone: it is meant, or it is no horizon
+min_angle     = 0.3     # a line sloping less than this counts as level and is not resampled
+tolerance     = 0.004   # how far a point may lie off the line and still be on it
+water_span    = 0.5     # the upper edge of water must lie on one line across this share of the width
+water_inliers = 0.8     # ... and this share of the edge must be on that line
+sky_span      = 0.6     # the same for the lower edge of the sky
+sky_inliers   = 0.9
+subject       = ["subject", "person"]   # the masks a crop is placed on
+
+# ─────────────────────────── neutral pick ───────────────────────────
+# Neutral pick (F34, opt-in: `neutral` and `wb` in the run settings). The spot the user names is measured on the
+# analysis picture; the white balance that makes it grey replaces the white balance of the rules. A spot the
+# white balance cannot make neutral (blown, too dark, beyond 100) is not used. Levels are shares of white.
+[neutral]
+patch     = 0.02    # the spot is a square this share of the picture's long edge wide (31 px of 1536)
+min_level = 0.08    # a spot whose darkest channel mean is under this is too dark to measure
+max_level = 0.98    # a spot whose 99th percentile of the brightest channel is at or over this is blown out
+
+# ─────────────────────────── clean backdrop ───────────────────────────
+# Clean backdrop (F34, opt-in: `backdrop` in the run settings). On the finished picture, the backdrop is what is
+# light, near neutral and reaches the frame edge through such pixels; a smooth surface is fitted to it and the
+# picture is multiplied by white / surface there. No model is asked and nothing is cut out.
+[backdrop]
+white        = 0.96     # the white it is taken to: 0.96 is 245 of 255, under the 0.98 the checks count as clipped; 1.0 is pure white and the review check then reports the backdrop as clipped
+min_level    = 0.55     # a pixel under this luma is not backdrop
+max_chroma   = 0.12     # a pixel whose largest channel exceeds its smallest by more is not backdrop
+min_coverage = 0.10     # under this share of the frame nothing is done
+degree       = 4        # the surface is a polynomial of this degree in x and y (a slope, a vignette, two lights)
+max_gain     = 1.6      # no pixel is multiplied by more than this or by less than its inverse
+feather      = 0.004    # the soft edge of the backdrop, as a share of the long edge
+keep         = ["subject", "person", "skin"]   # what a model found here is never backdrop (the stub's masks are not used)
+
+# ─────────────────────────── night sky ───────────────────────────
+# Night sky tools (F31, opt-in: `night_sky` in the run settings; the astro pack sets it). A photo is
+# a night frame when its median brightness is at most `max_median` and its ISO at least `min_iso`
+# (no EXIF: ISO 0); it takes the scene "night", the [opt_in.night_sky.night.*] rules. The sky
+# gradient: per channel a polynomial of `degree` fitted to the medians of square tiles (`tile` of the
+# long edge, at least `min_share` sky and off the stars); tiles more than `clip` robust sigmas off
+# the fit are dropped. The sky is taken down to the `level` percentile of that background over it.
+[night_sky]
+max_median = 0.25
+min_iso    = 1600
+tile       = 0.03125
+min_share  = 0.5
+degree     = 2
+clip       = 2.5
+level      = 5
+
 # ─────────────────────────── highlight hold ───────────────────────────
 # Highlight hold (F6, opt-in: `highlight_hold` in the run settings). Where the SOURCE is near
 # white in all three channels, the edit may not darken the pixel: fully from `full` up, not at all
@@ -402,3 +461,22 @@ denoise = "if(pro_stats_valid > 0, 100 * clamp((iso - 800) / 5600, 0, 1) * clamp
 
 [opt_in.denoise.other.global]
 denoise = "if(pro_stats_valid > 0, 100 * clamp((iso - 800) / 5600, 0, 1) * clamp(0.4 + 0.75 * planned_exposure, 0.4, 1), 0)"
+
+# Night sky (F31). The scene "night" exists only here. Its global block keeps the frame dark: no
+# lift but toward a median of 0.10, a small black-pinned lift, no contrast, curve, dehaze, clarity,
+# colour or white balance. The four night ops are corrections, not edit strength: divided by the
+# intensity, which the look multiplies back. Noise reduction keeps F7's rule and needs `denoise` on.
+[opt_in.night_sky.night.global]
+hot_pixels    = "100 / max(intensity, 0.01)"
+sky_gradient  = "100 / max(intensity, 0.01)"
+exposure      = "if(pro_stats_valid > 0, clamp(0.6 * 2.2 * log2(0.10 / max(lum_p50, 0.005)), 0, min(1.5, max(0, headroom_ev - 0.15))), 0)"
+shadows_ev    = "0.3"
+denoise       = "if(pro_stats_valid > 0, 100 * clamp((iso - 800) / 5600, 0, 1) * clamp(0.4 + 0.75 * planned_exposure, 0.4, 1), 0)"
+denoise_stars = "100 / max(intensity, 0.01)"
+sharpen       = "7 * (1 - min(iso, 6400) / 12800)"
+sharpen_stars = "100 / max(intensity, 0.01)"
+
+# The sky of a night frame: faint stars and the Milky Way are lifted with the black-pinned shadow
+# lift, which stops at mid grey: a star's core (0.5 and up) is not touched, black stays black.
+[opt_in.night_sky.night.sky]
+shadows_ev = "0.4"

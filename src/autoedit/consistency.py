@@ -12,6 +12,7 @@ clustering is a future upgrade; the data structure already carries a group id pe
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -79,7 +80,8 @@ class Bias:
 
 
 # Fallbacks when rules.toml has no [consistency] block; the tuning values live there.
-BURST_DEFAULTS = {"max_gap_s": 30.0, "max_span_s": 120.0, "min_similarity": 0.8, "max_ev": 0.5, "max_wb": 4.0}
+BURST_DEFAULTS = {"max_gap_s": 30.0, "max_span_s": 120.0, "min_similarity": 0.8, "max_ev": 0.5, "max_wb": 4.0,
+                  "max_wb_cast": 8.0, "wb_min_confidence": 0.3, "colour_of": ["subject", "person"]}
 
 
 def capture_time(path: str) -> float | None:
@@ -93,15 +95,8 @@ def capture_time(path: str) -> float | None:
         return None
 
 
-def thumb_signature(path: str) -> np.ndarray | None:
-    """What a frame looks like, whatever its exposure: a small grey thumbnail (24 by 16, or 16 by
-    24 for an upright frame) from which every row's own mean is removed, scaled to unit variance.
-
-    The row means go because nearly every outdoor photo is bright sky over darker ground: with
-    them in, different pictures shot seconds apart correlated above 0.9 and were taken for one
-    burst (seen on a real shoot: a hut, then a meadow). Without them the same pair is at 0.2 to
-    0.6 and a true repeat of one framing stays above 0.9. An upright and a level frame get
-    thumbnails of different shape and never match.
+def thumb_grey(path: str) -> np.ndarray | None:
+    """The 24 by 16 (or 16 by 24) grey thumbnail of a frame, 0 to 255, or None.
 
     Made the cheap way, because a shoot can need hundreds: a JPEG is decoded at reduced size, a
     RAW file gives its embedded preview, and only a RAW file without one is developed (at
@@ -123,12 +118,29 @@ def thumb_signature(path: str) -> np.ndarray | None:
         g = np.asarray(small.resize(size, PILImage.BILINEAR), dtype=np.float32)
     except Exception:
         return None
+    return g
+
+
+def signature(g: np.ndarray) -> np.ndarray:
+    """A grey thumbnail with every row's own mean removed, scaled to unit variance (why the row
+    means go: see `thumb_signature`)."""
     g = g - g.mean(axis=1, keepdims=True)
     return g / (g.std() + 1e-6)
 
 
+def thumb_signature(path: str) -> np.ndarray | None:
+    """What a frame looks like, whatever its exposure: `signature(thumb_grey(path))`.
+
+    The row means go because nearly every outdoor photo is bright sky over darker ground: with
+    them in, different pictures shot seconds apart correlated above 0.9 and were taken for one
+    burst (seen on a real shoot: a hut, then a meadow). Without them the same pair is at 0.2 to
+    0.6 and a true repeat of one framing stays above 0.9."""
+    g = thumb_grey(path)
+    return None if g is None else signature(g)
+
+
 def find_bursts(paths: list[str], max_gap_s: float, min_similarity: float,
-                max_span_s: float | None = None) -> list[list[str]]:
+                max_span_s: float | None = None, alike=None) -> list[list[str]]:
     """Runs of consecutive shots (by capture time) that are close in time and look alike. A shot
     more than `max_span_s` after the run's first shot starts a new run (without it a slow chain
     of near frames would flatten a real change of light). Only runs of two or more shots are
@@ -136,7 +148,10 @@ def find_bursts(paths: list[str], max_gap_s: float, min_similarity: float,
 
     A RAW file and the JPEG the camera wrote with it are ONE shot (same capture second, one of
     each kind): by themselves they are not a burst. On a shoot kept as RAW plus JPEG, counting
-    them as two frames made nearly every photo a burst photo (measured: 758 of 800)."""
+    them as two frames made nearly every photo a burst photo (measured: 758 of 800).
+
+    `alike(file_a, file_b)`, when given, is a second score tried for a pair whose thumbnails fall
+    short (merge uses it to compare frames of a bracket at one exposure)."""
     timed = sorted(((t, p) for p in paths if (t := capture_time(p)) is not None))
     shots: list[tuple[float, list[str]]] = []
     for t, p in timed:
@@ -150,14 +165,20 @@ def find_bursts(paths: list[str], max_gap_s: float, min_similarity: float,
     near = [i for i in range(len(shots))
             if (i and shots[i][0] - shots[i - 1][0] <= max_gap_s)
             or (i + 1 < len(shots) and shots[i + 1][0] - shots[i][0] <= max_gap_s)]
-    sigs = {i: thumb_signature(sorted(shots[i][1], key=is_raw)[0]) for i in near}
+    seen = {i: sorted(shots[i][1], key=is_raw)[0] for i in near}     # the file a shot is judged by
+    sigs = {i: thumb_signature(p) for i, p in seen.items()}
+
+    def score(i: int, j: int) -> float:
+        s = float((sigs[i] * sigs[j]).mean())
+        return s if alike is None or s >= min_similarity else max(s, alike(seen[j], seen[i]))
+
     bursts, cur = [], []
     for i, (t, _files) in enumerate(shots):
         if cur and sigs.get(i) is not None and sigs.get(cur[-1]) is not None \
                 and t - shots[cur[-1]][0] <= max_gap_s \
                 and (max_span_s is None or t - shots[cur[0]][0] <= max_span_s) \
                 and sigs[i].shape == sigs[cur[-1]].shape \
-                and float((sigs[i] * sigs[cur[-1]]).mean()) >= min_similarity:
+                and score(i, cur[-1]) >= min_similarity:
             cur.append(i)
         else:
             if len(cur) > 1:
@@ -193,58 +214,106 @@ def _brightness_plan(images: list[str]) -> dict[str, Bias]:
     return {p: Bias(group=gid, exposure=exposure_bias(lums[p], target)) for p, (gid, target) in groups.items()}
 
 
-def _bursts_plan(images: list[str], pipeline, thr: dict, progress=None) -> dict[str, Bias]:
-    # The plan decides with the rules only: the LLM decider would be called for every burst frame a
-    # second time (the real run calls it again) and the plan would use up the call budget.
+def _with_rules(pipeline, fn):
+    # The plan decides with the rules only: the LLM decider would be called for every photo a second
+    # time (the real run calls it again) and the plan would use up the call budget.
     decider, pipeline.decider = pipeline.decider, RulesDecider()
     try:
-        return _burst_plan(images, pipeline, thr, progress)
+        return fn()
     finally:
         pipeline.decider = decider
 
 
-def _burst_plan(images: list[str], pipeline, thr: dict, progress=None) -> dict[str, Bias]:
+def _decided(pipeline, path: str) -> dict | None:
+    """What the rules decided for one photo (one `process_one`, no pixels), or None when it cannot be measured."""
+    try:
+        _rgb, r = pipeline.process_one(path, do_apply=False)
+        gs, st = r.global_settings, r.global_stats
+        return {"fg_p50": st.fg_p50, "headroom_ev": st.headroom_ev,
+                "exposure": gs.get("exposure", 0.0), "shadows_ev": gs.get("shadows_ev", 0.0),
+                "temp": gs.get("temp", 0.0), "tint": gs.get("tint", 0.0),
+                "wb_temp": st.wb_temp_correction, "wb_tint": st.wb_tint_correction, "wb_conf": st.wb_confidence}
+    except Exception:
+        return None
+
+
+def cast_biases(decided: list[dict], max_wb: float, min_confidence: float) -> list[tuple[float, float]]:
+    """Per frame of one group: the (temp, tint) bias that brings its colour cast to the group's median. Frames whose
+    reference is weaker than `min_confidence` are not moved and do not vote; fewer than two voters move nothing."""
+    left = [(d["wb_temp"] - d["temp"], d["wb_tint"] - d["tint"]) if d["wb_conf"] >= min_confidence else None
+            for d in decided]
+    votes = [v for v in left if v is not None]
+    if len(votes) < 2:
+        return [(0.0, 0.0)] * len(decided)
+    t_mid, n_mid = _median([v[0] for v in votes]), _median([v[1] for v in votes])
+    return [(0.0, 0.0) if v is None else
+            (max(-max_wb, min(max_wb, v[0] - t_mid)), max(-max_wb, min(max_wb, v[1] - n_mid))) for v in left]
+
+
+def _cast_plan(out: dict[str, Bias], pipeline, thr: dict, progress=None) -> dict[str, Bias]:
+    """Mode brightness with `consistency_wb`: each group (RAW files and the others apart) gets one white balance."""
+    parts: dict[tuple[str, bool], list[str]] = {}
+    for p, b in out.items():
+        if b.group:
+            parts.setdefault((b.group, is_raw(p)), []).append(p)
+    parts = {k: v for k, v in parts.items() if len(v) >= 2}
+    if progress and parts:
+        progress(f"white balance: deciding {sum(len(v) for v in parts.values())} photos once before the first render")
+    for paths in parts.values():
+        got = [(p, d) for p in paths if (d := _decided(pipeline, p)) is not None]
+        for (p, _d), (temp, tint) in zip(got, cast_biases([d for _p, d in got], thr["max_wb_cast"],
+                                                          thr["wb_min_confidence"])):
+            out[p].temp, out[p].tint = temp, tint
+    return out
+
+
+def _bursts_plan(images: list[str], pipeline, thr: dict, progress=None, by_cast: bool = False) -> dict[str, Bias]:
+    return _with_rules(pipeline, lambda: _burst_plan(images, pipeline, thr, progress, by_cast))
+
+
+def _burst_plan(images: list[str], pipeline, thr: dict, progress=None, by_cast: bool = False) -> dict[str, Bias]:
     out: dict[str, Bias] = {}
     n = 0
     bursts = find_bursts(images, thr["max_gap_s"], thr["min_similarity"], thr["max_span_s"])
     total, done = sum(len(b) for b in bursts), 0
     if progress:
         progress(f"{len(bursts)} bursts with {total} photos; deciding each of those photos once")
+    cast = (thr["max_wb_cast"], thr["wb_min_confidence"]) if by_cast else None
     for burst in bursts:
         paths, decided = [], []
         for p in burst:
             done += 1
             if progress and done % 25 == 0:
                 progress(f"decided {done} of {total}")
-            try:
-                _rgb, r = pipeline.process_one(p, do_apply=False)
-                gs, st = r.global_settings, r.global_stats
-                decided.append({"fg_p50": st.fg_p50, "headroom_ev": st.headroom_ev,
-                                "exposure": gs.get("exposure", 0.0), "shadows_ev": gs.get("shadows_ev", 0.0),
-                                "temp": gs.get("temp", 0.0), "tint": gs.get("tint", 0.0)})
+            d = _decided(pipeline, p)
+            if d is not None:       # a frame that cannot be measured is left out of its burst
+                decided.append(d)
                 paths.append(p)
-            except Exception:
-                continue    # a frame that cannot be measured is left out of its burst
         if len(paths) < 2:
             continue
         n += 1
-        for p, (ev, temp, tint) in zip(paths, kind_biases(paths, decided, thr["max_ev"], thr["max_wb"])):
+        for p, (ev, temp, tint) in zip(paths, kind_biases(paths, decided, thr["max_ev"], thr["max_wb"], cast)):
             out[p] = Bias(group=f"b{n}", exposure=ev, temp=temp, tint=tint)
     return out
 
 
-def kind_biases(paths: list[str], decided: list[dict], max_ev: float,
-                max_wb: float) -> list[tuple[float, float, float]]:
+def kind_biases(paths: list[str], decided: list[dict], max_ev: float, max_wb: float,
+                cast: tuple[float, float] | None = None) -> list[tuple[float, float, float]]:
     """`burst_biases` for the RAW files of a burst among themselves and for the other files among
     themselves. A RAW decode starts about a stop and a half below the camera's JPEG of the same
     shot, so one median for both would spend the whole nudge on that gap (measured: it pulled
     JPEGs down and RAW files up by the full 0.5 EV) instead of on the drift inside the burst. A
-    kind with a single file in the burst is not moved."""
+    kind with a single file in the burst is not moved. With `cast` (bound, confidence) the temp and
+    tint come from `cast_biases` instead; the exposure stays that of `burst_biases`."""
     out = [(0.0, 0.0, 0.0)] * len(paths)
     for raw in (True, False):
         idx = [k for k, p in enumerate(paths) if is_raw(p) == raw]
         if len(idx) >= 2:
-            for k, b in zip(idx, burst_biases([decided[k] for k in idx], max_ev, max_wb)):
+            part = [decided[k] for k in idx]
+            got = burst_biases(part, max_ev, max_wb)
+            if cast is not None:
+                got = [(ev, t, n) for (ev, _t, _n), (t, n) in zip(got, cast_biases(part, *cast))]
+            for k, b in zip(idx, got):
                 out[k] = b
     return out
 
@@ -258,8 +327,77 @@ def plan(images: list[str], cfg, pipeline, thr: dict | None = None, progress=Non
     photo once before the first render, which takes minutes on a large shoot."""
     if len(images) < 2:
         return {}
+    thr = {**BURST_DEFAULTS, **((getattr(pipeline, "rules", None) or {}).get("consistency", {}) if thr is None else thr)}
+    # A pick or a given white balance sets it itself, so the group has nothing to even out.
+    by_cast = bool(getattr(cfg, "consistency_wb", False)) and cfg.neutral is None and cfg.wb is None
+    words = thr.get("colour_of")
+    if not (isinstance(words, list) and all(isinstance(w, str) and w for w in words)):
+        raise ValueError(f"rules.toml [consistency] colour_of must be a list of words (got {words!r})")
     if cfg.consistency == "bursts":
-        if thr is None:
-            thr = (getattr(pipeline, "rules", None) or {}).get("consistency", {})
-        return _bursts_plan(images, pipeline, {**BURST_DEFAULTS, **thr}, progress)
-    return _brightness_plan(images)
+        return _bursts_plan(images, pipeline, thr, progress, by_cast)
+    out = _brightness_plan(images)
+    if by_cast:
+        _with_rules(pipeline, lambda: _cast_plan(out, pipeline, thr, progress))
+    return out
+
+
+def subject_colour(rgb: np.ndarray, union: dict, names) -> dict | None:
+    """The mean OKLab colour of the first of `names` with a mask of the picture's shape, or None."""
+    from .edit.oklab import linear_to_oklab
+    from .imageio import srgb_to_linear
+    for name in names:
+        m = union.get(name)
+        if m is not None and m.shape == rgb.shape[:2] and m.any():
+            lab = linear_to_oklab(srgb_to_linear(rgb[m > 0.5]).astype(np.float64))
+            return {"concept": name, "lab": [round(float(v), 5) for v in np.asarray(lab).reshape(-1, 3).mean(axis=0)]}
+    return None
+
+
+DELTA_E = ("OKLab distance times 100 from the group's median colour; about 2 is the smallest difference seen at a "
+           "glance")
+
+
+def colour_report(sidecars: list[str], min_confidence: float) -> dict:
+    """Per group of photos, how far the subject colour (and the white balance left to do) spreads."""
+    groups: dict[str, list[dict]] = {}
+    for path in sidecars:
+        try:
+            with open(path) as fh:
+                s = json.load(fh)
+            name = s["image"]
+            key = (s.get("batch_group") or "all") + (" raw" if is_raw(name) else "")
+            pe = s.get("post_edit_stats") or {}
+            groups.setdefault(key, []).append({
+                "name": name, "lab": ((s.get("audit") or {}).get("subject_colour") or {}).get("lab"),
+                "temp": pe.get("wb_temp_correction"), "tint": pe.get("wb_tint_correction"),
+                "conf": pe.get("wb_confidence") or 0.0})
+        except Exception:
+            continue
+    out: dict[str, dict] = {}
+    for key, fr in groups.items():
+        g: dict = {}
+        lab = [f for f in fr if f["lab"]]
+        if len(lab) >= 2:
+            arr = np.array([f["lab"] for f in lab], dtype=np.float64)
+            d = 100.0 * np.linalg.norm(arr - np.array([_median(list(arr[:, c])) for c in range(3)]), axis=1)
+            g.update(photos=len(lab), delta_e_mean=round(float(d.mean()), 2), delta_e_max=round(float(d.max()), 2),
+                     furthest=lab[int(d.argmax())]["name"])
+        sure = [f for f in fr if f["conf"] >= min_confidence and f["temp"] is not None]
+        if len(sure) >= 2:
+            g["wb_spread"] = [round(max(f[k] for f in sure) - min(f[k] for f in sure), 2) for k in ("temp", "tint")]
+        if g:
+            out[key] = g
+    return {"delta_e": DELTA_E, "groups": out}
+
+
+def colour_lines(report: dict) -> list[str]:
+    lines = []
+    for key, g in report["groups"].items():
+        parts = []
+        if "photos" in g:
+            parts.append(f"{g['photos']} photos, subject colour differs by {g['delta_e_mean']:.1f} on average and "
+                         f"{g['delta_e_max']:.1f} at most ({g['furthest']})")
+        if "wb_spread" in g:
+            parts.append(f"white balance spread temp {g['wb_spread'][0]:.1f}, tint {g['wb_spread'][1]:.1f}")
+        lines.append(f"  group {key}: " + "; ".join(parts))
+    return lines

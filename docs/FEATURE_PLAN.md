@@ -45,21 +45,22 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F20 | Free-text instructions (more words, a local model) | M | done |
 | F21 | Reveal check: what a photo gives away | L | building: T1 done and not wired; next is the measurement on the owner's photos, then T2 onward |
 | F22 | Hide on request: cover, mosaic, blur | M | planned; needs the owner's yes on the content rule |
-| F23 | Grain | M | planned |
-| F24 | Black and white, and film looks | M | planned |
-| F25 | LUT files | S | planned |
-| F26 | Surprise me | S | planned |
-| F27 | Style from your edits | M | planned (measure first) |
-| F28 | Look files: export, import, preview card | M | planned |
-| F29 | Teaching mode | M | planned |
-| F30 | Genre packs | M | planned |
-| F31 | Night sky tools | M | planned; needs night-sky photos |
-| F32 | Geometry: level, upright, crop | L | planned; needs the owner's yes on cropping |
-| F33 | Merge frames: brackets, stacks, focus series | L | planned |
-| F34 | Exact colour and clean backgrounds | M | planned |
-| F35 | Pick the keepers | M | planned |
+| F23 | Grain | M | done, off by default (`--grain N`, a look's `grain`, "add grain"); the owner looks at the crops in `out-features/F23/` |
+| F24 | Black and white, and film looks | M | done, off by default (`--look bw_classic`, `bw_red_filter`, `bw_soft`, `film_warm`, `film_cool`, `film_faded`, `cross_process`, `instant`); the owner looks at the sheets in `out-features/F24/` |
+| F25 | LUT files | S | done, off by default (`--lut FILE.cube`, `--lut-amount N`; `autoedit looks lut NAME -o FILE.cube`); the owner tries a LUT of their own |
+| F26 | Surprise me | S | done (`--look surprise --seed N`, `"surprise": true` on `POST /variants`, a Studio button) |
+| F27 | Style from your edits | M | done, off by default (`history = true` under `[run]`, `autoedit style suggest`); the blind check and the Studio card are open, and no real history exists yet |
+| F28 | Look files: export, import, preview card | M | done (`autoedit looks export`, `import`, `card`; CLI only); which sample photos a card shows by default waits for the owner |
+| F29 | Teaching mode | M | done as engine and API (`steps` and `try` on `POST /preview`); no page until the test UI; "your style" waits for a real history (F27) |
+| F30 | Genre packs | M | done for the mechanism and two packs (`--genre`, `autoedit genres list`, own packs in the profile); both packs untested by the spec's bar (one photo pulled back each); every other kind waits for photos; spec [F30](plans/F30-genre-packs.md) |
+| F31 | Night sky tools | M | done, off by default (`--night-sky`, `--genre astro`, untested: 6 night photos, the bar is 20); the `astro` look has no `preserve_exposure` (an open owner question); the owner's 20 night photos and blind sheet are open; spec [F31](plans/F31-night-sky.md) |
+| F32 | Geometry: straighten and crop | L | done, off by default (`--straighten`, `--aspect W:H`, `aspect` in an export preset); upright is not built: it needs photos of buildings; the owner's yes on cropping is open; spec [F32](plans/F32-geometry.md) |
+| F33 | Merge frames: brackets, stacks, focus series, trails | L | done as a tool (`autoedit merge FOLDER [-o DIR]`, modes `average`, `brackets`, `focus`, `trails`); tested on made-up frames and on brackets made from real RAW files; a real bracket, night series and focus series are open, the corpora hold none; spec [F33](plans/F33-merge-frames.md) |
+| F34 | Exact colour and clean backgrounds | M | done, off by default (`--neutral X,Y`, `--neutral-from FILE`, `--backdrop`, `--consistency-wb`, `--colour-report`); checked on made-up pictures only, a real set is open; spec [F34](plans/F34-exact-colour.md) |
+| F35 | Pick the keepers | M | done as a tool (`autoedit pick FOLDER [-o DIR] [--copy]`); the check against the owner's own keepers on a shoot of 30 bursts is open |
 | F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs was built, measured and dropped; the worker default waits for the owner |
-| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | done (built before F21's open tasks); six things found on the way wait for the owner, in the spec's "Result" |
+| F37 | Point and tell: circle a thing, say what to change, see how it was done | L | done (built before F21's open tasks; T9, the preview of a large photo, added on 2026-11-17); five things found on the way wait for the owner, in the spec's "Result" |
+| F38 | AutoEdit Lab: a minimal test UI | M | done (`/lab`, `web/static/lab.html`): a second page beside Studio for the features of the unattended run; Studio and the API unchanged; spec [F38](plans/F38-test-ui.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -720,13 +721,25 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Gated SAM 3 flow, or a second segmenter? | The candidate list in `ARCHITECTURE.md`, "Adding a segmenter" (licences unverified) | F14 follow-up |
 | What should the website do first: showcase and download, or online editing? | none yet | After this plan |
 | May AutoEdit hide a region when the user asks (F22)? | The proposed wording of the content rule is in F22 | F22 is built; the "Never" line above is reworded |
-| May AutoEdit straighten and crop (F32)? | F32 | F32 is built |
+| May AutoEdit straighten and crop (F32)? Both are built switched off. | `out-features/F32/` | `straighten` in `defaults.toml`; `aspect` in an export preset |
+| Upright needs 20 or more photos of buildings or rooms with leaning walls (F32). Do you have some? | none | a task of its own |
 | Which kinds of photography first? | [GENRES.md](GENRES.md), "Order". A pack can only be tested on photos of its kind, and the repo has mountain landscapes only | The owner names the kinds and supplies at least 20 photos of each |
 | Sample photos for look cards (F28): own photos, or a licence-free set from the web? | F28 | A download needs a yes |
 | Keep a local history of your own edits, on by default (F27)? | F27: no pixels, no file names, never leaves the computer | `history = true` under `[run]` |
 | Do background blur, skin smoothing and overlays stay out? | "Ideas, not planned yet", last item. Proposed: they stay out | none |
 | Render workers on by default? | F36, T5: twice the batch speed, and 5.3 GB per worker. Proposed: no, `--workers 0` per run | `workers = 0` under `[performance]` in `defaults.toml` |
-| Analyse the preview of a large photo on the same picture as the export? | [F37 result](plans/F37-point-and-tell.md), check 4: above 4096 pixels the preview analyses a smaller copy, and the two masks of one mark overlapped at 0.92 on a 22 megapixel photo. It moves every preview mask of a large photo a little | The analysis picture is made from the original in `web/service.py::preview` |
+| Read the lesson texts; which sliders should "try first" have, and how wide? (F29) | `configs/lessons.toml` | `[try.sliders]` |
+| Pick the keepers: are the weights right, one pick per burst or more, tag picks for Lightroom? (F35) | `out-features/F35/swiss/contact-sheet.html` | `configs/pick.toml`; a later `--keep N` and XMP task |
+| Night sky (F31): 20 night photos for the blind sheet and the pack's gate? May the `astro` look set `preserve_exposure` (it would opt night frames out of the darkness check; built without it)? Should the tone report's audit measure a night frame without its sky? | `out-features/F31/` | `tested` in `genres.toml`; `preserve_exposure` in `[astro]` of `looks.toml` |
+| Exact colour: is 245 the right white for a backdrop, or pure white (which the review check flags)? The backdrop is found in pixels, not by SAM 3, and a neutral pick the white balance cannot meet is refused, not half applied: right? A real set of 20 frames is open (F34) | `out-features/F34/sheet.jpg` | `[backdrop] white` in `rules.toml` |
+| Merge frames: a merged bracket is as bright as its darkest frame and ends about 0.7 EV under the middle frame after a run. Keep it linear, or add a shoulder at the middle frame's brightness? Do you have a tripod bracket, a night series and a focus series to try? (F33) | `out-features/F33/brackets/` | a `[brackets]` key in `merge.toml` |
+| Genre packs: mark `landscape` and `alpine` tested? Each pulls one photo back (stub 0063_snow, SAM 3 0001_dark) that a run without a genre does not; fewer in all on the stub (8 against 11). Should `alpine` keep the highlight hold? Which kinds next? (F30) | `out-features/F30/tone-*.json` | `tested` in `configs/genres.toml` |
+| Should what a look shapes be held inside the op bounds (today a profile look can push `curve` to 136 of 100)? (F28, unattended run) | [F28 spec](plans/F28-look-files.md), known limits | A clamp at the end of `looks.shape`, with a byte check |
+| Are 12 photos, 3 days and 70 % the right bar for a style suggestion, and is a day the right "run"? (F27, unattended run) | [F27 spec](plans/F27-style-from-edits.md), "Measured" | `[suggest]` in `style.toml` |
+| Should a look name that no file defines be refused (today it renders as the neutral look and the sidecar names it)? Should `--look surprise` render every photo six times? (F26, unattended run) | [F26 spec](plans/F26-surprise-me.md), facts 2 and 6 | A check of `cfg.look` in `Pipeline.build`; a feature of its own |
+| A LUT goes past the oversaturation gate, and a black and white look with a toning LUT gives a toned black and white. Right? (F25, unattended run) | [F25 spec](plans/F25-lut-files.md), Design 3 and the decisions table | The rows of its decisions table |
+| Which of F24's eight looks stay, and are the casts of `film_warm`, `film_cool` and `cross_process` strong enough? A stronger red filter? Should the prompt words "black and white" use the new op? (F24, unattended run) | `out-features/F24/bw_*.jpg`, `film_*.jpg`; [F24 result](plans/F24-bw-film-looks.md) | The values in `looks.toml`; `bw = 100` in `intents.toml` |
+| Is grain 25 the right light grain, and should a packaged look carry grain? (F23, unattended run) | `out-features/F23/crops.jpg`; [F23 result](plans/F23-grain.md) | `_GRAIN_SIGMA` in `edit/ops.py`; `grain = N` in a look of `looks.toml` |
 | Fill the holes inside a marked thing? | [F37 result](plans/F37-point-and-tell.md), "Found on the way": SAM 3's mask has holes on dark, even surfaces. Filling them changes what a mark edits against what SAM 3 returned | A small task of its own |
 
 Things only the owner can do, left open by the unattended run:

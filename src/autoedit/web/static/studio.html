@@ -451,6 +451,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
       <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>Mark</button>
     <button class="tbtn" id="variantsBtn" aria-label="Generate variants" title="Render several recipes for this photo, scored + ranked; apply the best" style="display:none">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Variants</button>
+    <button class="tbtn" id="surpriseBtn" aria-label="Surprise me" title="Six looks from your library on this photo, side by side; pick one" style="display:none">
+      <svg viewBox="0 0 24 24"><path d="M12 3l2.2 5.6 5.8.7-4.4 3.9 1.4 5.8-5-3-5 3 1.4-5.8L4 9.3l5.8-.7z"/></svg>Surprise me</button>
     <button class="tbtn" id="reportBtn" aria-label="What it did" title="Everything this edit did to the photo, step by step" style="display:none">
       <svg viewBox="0 0 24 24"><path d="M9 5h11M9 12h11M9 19h11"/><circle cx="4.5" cy="5" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="19" r="1"/></svg>What it did</button>
     <div class="tdiv"></div>
@@ -537,7 +539,8 @@ svg{display:block;width:16px;height:16px;stroke:currentColor;stroke-width:1.6;fi
         </div></div>
       <div id="previewError" role="alert" class="tip" style="padding:0 13px;color:var(--danger)"></div>
       <div class="dsec"><div class="dsec-h"><h4>Style</h4></div>
-        <div class="dsec-b"><div class="styles" id="styles"></div></div></div>
+        <div class="dsec-b"><div class="styles" id="styles"></div>
+        <div class="tip" id="lookNote" style="margin-top:6px"></div></div></div>
       <div class="dsec"><div class="dsec-h"><h4>Intensity</h4></div>
         <div class="dsec-b"><div class="iseg" id="intensity">
           <button data-i="0.5">Subtle</button><button data-i="0.8" class="on">Balanced</button><button data-i="1.0">Strong</button>
@@ -782,7 +785,7 @@ const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=
 /* like el, but the text goes in through textContent: for anything that came from the server or the user */
 const T = (t,c,s)=>{const e=document.createElement(t);if(c)e.className=c;if(s!=null)e.textContent=s;return e};
 
-const STATE={served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural',intensity:0.8,preview:null,loading:false,
+const STATE={look:'',served:false,dir:null,mode:'folder',files:[],sel:-1,style:'natural',intensity:0.8,preview:null,loading:false,
   previewDirty:false, previewToken:0,
   run:new Set(),        /* explicit stems chosen for the batch; empty = run none */
   styleConcepts:{},customConcepts:[],disabledConcepts:new Set(),
@@ -808,7 +811,7 @@ const thumbURL=(p,px=360,rev='')=>'/api/thumb?px='+px+'&path='+encodeURIComponen
 const joinPath=(d,f)=>d?(d.replace(/\/+$/,'')+'/'+f):f;
 const extOf=n=>{const i=n.lastIndexOf('.');return i<0?'':n.slice(i+1).toUpperCase();};
 const editOptions=()=>({
-  style:STATE.style,intensity:STATE.intensity,prompt:STATE.prompt,
+  style:STATE.style,...(STATE.look?{look:STATE.look}:{}),intensity:STATE.intensity,prompt:STATE.prompt,
   palette:STATE.palette,palette_strength:STATE.paletteStrength,
   reference:STATE.reference,reference_strength:STATE.referenceStrength,
   decider:STATE.decider,recipe_model:STATE.recipeModel,
@@ -868,7 +871,7 @@ const fmtVal=(k,v)=>k==='exposure'?(v>=0?'+':'')+(+v).toFixed(2)+' EV':(v>=0?'+'
 /* ---- style + intensity controls ---------------------------------------- */
 function renderStyles(){const s=$('#styles');s.innerHTML='';STYLES.forEach(([nm,ds,id])=>{
   const c=el('div','sty'+(id===STATE.style?' on':''));c.innerHTML=`<div class="nm">${nm}</div><div class="ds">${ds}</div>`;
-  c.onclick=()=>{STATE.style=id;[...s.children].forEach(x=>x.classList.remove('on'));c.classList.add('on');
+  c.onclick=()=>{STATE.style=id;STATE.look='';renderLook();[...s.children].forEach(x=>x.classList.remove('on'));c.classList.add('on');
     markPreviewStale();};
   s.appendChild(c);});}
 $('#intensity').addEventListener('click',e=>{const b=e.target.closest('[data-i]');if(!b)return;
@@ -949,7 +952,7 @@ function selectPhoto(i){STATE.sel=i;STATE.preview=null;
   document.querySelectorAll('#film .frow').forEach((r,j)=>r.classList.toggle('sel',j===i));
   const p=STATE.files[i];
   $('#stageEmpty').style.display='none';$('#ba').style.display='';$('#stageTop').style.display='';
-  syncRun();$('#variantsBtn').style.display='';$('#reportBtn').style.display='none';$('#markBtn').style.display='none';
+  syncRun();$('#variantsBtn').style.display='';$('#surpriseBtn').style.display='';$('#reportBtn').style.display='none';$('#markBtn').style.display='none';
   $('#stName').textContent=p.name;$('#stScene').textContent='';
   $('#sbSel').textContent=`${i+1} / ${STATE.files.length}`;
   showSourceOnly(true);$('#fuBar').style.display='none';renderFollow();}
@@ -1508,13 +1511,39 @@ function renderVariants(j){
     c.querySelector('button').onclick=()=>applyVariant(v.opts);
     g.appendChild(c);});}
 function applyVariant(o){
-  o=o||{};
+  o=o||{};STATE.look='';renderLook();
   if(o.style){STATE.style=o.style;renderStyles();}
   STATE.palette=o.palette||'';renderPalettes();
   STATE.prompt=o.prompt||'';const ii=$('#intentInput');if(ii)ii.value=STATE.prompt;renderChips();
   if(o.intensity!=null){STATE.intensity=o.intensity;
     $('#intensity').querySelectorAll('button').forEach(x=>x.classList.toggle('on',+x.dataset.i===o.intensity));}
   $('#varScrim').classList.remove('open');markPreviewStale();}
+
+/* ---- surprise me (F26): six looks on this photo; a pick is a look, by name. Names are text (T). */
+function renderLook(){const n=$('#lookNote');n.textContent='';if(!STATE.look)return;
+  n.appendChild(T('span','','Look: '+STATE.look+' '));
+  const b=T('button','minibtn','Clear');b.onclick=()=>setLook('');n.appendChild(b);}
+function setLook(name){STATE.look=name||'';renderLook();markPreviewStale();}
+$('#surpriseBtn').onclick=()=>{if(STATE.sel<0||!STATE.served)return;$('#varScrim').classList.add('open');runSurprise();};
+function runSurprise(){const p=STATE.files[STATE.sel];
+  $('#varTitle').textContent='Surprise me: '+p.name;
+  $('#varStatus').textContent='rendering six looks...';$('#varGrid').innerHTML='';
+  const body=Object.assign(editOptions(),{file:p.path,surprise:true});   /* no seed: the server draws one and names it */
+  fetch('/api/variants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{if(j.error){$('#varStatus').textContent=j.error;return;}renderSurprise(j);})
+    .catch(e=>$('#varStatus').textContent=String(e));}
+function renderSurprise(j){
+  const s=$('#varStatus');s.textContent='Six looks from your library (seed '+j.seed+'). Pick one, or ';
+  const more=T('button','minibtn','show six more');more.onclick=runSurprise;s.appendChild(more);
+  const by=new Map((j.variants||[]).map(v=>[v.name,v]));
+  const g=$('#varGrid');g.innerHTML='';
+  (j.looks||[]).forEach(name=>{const v=by.get(name);if(!v)return;
+    const c=el('div','rcard'),ph=el('div','ph'),im=el('img'),ft=el('div','ft');
+    im.src=v.after;im.alt=name;ph.appendChild(im);ft.appendChild(T('div','nm',name));
+    if(v.needs_review)ft.appendChild(T('div','tip','the safety check flags it on this photo'));
+    const b=T('button','minibtn','Use this look');b.style.cssText='margin-top:8px;width:100%';
+    b.onclick=()=>{$('#varScrim').classList.remove('open');setLook(name);};
+    ft.appendChild(b);c.appendChild(ph);c.appendChild(ft);g.appendChild(c);});}
 
 /* ---- settings ----------------------------------------------------------- */
 $('#settingsBtn').onclick=()=>{$('#settingsScrim').classList.add('open');loadTranslatorInfo();};

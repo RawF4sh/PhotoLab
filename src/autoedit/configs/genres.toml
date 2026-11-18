@@ -1,0 +1,47 @@
+# AutoEdit genre packs (F30): `--genre NAME`, or `genre = "NAME"` under [run] in a run file.
+# A genre selects data that lives in the other config files. There is no code per genre, and no
+# genre is applied unless it is asked for. What you write in a file or on the command line wins.
+# Your own genres go into a genres.toml in your profile folder, which is merged over this file.
+# Keys of a genre, all optional:
+#   description  one sentence for lists and menus
+#   tested       true only after a golden test and the tone gate (0 dark photos made darker, 0
+#                pushed into clipping) on at least 20 photos of its kind. Left out = false: a menu
+#                does not offer the pack; `--genre NAME` still takes it.
+#   preset       the things to find: a [preset.NAME] of concepts.toml
+#   look         the default look, a look of looks.toml. A style you name yourself keeps its own.
+#   rule_sets    opt-in rule sets: the [opt_in.NAME.<scene>.<block>] tables of rules.toml
+#   reveal       the kinds of reveal.toml the reveal check looks for with this genre (F21 will
+#                read it; nothing reads it yet). Left out = every kind.
+#   [NAME.run]   run settings: intensity, palette, palette_strength, consistency, compose,
+#                vignette, sharpen, highlight_hold, levels, light_shaping, denoise, night_sky, grain, grain_size
+
+# Both packs pass the tone gate (0 and 0, stub on 110 RAW files and SAM 3 on 24), but each pulls
+# one photo back that the run without a genre does not (stub: 0063_snow, SAM 3: 0001_dark), so by
+# the bar of docs/plans/F30-genre-packs.md they stay untested until the owner says otherwise.
+
+[landscape]
+description = "Wide outdoor scenes: finds sky, mountain, snow, grass, trees, water and rock."
+tested = false
+preset = "landscape"
+reveal = ["people", "face", "writing", "address"]
+
+[alpine]
+description = "Mountains and snow: the landscape set, and what is blown white in the photo stays white."
+tested = false
+preset = "landscape"
+reveal = ["people", "face", "writing", "address"]
+
+[alpine.run]
+highlight_hold = true
+
+# Night sky (F31). Untested: 6 night frames, the bar is 20. Only dark, high-ISO frames get the night rules.
+[astro]
+description = "Night sky: keeps the night dark, takes a town's glow off the sky, repairs stuck pixels, and noise reduction and sharpening leave the stars alone."
+tested = false
+preset = "landscape"
+look = "astro"
+reveal = ["people", "face", "writing", "address"]
+
+[astro.run]
+night_sky = true
+denoise = true

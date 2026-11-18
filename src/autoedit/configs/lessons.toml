@@ -1,12 +1,16 @@
 # What each tool does, when editors reach for it, and what to watch for. F37 starts this file
 # with what a typed change can use. F29 (teaching mode) completes it for every op.
 #
-# [op.NAME]     one entry per op a typed change can set (the ops in [limits] of instructions.toml).
+# [op.NAME]     one entry per op of edit/ops.py.
 # [mask.KIND]   how the change found its place: thing (a named thing inside an oval), area (the
 #               oval itself), named (a region found by its name), place (a named part of the
 #               frame), photo (the whole photo).
 # [guard.KIND]  what can hold a change back: policy (a region's own limits), limit (the ceiling
 #               for typed changes), gate (the checks on the whole photo after the edit).
+#
+# [step.KIND]   a step of the replay that is not one tool (the walk-through shows them in order).
+# [check.KEY]  what a check measures on a finished picture.
+# [try.sliders] the sliders of "try first": OP = [lowest, highest, step], inside the bounds of the op.
 #
 # Every entry has four lines: name, does, when, watch. This file is not a run input: changing it
 # changes no pixel, only what the walk-through says.
@@ -46,6 +50,210 @@ name = "Contrast"
 does = "Moves the bright and the dark tones of this part further apart, or closer together."
 when = "A part that looks flat and grey, or one that looks too harsh."
 watch = "Shadows close up and highlights wash out at the same time."
+
+[op.grain]
+name = "Grain"
+does = "Lays a fine, even texture over the whole photo, like the grain of film."
+when = "A photo that looks too clean, or a set that should feel like film."
+watch = "It is for the whole photo. Heavy grain hides fine detail and makes the file larger."
+
+[op.highlight_rolloff]
+name = "Highlight roll-off"
+does = "Bends the brightest tones over gently, so a lift in exposure runs out below white and does not hit it."
+when = "Whenever exposure goes up on a photo with bright parts: clouds, snow, a white shirt."
+watch = "Too much leaves the brightest parts flat and grey-white. Below its knee nothing changes."
+
+[op.shadows_ev]
+name = "Shadow lift"
+does = "Brightens the dark tones, counted in stops, and keeps black at black."
+when = "A dark foreground under a bright sky, a face in shade."
+watch = "Noise comes up with the shadows. Past about one stop the dark parts start to look flat."
+
+[op.highlights]
+name = "Highlights"
+does = "Makes the bright half of the tones darker or brighter and leaves the dark half alone."
+when = "A bright sky or bright clouds that should show more of their shape."
+watch = "Pulled far down, bright areas turn dull grey. A blown area only turns flat grey: nothing is left in it to bring back."
+
+[op.shadows]
+name = "Shadows"
+does = "Makes the dark half of the tones brighter or darker and leaves the bright half alone."
+when = "Detail that hides in dark trees, rock or clothing."
+watch = "It lifts pure black as well, so a strong lift lays a grey veil over the photo. The shadow lift does not."
+
+[op.whites]
+name = "Whites"
+does = "Moves only the brightest tones: up for a cleaner white, down for more room at the top."
+when = "Snow or clouds that look grey, or bright parts that sit too close to pure white."
+watch = "Raised, it is the quickest way to clip a highlight."
+
+[op.blacks]
+name = "Blacks"
+does = "Moves only the darkest tones: down for a deeper black, up for a softer, lifted one."
+when = "A flat photo that has no real black, or a faded look with the blacks lifted."
+watch = "Lowered, the dark parts close up into one black shape."
+
+[op.curve]
+name = "Tone curve"
+does = "Lays a soft S-shaped curve over the tones: more contrast in the middle, and both ends roll off gently."
+when = "Depth without the hard ends that plain contrast gives. Most looks use it."
+watch = "It darkens the lower tones. On a dark photo that costs detail in the shadows."
+
+[op.dehaze]
+name = "Dehaze"
+does = "Estimates the haze between the camera and the scene and takes it out, so distant parts gain contrast and colour. Below zero it adds a light veil."
+when = "Distant mountains, a hazy valley, a view through moist air."
+watch = "Smooth skies and fog break into bands, a sky can turn dark and too blue, and near things get heavy."
+
+[op.black_point]
+name = "Black point"
+does = "Finds the darkest tones the photo really has and moves them down to a true black."
+when = "A photo whose darkest part is only dark grey, so it looks flat."
+watch = "Only the darkest tenth of the tones is reshaped. Fog has no black to find and is left alone."
+
+[op.white_point]
+name = "White point"
+does = "Finds the brightest tones the photo really has and moves them up to a clean white."
+when = "Snow, paper or clouds that came out grey."
+watch = "It stops below pure white, so it cannot clip. A photo that is meant to be dim loses its mood."
+
+[op.vibrance]
+name = "Vibrance"
+does = "Makes colours stronger, the dull ones most, and leaves strong colours nearly alone."
+when = "A photo that looks pale overall. It is the safer choice wherever there is skin."
+watch = "Grey rock and fog pick up colour that was never there."
+
+[op.hsl_skin_sat]
+name = "Orange tones (skin)"
+does = "Raises or lowers the strength of the orange hues only, where skin sits."
+when = "Skin that looks too red or too pale after the rest was edited."
+watch = "It follows the hue, not the person: sand, wood and brick are orange too."
+
+[op.hsl_green_sat]
+name = "Greens: strength"
+does = "Raises or lowers the strength of the green hues only."
+when = "Grass and leaves that look dull, or greens that look neon and should calm down."
+watch = "Greens turn artificial quickly. Yellow-green leaves are only partly reached."
+
+[op.hsl_green_lum]
+name = "Greens: brightness"
+does = "Makes the green hues brighter or darker and leaves other colours alone."
+when = "A dark forest that should open up, or a bright meadow that pulls the eye."
+watch = "Lifted greens look flat and pale, and a rim can show where green meets another colour."
+
+[op.hsl_blue_sat]
+name = "Blues: strength"
+does = "Raises or lowers the strength of the blue hues only."
+when = "A pale sky or pale water, or a sky that looks too heavy."
+watch = "A strong blue sky shows bands and noise, and blue shadows on snow grow with it."
+
+[op.grade_shadows_temp]
+name = "Shadow colour: warm or cool"
+does = "Adds a little warmth or coolness to the dark tones only."
+when = "Cool shadows under warm light give depth. It is the classic colour grade."
+watch = "It is a look, not a correction: black stops being neutral, and skin in shade changes colour."
+
+[op.grade_shadows_tint]
+name = "Shadow colour: green or magenta"
+does = "Shifts the dark tones toward green or toward magenta."
+when = "A film look, or to take a colour cast out of the shadows."
+watch = "Small values only. A tint in the shadows soon reads as a mistake."
+
+[op.grade_highlights_temp]
+name = "Highlight colour: warm or cool"
+does = "Adds a little warmth or coolness to the bright tones only."
+when = "Warm highlights for evening light, cool ones for a clean, cold look."
+watch = "White things stop being white: clouds, snow, a shirt."
+
+[op.grade_highlights_tint]
+name = "Highlight colour: green or magenta"
+does = "Shifts the bright tones toward green or toward magenta."
+when = "A film look, or to take a cast out of bright areas."
+watch = "It shows first in skies and on skin. Small values only."
+
+[op.bw]
+name = "Black and white"
+does = "Takes the colour out. Each colour turns into a grey of its own, and six weights set how bright."
+when = "Strong shapes and light, colours that distract, a set that should hold together."
+watch = "Colours that differed only in hue end as the same grey. The weights pull them apart."
+
+[op.bw_red]
+name = "Black and white: reds"
+does = "Sets how bright red things come out in grey: up is lighter, down is darker."
+when = "Raised, skin and lips get lighter. A red jacket can stand out or step back."
+watch = "Skin holds much red: lowered, faces get dark and every blemish shows."
+
+[op.bw_yellow]
+name = "Black and white: yellows"
+does = "Sets how bright yellow things come out in grey."
+when = "Autumn leaves, sand, dry grass, sunlit rock."
+watch = "Skin has yellow in it as well. A strong move changes faces."
+
+[op.bw_green]
+name = "Black and white: greens"
+does = "Sets how bright green things come out in grey."
+when = "Raise it for lighter leaves and meadows, lower it to make them heavy."
+watch = "Leaves are often more yellow than green: the yellow weight moves them too."
+
+[op.bw_cyan]
+name = "Black and white: cyans"
+does = "Sets how bright cyan things come out in grey."
+when = "Pale sky near the horizon, glacier ice, shallow water."
+watch = "A sky runs from cyan into blue. Move both weights together, or a step shows in it."
+
+[op.bw_blue]
+name = "Black and white: blues"
+does = "Sets how bright blue things come out in grey."
+when = "Lower it for a dark sky with bright clouds: what a red filter did on film."
+watch = "A sky pushed far down shows noise and bands. The shadows are protected: a weight never takes a pixel below the darker third."
+
+[op.bw_magenta]
+name = "Black and white: magentas"
+does = "Sets how bright magenta and pink things come out in grey."
+when = "Flowers, dusk skies, pink clothing."
+watch = "Most photos hold little magenta. A strong move mostly changes noise."
+
+[op.denoise]
+name = "Noise reduction"
+does = "Smooths noise away: colour speckle first, then some of the fine grain in brightness."
+when = "High ISO, or dark parts that were lifted and now show their noise."
+watch = "Fine detail goes with it: hair, grass, fabric. Look at full size."
+
+[op.denoise_stars]
+name = "Noise reduction spares the stars"
+does = "Keeps noise reduction off the stars: a small bright point keeps its own pixels and its colour."
+when = "Night skies, where noise reduction would smooth faint stars away."
+watch = "A town's lamps are points too and keep their noise around them."
+
+[op.sharpen]
+name = "Sharpening"
+does = "Raises the contrast along fine edges, so detail looks crisper."
+when = "At the end, on almost every photo, lightly."
+watch = "Bright rims along edges, and noise that is sharpened too. It cannot rescue a photo that is out of focus."
+
+[op.sharpen_stars]
+name = "Sharpening spares the stars"
+does = "Keeps sharpening off the stars, so a star does not grow a bright core and a dark rim."
+when = "Night skies."
+watch = "The sky around a star is still sharpened; a sky full of noise is better left soft."
+
+[op.hot_pixels]
+name = "Stuck pixels"
+does = "Finds single pixels that stand far above all their neighbours in one colour and gives them the middle value of the neighbours."
+when = "Long exposures at night, where the sensor leaves bright coloured dots."
+watch = "A stuck pixel that is white in a camera JPEG looks like a faint star and is left. Look at full size."
+
+[op.sky_gradient]
+name = "Sky gradient"
+does = "Takes the glow of a town or the moon off the sky: a smooth surface fitted to the sky without its stars is taken away, down to the sky's darkest part."
+when = "Night skies that grow brighter and warmer toward the horizon."
+watch = "It works inside the sky the segmenter found. Where that stops short of the horizon, a band of glow is left."
+
+[op.lut]
+name = "LUT file"
+does = "Moves every colour to the colour a table says, the same over the whole photo. The table is a .cube file."
+when = "A look that was made elsewhere, or one that should match video."
+watch = "A table knows nothing about this photo: it can clip, and it can shift skin. It is laid on after the checks, so look at the result."
 
 [mask.thing]
 name = "Object mask"
@@ -94,3 +302,74 @@ name = "Checks after the edit"
 does = "After all changes, checks on the whole photo pull back colour that grew too strong, keep blown highlights white and look for banding."
 when = "Always, on every photo."
 watch = "A note in \"What it did\" says when one of them stepped in."
+
+[step.source]
+name = "The photo as it came"
+does = "The picture before any step: the file as it was developed, with no edit."
+when = "Every replay starts here."
+watch = "Look at it for a moment before you step on. What would you change first?"
+
+[step.regions]
+name = "Region edits"
+does = "Each thing that was found gets its own correction first: the sky, the skin, the grass. No pixel is edited by two regions."
+when = "Before anything is done to the whole photo, so the parts start from a good balance."
+watch = "Edges. Switch the masks on and look where two regions meet."
+
+[step.shapes]
+name = "Shaped light"
+does = "Soft shapes laid over the frame: a darker edge, a gradient over the sky, a glow at the sun, and the places you named."
+when = "To lead the eye. Editors call them radial and graduated filters."
+watch = "A shape does not follow outlines. When you can see the shape itself, it is too strong."
+
+[step.palette]
+name = "Colour palette"
+does = "Pushes shadows, midtones and highlights a little toward chosen colours and keeps their brightness. Skin and snow stay neutral."
+when = "A colour mood over the whole photo: cool, warm, sunset."
+watch = "It lies over everything else. A strong palette makes every photo look alike."
+
+[step.finish]
+name = "Finishing"
+does = "What a run lays over the checked picture: a match to a reference photo, a LUT file, and a last pass that makes a full black and white truly neutral."
+when = "Only when the run asked for one of them."
+watch = "The checks do not pull a LUT back. Look at the result."
+
+[check.blown]
+name = "Blown highlights"
+does = "The share of pixels brighter than 0.98 of 1. They are flat white: no detail is left in them."
+when = "Exposure, whites, highlights or contrast went too far for the bright parts."
+watch = "A small light or a glint may clip. A sky, snow or a white dress should not."
+
+[check.crushed]
+name = "Crushed shadows"
+does = "The share of pixels darker than 0.02 of 1. They are flat black."
+when = "Exposure or blacks went down too far, or contrast went up."
+watch = "A little true black gives depth. Dark hair or clothing that ends as one shape is lost detail."
+
+[check.channel]
+name = "A colour at its limit"
+does = "The share of pixels where red, green or blue is at its top. Brightness alone can hide it: a red jacket loses its folds long before it looks white."
+when = "Saturation, warmth or exposure were pushed on a colour that was strong already."
+watch = "Flowers, sunsets, clothing, and skin in warm light."
+
+[check.banding]
+name = "Banding"
+does = "A score from 0 to 1 for steps the edit made in smooth areas such as sky or fog. When it is too high, the tone moves are reduced and the photo is rendered again."
+when = "Contrast, dehaze or a curve stretched a few close tones far apart."
+watch = "Skies, fog and still water. A JPEG source bands sooner than a RAW file."
+
+[check.colour]
+name = "Colour shift of skin and snow"
+does = "How far the average colour of a protected region moved from the source, in Lab units. Brightness is left out."
+when = "White balance, tint, saturation or a colour grade reached a region that should keep its colour."
+watch = "A shift of 2 to 3 is about where a viewer starts to notice. Skin goes orange or grey, snow goes yellow or blue."
+
+# The sliders of "try first" (F29), in the order of the panel: OP = [lowest, highest,
+# step], inside the bounds of the op.
+[try.sliders]
+exposure = [-2.0, 2.0, 0.05]
+contrast = [-50, 50, 1]
+highlights = [-100, 100, 1]
+shadows = [-100, 100, 1]
+temp = [-50, 50, 1]
+tint = [-50, 50, 1]
+saturation = [-50, 50, 1]

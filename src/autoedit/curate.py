@@ -59,8 +59,11 @@ def list_images(input_dir: str, recursive: bool = True) -> list[str]:
 
 
 def image_features(path: str, long_edge: int = 256) -> dict[str, float]:
-    img = downscale_long_edge(load_image(path), long_edge)
-    rgb = np.clip(img.rgb.astype(np.float32), 0.0, 1.0)
+    return features_of(downscale_long_edge(load_image(path), long_edge).rgb)
+
+
+def features_of(rgb: np.ndarray) -> dict[str, float]:
+    rgb = np.clip(rgb.astype(np.float32), 0.0, 1.0)
     yy = luma(rgb)
     h, w = yy.shape
     top = rgb[:max(1, h // 3), :, :]

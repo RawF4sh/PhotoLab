@@ -8,6 +8,8 @@
 # does not apply to it (as for the prompt words "moody", "low key", ...).
 # Global-only finishing the look injects (applied once, to the whole image):
 #   curve_add (filmic S-curve), grade_{shadows,highlights}_{temp,tint} (split-tone)
+#   dehaze_add (added to the rules' dehaze; below zero it lifts the blacks), grain (F23),
+#   bw (black and white, 0..100) with its six weights bw_{red,yellow,green,cyan,blue,magenta} (F24)
 
 # the default — TRUE-TO-LIFE: tonal correction only, NO color styling. No split-tone grade
 # (that reads as a teal/orange cast), no vibrance lift, clarity pulled down. Just a whisper of
@@ -76,3 +78,108 @@ grade_shadows_temp = 0.0
 grade_shadows_tint = 0.0
 grade_highlights_temp = 3.0  # a little warmth in the highlights only
 grade_highlights_tint = 0.0
+
+# ─────────────────────── night sky (F31) ───────────────────────
+# The look of the astro pack: no curve of its own (it darkens dark tones). Taking a town's glow
+# off the sky darkens it on purpose; the look does not set preserve_exposure (whether a look may
+# switch the review gate's darkness check off is the owner's decision, F8), so the gate may flag.
+[astro]
+clarity_mul  = 0.7
+dehaze_mul   = 0.8
+
+# ─────────────────────── black and white (F24) ───────────────────────
+# bw = 100 turns the photo black and white. The six weights say how bright each colour comes
+# out: 0 = as bright as the colour is, above 0 lighter, below 0 darker. A weight darkens only the
+# brighter part of the picture (edit/ops.py::bw), so a blue sky goes dark and a shadow does not.
+# bw and the weights are taken as written: the intensity does not scale them.
+[bw_classic]                 # every colour at its own brightness; a little more depth than natural
+bw = 100
+curve_mul    = 1.4
+curve_add    = 5.0
+clarity_mul  = 1.2
+dehaze_mul   = 0.8
+
+[bw_red_filter]              # a red filter on the lens: blue and cyan darker (the sky), red and yellow lighter
+bw = 100
+bw_red     = 30
+bw_yellow  = 15
+bw_green   = -10
+bw_cyan    = -45
+bw_blue    = -60
+bw_magenta = 10
+curve_mul    = 1.4
+curve_add    = 5.0
+clarity_mul  = 1.2
+dehaze_mul   = 0.8
+
+[bw_soft]                    # low contrast, blacks lifted by 7 of 255, skin a little lighter
+bw = 100
+bw_red     = 15
+bw_yellow  = 10
+contrast_mul = 0.7
+curve_mul    = 0.6
+curve_add    = -6.0          # below zero: softer mid-tones, both ends stay
+clarity_mul  = 0.5
+dehaze_mul   = 0.0           # no haze removal, so the lift is the same on every photo
+dehaze_add   = -8.0
+
+# ─────────────────────── film looks (F24) ───────────────────────
+# Named by what they do; no film stock is named or imitated. A cast needs lifted blacks under it
+# (dehaze_add below zero), or the channel it lowers falls under the clip level in the shadows.
+# The oversaturation gate lets a cast of about 5 of 255 through, so the casts are mild.
+# No look has grain (F23) until the owner says so. Proposed: grain = 20 for film_warm and
+# film_cool, 30 for film_faded, 15 for cross_process, 25 for instant.
+[film_warm]                  # warm and soft: a warm tone, blacks lifted by 6, a little less colour
+contrast_mul = 0.85
+curve_add    = 2.0
+clarity_mul  = 0.6
+dehaze_mul   = 0.5
+dehaze_add   = -7.0
+saturation_add = -6.0
+grade_shadows_temp = 8.0
+grade_highlights_temp = 15.0
+grade_highlights_tint = 2.0
+
+[film_cool]                  # cool and bleached: blue in the shadows, a quarter less colour
+contrast_mul = 1.0
+curve_add    = 5.0
+clarity_mul  = 0.9
+dehaze_mul   = 0.8
+dehaze_add   = -5.0
+saturation_add = -24.0
+grade_shadows_temp = -15.0
+grade_shadows_tint = -3.0
+grade_highlights_temp = -10.0
+
+[film_faded]                 # an old print: blacks lifted by 12 to a grey, low contrast, much less colour
+contrast_mul = 0.75
+curve_mul    = 0.5
+curve_add    = -6.0
+clarity_mul  = 0.5
+dehaze_mul   = 0.0
+dehaze_add   = -14.0
+saturation_add = -18.0
+grade_shadows_temp = -5.0
+grade_highlights_temp = 5.0
+
+[cross_process]              # slide film developed as a negative: blue-green shadows, yellow-green
+contrast_mul = 1.2           # highlights, a little more contrast. The mildest look: no extra colour,
+curve_mul    = 1.5           # because the oversaturation gate takes that back.
+curve_add    = 5.0
+dehaze_add   = -6.0
+grade_shadows_temp = -14.0
+grade_shadows_tint = -8.0
+grade_highlights_temp = 8.0
+grade_highlights_tint = -4.0
+
+[instant]                    # an instant print: soft, blacks lifted by 9, cool green shadows, warm highlights
+contrast_mul = 0.85
+curve_add    = -3.0
+clarity_mul  = 0.5
+dehaze_mul   = 0.0
+dehaze_add   = -10.0
+saturation_add = -10.0
+grade_shadows_temp = -8.0
+grade_shadows_tint = -5.0
+grade_highlights_temp = 10.0
+grade_highlights_tint = 2.0

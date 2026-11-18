@@ -9,6 +9,7 @@ from PIL import Image as PILImage
 from autoedit import instructions, lessons
 from autoedit.concepts import load_concepts
 from autoedit.contract import Adjustment, RunConfig
+from autoedit.edit import ops
 from autoedit.paths import config_path, configs_dir
 from autoedit.pipeline import Pipeline
 from autoedit.segment.base import RegionMask, mark_name
@@ -76,16 +77,18 @@ def _walk(pipe, path, adjs):
     return lessons.walk(a, plan, before, after, _vocab(), _packaged()), plan, before, after
 
 
-def test_every_typed_tool_has_a_lesson(tmp_path):
+def test_every_op_has_a_lesson(tmp_path):
     les = _packaged()
-    ops = instructions.load_vocab(config_path("instructions.toml", packaged_fallback=True)).limits
-    assert ops
-    for table, keys in [("op", ops), ("mask", ["thing", "area", "named", "place", "photo"]),
-                        ("guard", ["policy", "limit", "gate"])]:
-        for k in keys:
-            assert k in les[table], (table, k)
-            assert all(str(les[table][k].get(f, "")).strip() for f in FOUR), (table, k)
-    assert lessons.load(str(tmp_path / "nope.toml")) == {"op": {}, "mask": {}, "guard": {}}
+    assert set(les["op"]) == set(ops.OP_NAMES)
+    keys = {"mask": ["thing", "area", "named", "place", "photo"], "guard": ["policy", "limit", "gate"],
+            "step": ["source", "regions", "shapes", "palette", "finish"],
+            "check": ["blown", "crushed", "channel", "banding", "colour"]}
+    for table, want in keys.items():
+        assert set(les[table]) == set(want), table
+    for table in ("op", *keys):
+        for k, entry in les[table].items():
+            assert all(str(entry.get(f, "")).strip() for f in FOUR), (table, k)
+    assert lessons.load(str(tmp_path / "nope.toml")) == {t: {} for t in lessons.TABLES}
 
 
 def test_walk_matches_the_render(tmp_path):

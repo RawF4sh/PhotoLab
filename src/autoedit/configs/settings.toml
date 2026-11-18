@@ -5,7 +5,7 @@
 
 # Not for a person: config file paths, the API key (never shown) and a fixed internal value.
 hidden = ["rules_path", "looks_path", "concepts_path", "styles_path", "compose_path", "intents_path",
-          "palettes_path", "instructions_path", "exports_path", "api_key", "emit"]
+          "palettes_path", "instructions_path", "exports_path", "api_key", "emit", "profile_dir", "rule_sets"]
 
 [groups]
 look = "Look"
@@ -23,6 +23,11 @@ performance = "Performance"
 label = "Style"
 group = "look"
 help = "The overall look: which regions are edited and how strongly."
+
+[setting.genre]
+label = "Kind of photo"
+group = "look"
+help = "A pack for one kind of photography: what to find, a look and which tools are on. Your own choices win over it."
 
 [setting.look]
 label = "Look"
@@ -53,6 +58,26 @@ help = "A photo whose colours and tones the result should move toward."
 label = "Reference strength"
 group = "look"
 help = "How closely to follow the reference photo. 0 ignores it, 1 matches it fully."
+
+[setting.grain]
+label = "Grain"
+group = "look"
+help = "Film grain on the finished photo, 0 to 100. Empty uses the look's own; 25 is light, 100 is heavy."
+
+[setting.grain_size]
+label = "Grain size"
+group = "look"
+help = "How coarse the grain is. 1 is fine, 2 is twice as coarse. It follows the size of the export."
+
+[setting.lut]
+label = "LUT file"
+group = "look"
+help = "A .cube colour filter file laid over the finished photo. Empty uses none."
+
+[setting.lut_amount]
+label = "LUT strength"
+group = "look"
+help = "How much of the LUT file is blended in, 0 to 100."
 
 # ---- Directed edits ----
 [setting.prompt]
@@ -101,11 +126,47 @@ label = "Reduce noise"
 group = "quality"
 help = "Smooths grain in dark, high-ISO photos while keeping edges."
 
+[setting.night_sky]
+label = "Night sky"
+group = "quality"
+help = "Night photos stay dark and lose a town's glow and stuck pixels; noise reduction and sharpening spare the stars."
+
+[setting.backdrop]
+label = "Clean backdrop"
+group = "quality"
+help = "Evens out a light background and takes it to a clean white. Nothing is cut out; a photo without a light background is left alone."
+
+[setting.straighten]
+label = "Straighten"
+group = "quality"
+help = "Turns the photo so that a clear waterline or horizon is level, at most 5 degrees. The edges are cut."
+
+[setting.neutral]
+label = "Neutral spot"
+group = "quality"
+help = "A spot that is grey or white, X and Y as shares of the frame from the top left. The white balance makes it neutral."
+
+[setting.wb]
+label = "White balance"
+group = "quality"
+help = "Temp and tint for every photo, in place of the rules' own. A neutral spot measured once gives these two numbers."
+advanced = true
+
 # ---- Batch ----
 [setting.consistency]
 label = "Consistency"
 group = "batch"
 help = "Brightness evens out the whole shoot; bursts also evens out frames shot of the same scene."
+
+[setting.consistency_wb]
+label = "Same white balance"
+group = "batch"
+help = "Brings the photos of a group to one white balance, so the same product keeps the same colour from photo to photo."
+
+[setting.colour_report]
+label = "Colour report"
+group = "batch"
+help = "After the run, shows how far the colour of the subject differs inside each group of photos."
 
 # ---- Output ----
 [setting.out_format]
@@ -142,6 +203,16 @@ help = "Picture quality of JPEG and WebP files. Higher is sharper and bigger."
 label = "Photo information"
 group = "output"
 help = "What camera data stays in the export: keep all, share without location and serial numbers, or none."
+
+[setting.out_aspect]
+label = "Crop to shape"
+group = "output"
+help = "Crops the export to a shape such as 4:5 or 1:1, placed on the subject. Empty keeps the photo's own shape."
+
+[setting.history]
+label = "Keep a history of your edits"
+group = "output"
+help = "One line per exported photo in your profile: what you changed, no picture, no file name. It never leaves this computer."
 
 # ---- RAW development ----
 [setting.raw_mode]

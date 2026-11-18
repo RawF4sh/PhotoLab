@@ -1,7 +1,8 @@
 # AutoEdit export presets: `--export NAME` (or [output] export = "NAME" in a run file).
 # Keys: format ("jpeg" | "tiff" | "webp" | "png"), quality, long_edge (pixels; left out = full
 # size), name (file name template: {stem}, {style}, {n}), subdir, metadata ("keep" | "shareable"
-# | "none"). A flag on the command line wins over the preset.
+# | "none"), aspect (a crop to a shape such as "4:5", F32; left out = the photo's own shape).
+# A flag on the command line wins over the preset.
 
 [full]
 format = "jpeg"
@@ -21,6 +22,7 @@ long_edge = 1350
 name = "{stem}_social"
 subdir = "social"
 metadata = "none"
+# aspect = "4:5"     # with long_edge 1350: 1080 by 1350 (F32; off until the # is removed)
 
 [archive]
 format = "tiff"

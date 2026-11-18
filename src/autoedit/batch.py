@@ -112,6 +112,8 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         # photo renders: say so, or a large folder looks hung.
         say = lambda msg: print(f"Bursts mode: {msg}", flush=True)  # noqa: E731
         say(f"looking for bursts in {len(images)} photos")
+    elif consistent and cfg.consistency_wb:
+        say = lambda msg: print(f"Consistency: {msg}", flush=True)  # noqa: E731
     biases = consistency.plan(images, cfg, pipeline, progress=say) if consistent else {}
 
     processed = 0
@@ -125,6 +127,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
     t0 = time.perf_counter()
 
     par_fail: list[tuple[int, dict]] = []
+    sidecars: list[str] = []         # every photo's sidecar, also of a photo a resume skips (the colour report)
     pool = None
     pending: dict = {}               # future -> (index, path, image_out, sidecar, bias, group)
 
@@ -188,6 +191,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
                     failures.append({"image": os.path.basename(path), "error": str(e)})
                     print(f"[{i}/{len(images)}] {os.path.basename(path)}  ERROR: {e}")
                 continue
+            sidecars.append(sidecar)
             if resume and os.path.exists(sidecar):
                 skipped += 1
                 continue
@@ -262,9 +266,18 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         "dry_run": not do_apply,
         "workers": n_workers,
     }
+    if cfg.colour_report and do_apply:
+        manifest["colour_report"] = consistency.colour_report(
+            sidecars, ((pipeline.rules or {}).get("consistency") or {}).get(
+                "wb_min_confidence", consistency.BURST_DEFAULTS["wb_min_confidence"]))
     with open(os.path.join(out_dir, "run.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
 
     print(f"\nDone: {processed} edited, {skipped} skipped, {len(failures)} failed, "
           f"{manifest['duration_s']}s. Scene mix: {dict(scene_mix)}")
+    if "colour_report" in manifest:
+        print(f"Colour report ({consistency.DELTA_E}):")
+        for line in consistency.colour_lines(manifest["colour_report"]) or \
+                ["  no group has two photos with a measured subject"]:
+            print(line)
     return manifest

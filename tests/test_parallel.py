@@ -73,7 +73,10 @@ def test_a_bundle_can_be_cut_between_any_two_steps():
               "curve": 20.0, "dehaze": 15.0, "clarity": 25.0, "black_point": 60.0, "white_point": 40.0, "vibrance": 20.0, "saturation": 10.0,
               "hsl_skin_sat": 10.0, "hsl_green_sat": -15.0, "hsl_green_lum": 10.0, "hsl_blue_sat": 20.0,
               "grade_shadows_temp": 10.0, "grade_shadows_tint": -5.0, "grade_highlights_temp": 12.0,
-              "grade_highlights_tint": 6.0, "denoise": 40.0, "sharpen": 30.0}
+              "grade_highlights_tint": 6.0,
+              "bw": 60.0, "bw_red": 40.0, "bw_yellow": 25.0, "bw_green": -20.0, "bw_cyan": -80.0, "bw_blue": -90.0,
+              "bw_magenta": 15.0, "denoise": 40.0, "sharpen": 30.0, "lut": 50.0, "grain": 30.0,
+              "hot_pixels": 60.0, "sky_gradient": 70.0, "denoise_stars": 80.0, "sharpen_stars": 90.0}
     assert set(bundle) == set(ops.OP_NAMES)
     x = _img(96, 96, seed=3)
     want = ops.apply_ops(x, bundle)

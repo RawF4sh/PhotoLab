@@ -11,6 +11,8 @@ clipping. `curve_add` is unconditional; keep it small.
 
 from __future__ import annotations
 
+import math
+import re
 import tomllib
 from dataclasses import dataclass, fields
 
@@ -33,11 +35,21 @@ class Look:
     grade_shadows_tint: float = 0.0
     grade_highlights_temp: float = 0.0
     grade_highlights_tint: float = 0.0
+    grain: float = 0.0  # film grain on the export, 0..100 (F23); scaled by intensity, added by emit
+    dehaze_add: float = 0.0  # global only: added to the rules' dehaze; below zero it lifts the blacks (F24)
+    bw: float = 0.0  # black and white, 0..100 (F24); taken as written, the intensity does not scale it
+    bw_red: float = 0.0  # the six colour weights, -100..100: how bright each colour comes out in grey
+    bw_yellow: float = 0.0
+    bw_green: float = 0.0
+    bw_cyan: float = 0.0
+    bw_blue: float = 0.0
+    bw_magenta: float = 0.0
 
 
 FIELDS = tuple(f.name for f in fields(Look))   # what a look table may contain (profile validation)
 
 _GRADE_FIELDS = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
+_BW_FIELDS = ("bw", "bw_red", "bw_yellow", "bw_green", "bw_cyan", "bw_blue", "bw_magenta")
 
 
 LookSet = dict[str, Look]
@@ -62,8 +74,67 @@ def load(path: str) -> LookSet:
             grade_shadows_tint=float(body.get("grade_shadows_tint", 0.0)),
             grade_highlights_temp=float(body.get("grade_highlights_temp", 0.0)),
             grade_highlights_tint=float(body.get("grade_highlights_tint", 0.0)),
+            grain=float(body.get("grain", 0.0)),
+            dehaze_add=float(body.get("dehaze_add", 0.0)),
+            **{k: float(body.get(k, 0.0)) for k in _BW_FIELDS},
         )
     return out
+
+
+HABIT = "habit"             # a sub-table of a look, no field of `Look` (F27): habit.<scene>.<target>.<op>
+MAX_HABIT_TARGETS = 12
+_SCENE = re.compile(r"[a-z0-9_]{1,40}")
+_TARGET = re.compile(r"global|place:[a-z0-9_]{1,40}|[a-z][a-z0-9 _-]{0,39}")
+
+
+def check_habit(table, where: str) -> dict:
+    """{scene: {target: {op: float}}} from a look's habit table; a ValueError starting with `where`
+    for anything else. A mark is never a target; empty tables are dropped."""
+    from .edit.ops import OP_BOUNDS, OP_NAMES    # inside: paths.py imports this module
+
+    if not isinstance(table, dict):
+        raise ValueError(f"{where}: {HABIT} must be a table of scenes")
+    out: dict = {}
+    count = 0
+    for scene, targets in table.items():
+        if not _SCENE.fullmatch(str(scene)):
+            raise ValueError(f"{where}: {HABIT} scene {str(scene)[:40]!r}: use lowercase letters, digits and underscores")
+        if not isinstance(targets, dict):
+            raise ValueError(f"{where}: {HABIT}.{scene} must be a table of targets")
+        for target, ops in targets.items():
+            if not _TARGET.fullmatch(str(target)):
+                raise ValueError(f"{where}: {HABIT}.{scene} target {str(target)[:40]!r} is not global, place:NAME or a concept name")
+            if not isinstance(ops, dict):
+                raise ValueError(f"{where}: {HABIT}.{scene}.{target} must be a table of ops")
+            for op, value in ops.items():
+                if op not in OP_NAMES:
+                    raise ValueError(f"{where}: {HABIT}.{scene}.{target} has unknown op {str(op)[:40]!r}")
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+                        isinstance(value, float) and not math.isfinite(value)):
+                    raise ValueError(f"{where}: {HABIT}.{scene}.{target}.{op} must be a finite number")
+                lo, hi = OP_BOUNDS.get(op, (-math.inf, math.inf))
+                # compared before any float(): a huge whole number would overflow there; NaN fails too
+                if not lo <= value <= hi:
+                    raise ValueError(f"{where}: {HABIT}.{scene}.{target}.{op} must be between {lo:g} and {hi:g}")
+            count += bool(ops)
+            if count > MAX_HABIT_TARGETS:
+                raise ValueError(f"{where}: {HABIT} has more than {MAX_HABIT_TARGETS} targets")
+            if ops:
+                out.setdefault(scene, {})[target] = {op: float(v) for op, v in ops.items()}
+    return out
+
+
+def load_habits(path: str) -> dict[str, dict]:
+    """Look name -> its checked habit (looks without one are left out)."""
+    with open(path, "rb") as fh:
+        data = tomllib.load(fh)
+    habits = {}
+    for name, body in data.items():
+        if isinstance(body, dict) and HABIT in body:
+            got = check_habit(body[HABIT], f"{path}: look {name}")
+            if got:
+                habits[name] = got
+    return habits
 
 
 def shape(settings: Settings, look: Look, intensity: float, is_global: bool = False) -> None:
@@ -89,6 +160,8 @@ def shape(settings: Settings, look: Look, intensity: float, is_global: bool = Fa
             settings["saturation"] = settings.get("saturation", 0.0) + look.saturation_add
         if look.curve_add:
             settings["curve"] = settings.get("curve", 0.0) + look.curve_add
+        if look.dehaze_add:
+            settings["dehaze"] = settings.get("dehaze", 0.0) + look.dehaze_add
         for k in _GRADE_FIELDS:
             v = getattr(look, k)
             if v:

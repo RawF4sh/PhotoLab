@@ -164,7 +164,8 @@ def _render(pipe: Pipeline, path: str, out_dir: str) -> tuple[str, Result]:
     if not os.path.exists(side):  # the sidecar is written last, so it implies the image
         os.makedirs(out_dir, exist_ok=True)
         rgb, res = pipe.process_one(path)
-        emit.write_image(rgb, jpg, "jpeg", pipe.cfg.quality)
+        emit.write_image(rgb, jpg, "jpeg", pipe.cfg.quality, grain=emit.grain_args(res, pipe.cfg),
+                         geometry=res.geometry)
         emit.write_sidecar(res, side)
     with open(side) as fh:
         return jpg, Result.model_validate_json(fh.read())
@@ -192,7 +193,10 @@ def _facts(a: PILImage.Image, b: PILImage.Image) -> str:
     """Blind-safe facts about an A/B pair (8-bit levels): how far apart the two sides are and
     which one is darker, brighter, more saturated or warmer. They say nothing about which side
     is the candidate, and keep a verdict tied to what is actually in each cell."""
-    x, y = (np.asarray(_fit(im), dtype=np.float32) for im in (a, b))
+    a, b = _fit(a), _fit(b)
+    if b.size != a.size:        # a turned or cropped side has another shape (F32)
+        b = b.resize(a.size, PILImage.LANCZOS)
+    x, y = (np.asarray(im, dtype=np.float32) for im in (a, b))
     lx, ly = x.mean(axis=2), y.mean(axis=2)
 
     def pair(name, fn):

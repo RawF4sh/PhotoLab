@@ -18,6 +18,11 @@
     "query": [],
     "body": false
   },
+  "GET /api/v1/genres": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
   "GET /api/v1/groups": {
     "path": [],
     "query": [
@@ -63,6 +68,13 @@
     "query": [],
     "body": false
   },
+  "GET /api/v1/style/suggestions": {
+    "path": [],
+    "query": [
+      "look"
+    ],
+    "body": false
+  },
   "GET /api/v1/styles": {
     "path": [],
     "query": [],
@@ -87,6 +99,11 @@
     "body": false
   },
   "GET /classic": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "GET /lab": {
     "path": [],
     "query": [],
     "body": false
@@ -156,6 +173,11 @@
     "body": true
   },
   "POST /api/v1/run-one": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/style/accept": {
     "path": [],
     "query": [],
     "body": true

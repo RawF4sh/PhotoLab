@@ -110,7 +110,9 @@ applied at native resolution with edge-aware (guided-filter) mask feathering.
 ### Edit ops (frozen order, `edit/ops.py`)
 
 `white balance → exposure (+ highlight knee) → shadow lift → tone → contrast → curve → dehaze →
-clarity → black/white point → vibrance/saturation → targeted HSL → color grade → denoise → sharpen`.
+clarity → black/white point → vibrance/saturation → targeted HSL → color grade → black and white →
+denoise → sharpen → (lut) → (grain)`. A LUT (`--lut FILE.cube`) is laid over the finished picture after
+the gates; grain is added at export; `apply_ops` renders neither.
 An empty settings dict is a strict no-op. Per-pixel work runs on row strips in threads
 (`edit/par.py`) with identical output. Notable:
 
@@ -129,6 +131,9 @@ An empty settings dict is a strict no-op. Per-pixel work runs on row strips in t
 - **Highlight hold** (`--highlight-hold`, off by default) — where the source is near white in all
   three channels, the edit may not darken the pixel, so a blown sky stays white instead of turning
   light grey.
+- **Grain** (`--grain N`, off by default) — film grain, luma only, strongest in the midtones. It is
+  added to the written picture after the export resize and after every check, so a 2048 px export
+  shows the same grain as the full-size file seen at that size. "add grain" works in the text boxes.
 
 ### Safety layers (all data-driven, all still apply under learned/variant modes)
 
@@ -267,6 +272,86 @@ Cull modal's **Aesthetic** mode — Load model / Score only / Train. **API:** `P
 - **UI:** Settings → **Edit engine** (Rules / Learned) + Load recipe model. **CLI:**
   `autoedit train-recipe <dataset> <model.json>` and `autoedit run … --decider learned --recipe-model m.json`.
 
+### 8b2. Style from your edits (F27)
+
+- **History** (`--history`, `history = true` under `[run]`; off by default): every export adds one line to
+  `history.jsonl` in the profile: the scene, the photo's statistics, the look, and your own changes per
+  target. No pixels, paths, file names or typed sentences. `autoedit history status | clear --yes`.
+- **Suggestions:** `autoedit style suggest` lists a change you made on at least 12 photos, on at least 3
+  days, in the same direction on at least 70 % of the photos it could apply to ("You made the sky darker
+  on 14 of 17 landscapes"). `--yes NAME` saves it into a new look as a `habit` table. Nothing changes
+  without it. API: `GET /api/style/suggestions`, `POST /api/style/accept`. Thresholds: `style.toml`.
+
+### 8b3. Look files (F28)
+
+`autoedit looks export NAME [-o FILE.aelook] [--palette NAME] [--author ..] [--licence ..]` writes a look
+as one file; `autoedit looks import FILE [--name NEW] [--force]` checks it whole and installs it into the
+profile (a packaged name is never replaced); `autoedit looks card NAME [photos or folders] -o DIR` renders
+it on up to 12 photos as a before-and-after sheet (with no photos named: a drawn frame). CLI only.
+
+### 8b4. Teaching mode (F29)
+
+Two keys on `POST /api/preview`. `"steps": true` (or `{"px": 256..2560, "lossless": bool}`) adds the edit
+replayed one step at a time: source, regions, shapes, one step per tool group, palette, checks, finish,
+grain, each with its picture, values and three lesson lines from `lessons.toml`; the last step equals the
+preview. `"try": {"sliders": {...}, "compare": true}` renders the photo from your sliders and sentences
+only (no rules, look, palette or sharpening) and, with `compare`, the engine's version, both values side
+by side and the checks' facts ("your version clips 3 % of the sky"). A try is never exported.
+
+### 8b5. Pick the keepers (F35)
+
+`autoedit pick FOLDER [-o DIR] [--copy] [--aesthetic-model FILE] [--backend sam3]`: per burst (F9's finder),
+the frames ranked by the sharpness of the subject, exposure and the scorer if given; writes `ranking.json`,
+`ranking.csv`, `picks.txt` and `contact-sheet.html`; with `--copy` the picks into `picked/`. No source
+file is moved, renamed or changed. Weights in `configs/pick.toml`.
+
+### 8b6. Genre packs (F30)
+
+`--genre NAME` (CLI, run files, `"genre"` in API requests) lays a pack from `configs/genres.toml`
+under your own settings: a preset of things to find, a look, opt-in rule sets of `rules.toml` and
+run settings. `autoedit genres list` shows each pack, where it comes from and whether it is tested;
+a menu offers only tested packs and your own. A profile can add packs and change packaged ones.
+The two packaged packs, `landscape` and `alpine`, are untested for now (see the file's comment).
+
+### 8b7. Straighten and crop (F32)
+
+`--straighten` levels a clear waterline or horizon (found in the water and sky masks, so SAM 3 is
+needed; at most 5 degrees, a level photo is left alone); `--aspect 4:5` crops to a shape, placed on
+the subject. Both are off by default; an export preset can carry `aspect`. The sidecar's `geometry`
+gives the angle, the frame and the share kept. The cut is done at the export, after every check.
+
+### 8b8. Merge frames (F33)
+
+`autoedit merge FOLDER [-o DIR] [--mode auto|average|brackets|focus|trails] [--dry-run]` finds sets
+of frames shot seconds apart (F9's burst finder, plus a comparison at one exposure for brackets),
+aligns them by a whole-pixel shift and merges each set into one TIFF (16-bit with `tifffile`) with a
+`.merge.json` record of the frames used. `auto` picks `brackets` when the exposure settings differ by
+more than 0.5 EV, else `average`; `focus` and `trails` only by name. Frames more than 1 % of the long
+edge apart are refused (tripod only); things that moved are merged and flagged. The TIFF then goes
+through `autoedit run` like any photo. Settings in `configs/merge.toml`. No photo is ever changed.
+
+### 8b9. Exact colour and clean backgrounds (F34)
+
+For products, food, copies of artwork and school portraits, all off by default:
+`--neutral X,Y` makes a grey or white spot (shares of the frame) neutral on every photo of the run;
+`--neutral-from FILE` measures it once on one photo (the grey card shot) and gives every photo those
+numbers. A spot the white balance cannot make neutral (blown, too dark, a cast beyond its reach) is
+refused with its numbers, never half applied. `--backdrop` evens a light, near-neutral background that
+reaches the frame edge and takes it to 245 of 255; what SAM 3 found (subject, person, skin) is never
+touched. `--consistency-wb` evens white balance within a group as F9 evens brightness;
+`--colour-report` prints and records how far each photo's subject colour is from its group's.
+`autoedit adjust --neutral X,Y|none` changes the pick of one photo. Settings in `[neutral]`, `[backdrop]`
+and `[consistency]` of `rules.toml`.
+
+### 8b10. Night sky tools (F31)
+
+`--night-sky` (or `--genre astro`, which also turns on noise reduction and the `astro` look) treats a
+night frame (median at most 0.25 and ISO at least 1600, values in `[night_sky]` of `rules.toml`) as
+its own scene `night`: stuck coloured pixels are repaired, a smooth glow (a town's light pollution)
+is fitted inside the sky mask and taken off, the frame keeps its darkness, and noise reduction and
+sharpening leave star cores alone. Other frames get the usual rules. Off by default; the pack is
+untested until 20 night photos have been through the tone gate and a blind sheet.
+
 ### 8c. Variant engine (M7)
 
 `variants.py` — generate several recipes per photo, score, rank, auto-pick, review the uncertain.
@@ -276,10 +361,26 @@ Cull modal's **Aesthetic** mode — Load model / Score only / Train. **API:** `P
   are within a hair.
 - **UI:** the **Variants** button on the stage → ranked recipes with best/review badges → **Apply**.
   **API:** `POST /api/variants`. **CLI:** `autoedit rank-variants <image|folder>` → `variant-ranking.csv`.
+- **Surprise me (F26):** `"surprise": true` (and an optional `"seed"`) on `POST /api/variants` renders
+  six looks from the library, drawn by the seed (the same seed gives the same six; the photo's
+  current look is left out), and returns `seed` and `looks`. The **Surprise** button in Studio shows
+  them; a pick sets the look by name. `autoedit run ... --look surprise --seed N` prints the six and
+  runs the batch with the first; the sidecar records that look's name.
 
 ---
 
 ## 9. The Studio UI
+
+### 9a. AutoEdit Lab (F38)
+
+`/lab` serves `web/static/lab.html`, a second, minimal page beside Studio for trying the newer
+features: open a folder, a filmstrip, the photo large on a neutral grey; one box to say what to
+change, and Mark to draw an oval for a sentence about one place; look (with black-and-white and
+film looks), Surprise me, kind of photo (only tested packs and your own), strength, straighten and
+crop; hold the photo or B for the original; "How it was done" (the walk-through and every step);
+"Try it yourself" (seven sliders, compared with AutoEdit's version); export one photo or edit the
+checked ones. Culling, review, datasets and training stay in Studio. Dark only; its own
+storage key; a strict content policy (same-origin requests and `data:` images only).
 
 `autoedit ui` serves a single self-contained page (`web/static/studio.html`, vanilla HTML/CSS/JS,
 no build step) — a Lightroom/Capture One-shaped editor.
@@ -377,7 +478,7 @@ route list is pinned by `tests/snapshots/api_v1.json`.
 | File | Role |
 |---|---|
 | `rules.toml` | Per-`[scene.region]` op = expression (sandboxed AST). The rule baseline + `[guard]` (guarded ops, chroma cap) + `[banding]` + optional `[quality_gate]`. |
-| `looks.toml` | Magnitude profiles (contrast_mul, curve_mul, exposure_mul, vibrance_add, saturation_add, curve/grade finishing). |
+| `looks.toml` | Magnitude profiles (contrast_mul, curve_mul, exposure_mul, vibrance_add, saturation_add, curve/grade finishing), `grain`, `dehaze_add` and black and white (`bw` and six colour weights). Packaged: natural, editorial, punchy, warm_film, dramatic, and bw_classic, bw_red_filter, bw_soft, film_warm, film_cool, film_faded, cross_process, instant. |
 | `styles.toml` | User-facing styles = look + concepts + brief. |
 | `palettes.toml` | OKLab regional palettes (shadow/mid/highlight hue+chroma, neutral protection). |
 | `intents.toml` | Free-text look vocabulary → bounded nudges. |

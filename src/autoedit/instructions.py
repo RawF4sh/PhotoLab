@@ -30,6 +30,8 @@ LIGHT_TARGET = PLACE + "light"  # the one place that needs a segmented concept: 
 LIGHT_CONCEPT = "sun"
 LAYER = "instruction:"          # name of the compositional layer a place becomes
 SIZE_ON_OBJECT = "size only applies to a gradient, an oval or a glow"
+WHOLE_PHOTO_OPS = frozenset({"grain", "lut"})   # finishing ops (F23, F25): one value for the whole photo, never for a part
+WHOLE_PHOTO = "grain is for the whole photo"
 _PLACE_SHAPES = ("gradient", "oval", "oval_outside", "glow")
 
 
@@ -440,7 +442,11 @@ def parse(text: str | None, vocab: Vocab, known=(), mark=None) -> tuple[list[Adj
                 verbs = donor["verbs"]
                 amount = donor["amount"] if amount is None else amount
                 size = donor["size"] if size is None else size
+            whole = bool(WHOLE_PHOTO_OPS & set(vocab.verbs[verbs[0]]))
             if mark:
+                if whole:
+                    why = WHOLE_PHOTO
+                    break
                 area = part["area"] or vocab.verb_place.get(verbs[0]) == "light"
                 if not concept and not part["det"] and not area:   # borrow the donor's name
                     after = [j for j in with_concept if j > i]
@@ -463,7 +469,7 @@ def parse(text: str | None, vocab: Vocab, known=(), mark=None) -> tuple[list[Adj
             elif not concept and part["det"]:    # "darken the": a target was announced, none came
                 why = "no target"
                 break
-            elif not concept:  # "brighten and warm the jacket": the first part borrows the target
+            elif not concept and not whole:  # "brighten and warm the jacket": the first part borrows the target
                 after = [j for j in with_concept if j > i]
                 before = [j for j in with_concept if j < i]
                 concept = parts[after[0]]["concept"] if after else (
@@ -471,6 +477,9 @@ def parse(text: str | None, vocab: Vocab, known=(), mark=None) -> tuple[list[Adj
             target = _canonical(concept, known, vocab)
             if target is None:
                 why = "target too long"
+                break
+            if whole and target != GLOBAL:
+                why = WHOLE_PHOTO
                 break
             if size is not None and not is_place(target):
                 why = SIZE_ON_OBJECT
@@ -485,6 +494,25 @@ def parse(text: str | None, vocab: Vocab, known=(), mark=None) -> tuple[list[Adj
         else:
             out += found
     return out, problems
+
+
+def habit_adjustments(habit: dict, look: str, vocab: Vocab) -> dict[str, list[Adjustment]]:
+    """A look's habit (F27) as typed instructions: scene -> adjustments of scope "look". Their source
+    makes `_summed` clamp them together with the typed changes. A ValueError for an op without a
+    limit and for a place that does not exist."""
+    out: dict[str, list[Adjustment]] = {}
+    for scene, targets in habit.items():
+        for target, ops in targets.items():
+            for op in ops:
+                if op not in vocab.limits:
+                    raise ValueError(f"look {look}: habit {scene}.{target} has {op}; a look can only repeat "
+                                     "ops that have a limit under [limits] in instructions.toml")
+            if is_place(target) and target[len(PLACE):] not in vocab.places:
+                raise ValueError(f"look {look}: habit {scene}.{target}: there is no place "
+                                 f"{target[len(PLACE):]!r} in instructions.toml")
+            out.setdefault(scene, []).append(
+                Adjustment(target=target, ops=dict(ops), source=f"look {look}", scope="look"))
+    return out
 
 
 def extra_concepts(adjustments: list[Adjustment], concepts: list[str]) -> list[str]:
@@ -759,7 +787,7 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
     read the clauses with via "local" (F20)."""
     notes: list[str] = []
     for a in adjustments:
-        label = f'instruction "{a.source}"' if a.source else "adjustment"
+        label = a.source if a.scope == "look" else (f'instruction "{a.source}"' if a.source else "adjustment")
         asked = ", ".join(f"{op} {delta:+.2f}" for op, delta in a.ops.items())
         where = "the whole photo" if a.target == GLOBAL else a.target
         if is_place(a.target):

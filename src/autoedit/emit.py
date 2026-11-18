@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 import numpy as np
 
-from . import __version__
+from . import __version__, geometry as geometry_mod, history
 from .contract import DetectedConcept, GlobalStatsModel, MaskOps, RegionStatsModel, Result, Settings
+from .edit import ops
 from .imageio import export_exif, resize_long_edge, save_image, srgb_profile
 
 
@@ -75,8 +77,20 @@ def write_sidecar(result: Result, path: str) -> None:
     os.replace(tmp, path)
 
 
+def grain_args(result: Result, cfg) -> tuple[float, float, int] | None:
+    """(amount, size, seed) for `ops.grain` on a picture of this result, or None for no grain.
+    The seed is a digest of the photo's file name: the same photo gets the same pattern in every
+    run and in every folder."""
+    amount = float(result.global_settings.get("grain", 0.0))
+    if amount <= 0.0:
+        return None
+    seed = int.from_bytes(hashlib.blake2b(result.image.encode("utf-8"), digest_size=4).digest(), "big")
+    return amount, float(cfg.grain_size), seed
+
+
 def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
-                source: str | None = None, metadata: str = "none", long_edge: int | None = None) -> str:
+                source: str | None = None, metadata: str = "none", long_edge: int | None = None,
+                grain: tuple[float, float, int] | None = None, geometry=None) -> str:
     """Write the baked image and return a one-line note for the sidecar ("" when there is
     nothing to say).
 
@@ -84,9 +98,15 @@ def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92
     the sRGB profile and, as `metadata` says, the source's EXIF. Without `source` the bytes are
     what they were before F1; measurement and contact-sheet exports rely on that.
 
-    `long_edge` shrinks the export first (never enlarges); the EXIF pixel size is the size written."""
+    `long_edge` shrinks the export first (never enlarges); the EXIF pixel size is the size written.
+    `grain` (see `grain_args`) is laid over the picture after that resize, directly before the encoder.
+    `geometry` (the result's `Geometry`, F32) turns and cuts the finished picture first, before the resize."""
+    if geometry is not None:
+        rgb = geometry_mod.warp(rgb, geometry)
     if long_edge:
         rgb = resize_long_edge(rgb, long_edge)
+    if grain:
+        rgb = ops.grain(rgb, *grain)
     if source is None:
         save_image(rgb, path, fmt=fmt, quality=quality)
         return ""
@@ -105,12 +125,19 @@ def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92
 def write_outputs(out_rgb, result: Result, image_out: str, sidecar: str, cfg, source: str) -> None:
     """Write the baked image (when there are pixels) and the sidecar that explains it."""
     if out_rgb is not None:
+        grain = grain_args(result, cfg)
         note = write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
-                           source=source, metadata=cfg.metadata, long_edge=cfg.out_long_edge)
+                           source=source, metadata=cfg.metadata, long_edge=cfg.out_long_edge, grain=grain,
+                           geometry=result.geometry)
         if note:
             result.notes.append(note)
+        if grain:
+            result.notes.append(f"grain: {grain[0]:.3g} of 100, size {grain[1]:g}, "
+                                "added to the export after the checks and the resize")
         result.audit["output"] = os.path.basename(image_out)
     write_sidecar(result, sidecar)
+    if out_rgb is not None:
+        history.record(result, cfg)
 
 
 _EXT = {"tiff": "tif", "webp": "webp", "png": "png"}

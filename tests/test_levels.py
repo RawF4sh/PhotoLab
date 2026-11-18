@@ -189,7 +189,7 @@ def test_registered_in_the_frozen_order():
         assert n in ops.OP_NAMES and ops.OP_BOUNDS[n] == (0.0, 100.0) and n in ops.SPATIAL_OPS
     names = [k for step in ops.STEPS for k in step]
     assert names.index("clarity") < names.index("black_point") < names.index("vibrance")
-    assert ops._TONE_KEYS == {k for step in ops.STEPS[:5] for k in step}
+    assert ops._TONE_KEYS == {k for step in ops.STEPS[1:6] for k in step}
     assert ops._TONE_KEYS.isdisjoint({"dehaze", "black_point"})
     assert {"vibrance", "hsl_skin_sat", "grade_shadows_temp"} <= ops._COLOUR_KEYS
     assert ops._COLOUR_KEYS.isdisjoint({"clarity", "black_point", "white_point", "sharpen"})

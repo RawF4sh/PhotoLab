@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:,">
+<title>AutoEdit Lab</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #121212; --panel: #171717; --stage: #1f1f1f; --raised: #262626; --hover: #2f2f2f; --line: #2c2c2c;
+  --text: #e3e3e3; --text-2: #a3a3a3; --text-3: #6e6e6e;
+  --accent: #8cb4ff; --on-accent: #0f1622; --ok: #86d29a; --warn: #f2c94c; --bad: #ff8a80; --mark: #c39bff;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --fs-s: 12px; --fs-m: 13px; --fs-l: 15px; --fs-xl: 18px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --r-s: 6px; --r-m: 10px; --r-pill: 999px;
+  --ctl: 32px; --h-bar: 48px; --w-panel: 320px; --tile: 56px;
+  --fast: 120ms; --slow: 180ms; --ease: cubic-bezier(.2, 0, 0, 1);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { background: var(--bg); }
+body {
+  margin: 0; height: 100dvh; display: grid; overflow: hidden;
+  grid-template: "bar bar" var(--h-bar) "main panel" 1fr "strip strip" auto / 1fr var(--w-panel);
+  background: var(--bg); color: var(--text); font: var(--fs-m)/1.45 var(--font);
+  font-variant-numeric: tabular-nums;
+}
+body:not([data-open]) { grid-template: "bar" var(--h-bar) "main" 1fr / 1fr; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+h2 { font-size: var(--fs-xl); font-weight: 600; }
+h3 { font-size: var(--fs-s); font-weight: 500; color: var(--text-2); margin: var(--sp-4) 0 var(--sp-2); }
+h2:focus { outline: none; }
+a { color: var(--accent); }
+::placeholder { color: var(--text-2); opacity: 1; }
+
+/* controls */
+button, select, input[type=text] { font: inherit; color: var(--text); }
+button, select {
+  min-height: var(--ctl); border-radius: var(--r-s); border: 1px solid var(--line); background: var(--raised);
+  padding: 0 var(--sp-3); cursor: pointer; transition: background var(--fast) var(--ease);
+}
+button:hover:not(:disabled), select:hover:not(:disabled) { background: var(--hover); }
+button:disabled, select:disabled { color: var(--text-3); cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #a3c3ff; }
+button.primary:disabled { background: var(--raised); border-color: var(--line); color: var(--text-3); }
+button.quiet { background: transparent; border-color: transparent; color: var(--text-2); }
+button.quiet:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+button[aria-pressed=true] { background: var(--hover); border-color: var(--text-2); }
+a.btn {
+  display: inline-flex; align-items: center; min-height: var(--ctl); padding: 0 var(--sp-3); border-radius: var(--r-s);
+  color: var(--text-2); text-decoration: none;
+}
+a.btn:hover { background: var(--hover); color: var(--text); }
+input[type=text] {
+  min-height: var(--ctl); border-radius: var(--r-s); border: 1px solid var(--line); background: var(--raised);
+  padding: 0 var(--sp-3); font-size: var(--fs-l);
+}
+input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+input[type=radio] { accent-color: var(--accent); margin: 0; }
+label.field { display: block; color: var(--text-2); font-size: var(--fs-s); font-weight: 500; margin: var(--sp-4) 0 var(--sp-1); }
+select { width: 100%; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0; background: transparent; }
+input[type=range]::-webkit-slider-runnable-track {
+  height: 2px; background: linear-gradient(to right, var(--text-2) var(--p, 0%), var(--line) var(--p, 0%));
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; margin-top: -6px; border-radius: 50%; border: 0; background: var(--text);
+}
+input[type=range]::-moz-range-track { height: 2px; background: var(--line); }
+input[type=range]::-moz-range-progress { height: 2px; background: var(--text-2); }
+input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; border: 0; background: var(--text); }
+input[type=range]:disabled { opacity: .5; }
+
+/* bar */
+#bar {
+  grid-area: bar; display: flex; align-items: center; gap: var(--sp-3); padding: 0 var(--sp-4);
+  background: var(--bg); border-bottom: 1px solid var(--line); min-width: 0;
+}
+.brand { font-weight: 600; font-size: var(--fs-l); white-space: nowrap; }
+#folder { color: var(--text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* main: stage and prompt */
+main { grid-area: main; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--stage); }
+#stage { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#busy { position: absolute; top: 0; left: 0; right: 0; height: 2px; overflow: hidden; z-index: 3; }
+#busy::after {
+  content: ""; position: absolute; top: 0; height: 100%; width: 30%; background: var(--accent);
+  animation: sweep 1.2s var(--ease) infinite;
+}
+@keyframes sweep { from { left: -30%; } to { left: 100%; } }
+.stagebar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); min-height: 48px; flex-wrap: wrap; }
+#status { flex: 1; min-width: 0; color: var(--text-2); }
+#secs { color: var(--text-2); }
+.warn { color: var(--warn); } .bad { color: var(--bad); } .ok { color: var(--ok); }
+#which { display: inline-flex; gap: var(--sp-1); }
+body:not([data-open]) #origBtn { display: none; }
+#canvas { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#empty { text-align: center; display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); padding: var(--sp-5); }
+#empty p:first-child { font-size: var(--fs-xl); }
+#empty p + p { color: var(--text-2); }
+#frame {
+  position: relative; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  background: var(--stage);
+}
+body.marking #frame { cursor: crosshair; }
+#frame img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; visibility: hidden; pointer-events: none; -webkit-user-drag: none; }
+#frame[data-showing=after] #after, #frame[data-showing=before] #before, #frame[data-showing=engine] #engine { visibility: visible; }
+#tint, #ovals { position: absolute; inset: 0; pointer-events: none; }
+.tl { position: absolute; inset: 0; opacity: .45; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+.oval { position: absolute; border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(0, 0, 0, .6); }
+.oval.pend { border-style: dashed; }
+#tag {
+  position: absolute; top: var(--sp-2); left: var(--sp-2); padding: 2px var(--sp-2); border-radius: var(--r-pill);
+  background: rgba(18, 18, 18, .8); color: var(--text); font-size: var(--fs-s); pointer-events: none;
+}
+
+/* prompt and chips */
+#prompt { padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--line); background: var(--stage); }
+.promptrow { display: flex; align-items: center; gap: var(--sp-2); }
+#markTag { color: var(--mark); font-size: var(--fs-s); white-space: nowrap; }
+#say { flex: 1; min-width: 0; }
+body:not([data-open]) #prompt, body:not([data-open]) #panel, body:not([data-open]) #strip { display: none; }
+#chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
+#chips:empty { display: none; }
+.chip { background: var(--raised); border: 1px solid var(--line); border-radius: 14px; max-width: 100%; }
+.chip .row { display: flex; align-items: center; gap: var(--sp-2); min-height: 26px; padding: 0 var(--sp-1) 0 var(--sp-3); }
+.chip .txt { overflow-wrap: anywhere; }
+.chip .x { min-height: 24px; width: 24px; padding: 0; border: 0; background: transparent; color: var(--text-2); border-radius: 50%; }
+.chip .x:hover { background: var(--hover); color: var(--text); }
+.chip.bad { border-color: var(--bad); }
+.chip .tg { color: var(--text-2); font-size: var(--fs-s); }
+.chip.bad .tg { color: var(--bad); }
+.chip .st { padding: 0 var(--sp-3) var(--sp-1); font-size: var(--fs-s); color: var(--text-2); display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.chip .st.bad { color: var(--bad); }
+.chip .st button { min-height: 24px; font-size: var(--fs-s); padding: 0 var(--sp-2); }
+.glyph { width: 10px; height: 7px; border-radius: 50%; border: 1.5px solid var(--mark); flex: none; }
+
+/* panel */
+#panel { grid-area: panel; background: var(--panel); border-left: 1px solid var(--line); padding: var(--sp-4); overflow-y: auto; min-height: 0; }
+#photoMeta, #genreNote, #exportNote, #geoNote, #stepStatus { color: var(--text-2); font-size: var(--fs-s); }
+#photoMeta { min-height: 18px; margin-bottom: var(--sp-1); }
+#genreNote, #geoNote { margin-top: var(--sp-1); }
+.line2 { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+#strengthVal { font-variant-numeric: tabular-nums; }
+#strengthReset { min-height: 24px; font-size: var(--fs-s); }
+#strengthReset::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-right: 6px; }
+.check { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-4); min-height: var(--ctl); cursor: pointer; }
+.nav { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: var(--sp-3); text-align: left; }
+.nav + .nav { margin-top: var(--sp-2); }
+#export { width: 100%; margin-top: var(--sp-5); }
+#exportNote { margin-top: var(--sp-2); min-height: 18px; }
+.back { margin: 0 0 var(--sp-3) calc(var(--sp-3) * -1); }
+ol.list { display: flex; flex-direction: column; gap: var(--sp-1); }
+#changes li { padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-s); font-size: var(--fs-s); color: var(--text-2); }
+#changes li:hover, #changes li:focus-within { background: var(--raised); }
+#changes .lab { color: var(--text); font-size: var(--fs-m); }
+#changes .lab q { color: var(--text-2); }
+#changes p + p { margin-top: 2px; }
+#steps button { width: 100%; text-align: left; border-color: transparent; background: transparent; }
+#steps button:hover { background: var(--hover); }
+#steps button[aria-current=step] { background: var(--raised); border-color: var(--line); color: var(--accent); }
+#stepDetail { margin-top: var(--sp-3); font-size: var(--fs-s); color: var(--text-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+#stepDetail strong { color: var(--text); font-size: var(--fs-m); font-weight: 600; }
+#stepDetail .where { padding: 2px var(--sp-2); border-radius: var(--r-s); }
+#stepDetail .where:hover, #stepDetail .where:focus { background: var(--raised); }
+.field-row { margin-top: var(--sp-4); color: var(--text-2); font-size: var(--fs-s); font-weight: 500; }
+.sl { margin-top: var(--sp-3); }
+.sl .line2 span:last-child { font-variant-numeric: tabular-nums; color: var(--text-2); }
+#lesson { margin-top: var(--sp-3); font-size: var(--fs-s); color: var(--text-2); min-height: 54px; }
+#lesson strong { color: var(--text); }
+#tryCompare, #tryReset { margin-top: var(--sp-3); margin-right: var(--sp-2); }
+#facts { margin-top: var(--sp-3); font-size: var(--fs-s); display: flex; flex-direction: column; gap: var(--sp-2); }
+#facts li { display: flex; gap: var(--sp-2); color: var(--text-2); }
+.pt { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-top: 5px; flex: none; }
+#values { width: 100%; border-collapse: collapse; margin-top: var(--sp-3); font-size: var(--fs-s); }
+#values th { text-align: left; font-weight: 500; color: var(--text-2); padding: 3px 0; }
+#values th.n, #values td.n { text-align: right; }
+#values td { padding: 3px 0; border-top: 1px solid var(--line); }
+#values tr.grp th { color: var(--text); padding-top: var(--sp-3); }
+#said, .fine { margin-top: var(--sp-3); font-size: var(--fs-s); color: var(--text-2); }
+
+/* strip */
+#strip { grid-area: strip; background: var(--panel); border-top: 1px solid var(--line); padding: var(--sp-2) var(--sp-4); min-width: 0; }
+.striprow { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; min-height: 40px; }
+.striprow label { display: inline-flex; align-items: center; gap: var(--sp-2); }
+#count { color: var(--text-2); }
+#batchNote { flex: 1; text-align: right; color: var(--text-2); min-width: 0; }
+#batchBar { height: 2px; background: var(--line); margin: 2px 0 var(--sp-2); }
+#batchBar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--slow) var(--ease); }
+#film { display: flex; gap: var(--sp-2); overflow-x: auto; padding: 4px 2px var(--sp-2); }
+#film li { position: relative; flex: none; width: var(--tile); height: var(--tile); }
+.tile { width: var(--tile); height: var(--tile); padding: 0; overflow: hidden; border-radius: var(--r-s); background: var(--raised); }
+.tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile[aria-current=true] { outline: 2px solid var(--accent); outline-offset: 1px; }
+#film li > input { position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; }
+.dot { position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .6); display: none; pointer-events: none; }
+.dot[data-status] { display: block; }
+.dot[data-status=waiting] { background: var(--text-2); }
+.dot[data-status=editing] { background: var(--accent); }
+.dot[data-status=finished] { background: var(--ok); }
+.dot[data-status=review] { background: var(--warn); }
+.dot[data-status=failed] { background: var(--bad); }
+
+/* dialogs */
+dialog {
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-m); padding: 0;
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
+}
+dialog::backdrop { background: rgba(0, 0, 0, .6); }
+.dlg { padding: var(--sp-5); }
+.dlg h2 { margin-bottom: var(--sp-3); }
+.dlg h3 { margin-top: var(--sp-5); }
+.dlg label.radio { display: flex; gap: var(--sp-2); align-items: center; min-height: var(--ctl); cursor: pointer; }
+.dlg .foot { display: flex; justify-content: flex-end; margin-top: var(--sp-5); }
+.dlg dl { display: grid; grid-template-columns: auto 1fr; gap: var(--sp-1) var(--sp-4); margin: 0; }
+.dlg dt { color: var(--text); } .dlg dd { margin: 0; color: var(--text-2); }
+#styleList li { margin-top: var(--sp-2); } #styleList small { display: block; color: var(--text-2); font-size: var(--fs-s); }
+#surpriseGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--sp-3); margin-top: var(--sp-3); }
+.lookTile { display: flex; flex-direction: column; align-items: stretch; padding: var(--sp-2); height: auto; text-align: left; gap: var(--sp-1); }
+.lookTile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; background: var(--stage); }
+.lookTile small { color: var(--warn); font-size: var(--fs-s); }
+
+/* tablet and phone */
+@media (max-width: 1023px) { :root { --w-panel: 280px; } }
+@media (max-width: 719px) {
+  body, body:not([data-open]) { display: flex; flex-direction: column; height: auto; overflow: auto; overflow-x: hidden; }
+  #bar { padding: 0 var(--sp-4); gap: var(--sp-1); }
+  .brand { font-size: var(--fs-m); }
+  #strip { order: 3; } #panel { order: 4; }
+  main { min-height: 0; }
+  #stage { flex: none; height: 56vh; }
+  #panel { border-left: 0; border-top: 1px solid var(--line); }
+  #prompt .promptrow { flex-wrap: wrap; }
+  #say { flex-basis: 100%; order: 3; }
+  #batchNote { flex-basis: 100%; text-align: left; }
+  #folder { display: none; }
+  a#studio, #bar button { padding: 0 var(--sp-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+  #busy::after { left: 0; width: 100%; opacity: .6; }
+}
+</style>
+</head>
+<body>
+
+<header id="bar">
+  <span class="brand">AutoEdit Lab</span>
+  <span id="folder"></span>
+  <button id="open" type="button" class="quiet">Open folder</button>
+  <a id="studio" class="btn" href="/">Studio</a>
+  <button id="settingsBtn" type="button" class="quiet">Settings</button>
+</header>
+
+<main>
+  <section id="stage" aria-label="Photo">
+    <div id="busy" hidden></div>
+    <div class="stagebar">
+      <p id="status" aria-live="polite"></p><span id="secs" aria-hidden="true"></span>
+      <span id="which" hidden>
+        <button id="whichYours" type="button" aria-pressed="true">Yours</button>
+        <button id="whichEngine" type="button" aria-pressed="false">AutoEdit</button>
+      </span>
+      <button id="origBtn" type="button" aria-pressed="false">Original</button>
+    </div>
+    <div id="canvas">
+      <div id="empty">
+        <p>Open a folder of photos to begin.</p>
+        <button id="open2" type="button" class="primary">Open folder</button>
+        <p>Your photos stay on this computer.</p>
+      </div>
+      <div id="frame" role="img" tabindex="0" data-showing="after" aria-label="Photo. Hold B to see the original." hidden>
+        <img id="before" alt="Original"><img id="after" alt="Edited photo"><img id="engine" alt="AutoEdit's edit">
+        <div id="tint"></div>
+        <div id="ovals"><div id="ghost" class="oval" hidden></div><div id="pend" class="oval pend" hidden></div></div>
+        <div id="tag" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <form id="prompt" autocomplete="off">
+    <div class="promptrow">
+      <button id="markBtn" type="button" aria-pressed="false">Mark</button>
+      <span id="markTag" hidden>for the oval</span>
+      <input id="say" type="text" aria-label="Say what to change" placeholder="Say what to change, e.g. warm the photo a little">
+      <button id="apply" type="submit">Apply</button>
+    </div>
+    <ul id="chips" aria-label="Your changes on this photo"></ul>
+  </form>
+</main>
+
+<aside id="panel" aria-label="Edit">
+  <div id="viewEdit">
+    <h2 id="photoName" tabindex="-1"></h2>
+    <p id="photoMeta"></p>
+    <label class="field" for="look">Look</label>
+    <select id="look"><option value="">Default</option></select>
+    <button id="surpriseBtn" type="button" class="quiet nav">Surprise me</button>
+    <div id="genreField" hidden>
+    <label class="field" for="genre">Kind of photo</label>
+    <select id="genre"><option value="">None</option></select>
+    <p id="genreNote"></p>
+    </div>
+    <div class="line2 field-row"><label class="field" for="strength" style="margin:0">Strength</label>
+      <span><span id="strengthVal">0.80</span> <button id="strengthReset" type="button" class="quiet" hidden>Reset</button></span></div>
+    <input id="strength" type="range" min="0" max="2" step="0.05" value="0.8">
+    <label class="check"><input id="straighten" type="checkbox"> Straighten</label>
+    <label class="field" for="crop">Crop</label>
+    <select id="crop">
+      <option value="">Off</option><option value="4:5">4:5</option><option value="1:1">1:1</option>
+      <option value="3:2">3:2</option><option value="16:9">16:9</option>
+    </select>
+    <p id="geoNote"></p>
+    <button id="howBtn" type="button" class="nav"><span>How it was done</span><span aria-hidden="true">›</span></button>
+    <button id="tryBtn" type="button" class="nav"><span>Try it yourself</span><span aria-hidden="true">›</span></button>
+    <button id="export" type="button" class="primary">Export photo</button>
+    <p id="exportNote" aria-live="polite"></p>
+  </div>
+
+  <div id="viewHow" hidden>
+    <button id="howBack" type="button" class="quiet back">← Edit</button>
+    <h2 id="howTitle" tabindex="-1">How it was done</h2>
+    <h3>Your changes</h3>
+    <ol id="changes" class="list"></ol>
+    <h3>Every step</h3>
+    <ol id="steps" class="list"></ol>
+    <div id="stepDetail"></div>
+  </div>
+
+  <div id="viewTry" hidden>
+    <button id="tryBack" type="button" class="quiet back">← Edit</button>
+    <h2 id="tryTitle" tabindex="-1">Try it yourself</h2>
+    <div id="sliders"></div>
+    <div id="lesson"></div>
+    <button id="tryCompare" type="button" aria-pressed="false">Compare with AutoEdit</button>
+    <button id="tryReset" type="button">Reset</button>
+    <ul id="facts"></ul>
+    <table id="values" hidden>
+      <thead><tr><th scope="col">Tool</th><th scope="col" class="n">Yours</th><th scope="col" class="n">AutoEdit</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="said"></p>
+    <p class="fine">Export saves AutoEdit's edit with your sentences and marks, not these sliders.</p>
+  </div>
+</aside>
+
+<nav id="strip" aria-label="Photos">
+  <div class="striprow">
+    <label><input id="all" type="checkbox"> All</label>
+    <span id="count"></span>
+    <span id="batchNote" aria-live="polite"></span>
+    <button id="pause" type="button" hidden>Pause</button>
+    <button id="cancel" type="button" hidden>Cancel</button>
+    <button id="batchBtn" type="button" class="primary">Edit photos</button>
+  </div>
+  <div id="batchBar" hidden><i></i></div>
+  <ul id="film"></ul>
+</nav>
+
+<dialog id="settings" aria-labelledby="settingsTitle">
+  <div class="dlg">
+    <h2 id="settingsTitle">Settings</h2>
+    <h3>Region finder</h3>
+    <div id="finders"></div>
+    <p id="finderHelp" class="fine"></p>
+    <h3>Your style</h3>
+    <p id="styleNote" class="fine"></p>
+    <ul id="styleList"></ul>
+    <h3>Keys</h3>
+    <dl>
+      <dt>← →</dt><dd>Previous or next photo (in How it was done, the step)</dd>
+      <dt>B</dt><dd>Hold to see the original</dd>
+      <dt>O</dt><dd>Mark: draw an oval on the photo</dd>
+      <dt>/</dt><dd>Go to the box that says what to change</dd>
+      <dt>1 2</dt><dd>Yours or AutoEdit, after a compare</dd>
+      <dt>Esc</dt><dd>Drop the oval, leave Mark, go back to Edit</dd>
+    </dl>
+    <p class="fine">Culling, review labels, datasets and training are in <a href="/">Studio</a>.</p>
+    <p id="version" class="fine"></p>
+    <div class="foot"><button id="settingsClose" type="button">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="surprise" aria-labelledby="surpriseTitle">
+  <div class="dlg">
+    <h2 id="surpriseTitle">Surprise me</h2>
+    <p id="surpriseNote" class="fine"></p>
+    <div id="surpriseGrid"></div>
+    <div class="foot">
+      <button id="surpriseMore" type="button">Six more</button>
+      <button id="surpriseClose" type="button" style="margin-left:8px">Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+const DEFAULT_FINDER = 'auto', STORE = 'autoedit.lab.v1', MAX_TEXT = 2000, MAX_MARKS = 20, MIN_SIDE = 0.01;
+const NO_SERVER = 'AutoEdit is not answering. Start it with autoedit ui, then reload.';
+const FINDERS = {auto: 'Auto (SAM 3 when it is installed)', sam3: 'SAM 3', stub: 'Stub (no model)'};
+const LAB = {dir: '', files: [], sel: -1, view: 'edit', finder: DEFAULT_FINDER, look: '', genre: '', strength: null,
+  straighten: false, aspect: '', entries: Object.create(null), pending: null, marking: false, hold: false, answer: null,
+  how: null, step: 0, tried: null, sliders: {}, compare: false, which: 'yours', busy: 0, job: null};
+let GENRES = [], DEFAULT_STRENGTH = 0.8, selTimer = 0;
+const $ = s => document.querySelector(s), isMark = e => e !== null && typeof e === 'object';
+const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x != null) n.textContent = x; return n; };
+const photo = () => LAB.files[LAB.sel] || null;
+const nice = s => { const t = String(s).replaceAll('_', ' ').replace(/^bw\b/, 'B&W'); return t.charAt(0).toUpperCase() + t.slice(1); };
+
+function options() {          // what the user set, plus the finder: a key that is sent wins over a genre (F30)
+  const o = {backend: LAB.finder};
+  if (LAB.look) o.look = LAB.look; if (LAB.genre) o.genre = LAB.genre; if (LAB.strength !== null) o.intensity = LAB.strength;
+  if (LAB.straighten) o.straighten = true; if (LAB.aspect) o.out_aspect = LAB.aspect;
+  return o;
+}
+const textOf = l => l.filter(e => !isMark(e)).map(s => s.trim().replace(/[.\s]+$/, '')).filter(Boolean).join('. ');
+const marksOf = l => l.filter(isMark).map(m => ({box: m.box, kind: m.kind, edit: m.edit}));
+function previewBody() {      // B of the API table; also a console handle of the walk-through
+  const p = LAB.files[LAB.sel]; if (!p) return null;
+  const l = LAB.entries[p.path] || [], b = {file: p.path, ...options()}, t = textOf(l), m = marksOf(l);
+  if (t) b.photo_edit = t; if (m.length) b.photo_marks = m;
+  return b;
+}
+const errText = e => e instanceof TypeError ? NO_SERVER : (e && e.message) || String(e);
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || 'The server answered ' + r.status);
+  return j;
+}
+async function getj(url) {
+  const r = await fetch(url), j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || 'The server answered ' + r.status);
+  return j;
+}
+const BODIES = {edit: () => previewBody(),
+  how: () => previewBody() && {...previewBody(), steps: true},
+  try: () => previewBody() && {...previewBody(), try: {sliders: {...LAB.sliders}, compare: LAB.compare}}};
+const SHOW = {edit: showEdit, how: showHow, try: showTry};
+const flights = {};           // per view: one request in flight, the latest state wins
+async function once(kind) {
+  const f = flights[kind] ||= {busy: false, again: false, shown: ''}, body = BODIES[kind]();
+  if (!body) return; const key = JSON.stringify(body);
+  if (key === f.shown) return;                      // the view shows this state already
+  if (f.busy) { f.again = true; return; }
+  f.busy = true; setBusy(1);
+  try { const j = await post('/api/v1/preview', body); if (JSON.stringify(BODIES[kind]()) === key) { f.shown = key; SHOW[kind](j); } }
+  catch (e) { if (JSON.stringify(BODIES[kind]()) === key) say(errText(e), 'bad'); }
+  f.busy = false; setBusy(-1);
+  if (f.again) { f.again = false; once(kind); }
+}
+const refresh = () => once(LAB.view);
+const DATA = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/, PNG = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+const pic = s => (typeof s === 'string' && DATA.test(s) ? s : '');   // every picture of an answer; '' keeps the old src
+const thumb = (path, px) => '/api/v1/thumb?px=' + px + '&path=' + encodeURIComponent(path);
+const join = (dir, name) => dir.replace(/\/+$/, '') + '/' + name;
+const setImg = (id, s) => { const v = pic(s); if (v) $(id).src = v; };
+const setThumb = id => { const p = photo(); if (p) $(id).src = thumb(p.thumb, 1600); };
+
+/* ---- status, busy ---------------------------------------------------------------------------- */
+let busyTimer = 0, busyFrom = 0;
+function say(text, kind) { const s = $('#status'); s.className = kind || ''; s.textContent = text || ''; }
+function sayParts(parts) {    // [[text, kind], ...]
+  const s = $('#status'); s.className = ''; s.replaceChildren();
+  parts.forEach(([t, k]) => { const n = el('span', k || '', t); s.appendChild(n); });
+}
+function setBusy(d) {
+  const was = LAB.busy > 0; LAB.busy = Math.max(0, LAB.busy + d);
+  $('#busy').hidden = LAB.busy === 0;
+  if (LAB.busy > 0 && !was) {
+    say('Working…'); busyFrom = Date.now(); $('#secs').textContent = '';
+    busyTimer = setInterval(() => { const s = Math.floor((Date.now() - busyFrom) / 1000); $('#secs').textContent = s >= 3 ? ' ' + s + ' s' : ''; }, 500);
+  }
+  if (LAB.busy === 0) { clearInterval(busyTimer); busyTimer = 0; $('#secs').textContent = '';
+    if ($('#status').textContent === 'Working…') { const j = curAnswer(); if (j) metaLine(j); else say(''); } }
+}
+
+/* ---- storage --------------------------------------------------------------------------------- */
+const okMark = x => isMark(x) && Array.isArray(x.box) && x.box.length === 4
+  && x.box.every(v => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1)
+  && x.box[2] - x.box[0] >= MIN_SIDE && x.box[3] - x.box[1] >= MIN_SIDE && (x.kind === 'auto' || x.kind === 'area')
+  && typeof x.edit === 'string' && x.edit.trim() !== '' && x.edit.length <= 300;
+function loadStore() {
+  try {
+    const j = JSON.parse(localStorage.getItem(STORE) || 'null'); if (!j || typeof j !== 'object') return;
+    if (['auto', 'sam3', 'stub'].includes(j.finder)) LAB.finder = j.finder;
+    if (!j.entries || typeof j.entries !== 'object') return;
+    for (const [path, l] of Object.entries(j.entries)) {
+      if (!Array.isArray(l)) continue;
+      const keep = l.filter(e => (typeof e === 'string' && e.trim() !== '' && e.length <= MAX_TEXT) || okMark(e))
+        .map(e => typeof e === 'string' ? e : {box: e.box, kind: e.kind, edit: e.edit});
+      const ok = []; let marks = 0;     // the server's own limits: 20 marks, 2000 characters of text
+      for (const e of keep) { if (typeof e === 'string' ? textOf([...ok, e]).length > MAX_TEXT : ++marks > MAX_MARKS) continue; ok.push(e); }
+      if (ok.length) LAB.entries[path] = ok;
+    }
+  } catch (_) { /* no storage: the page still works */ }
+}
+function saveStore() {
+  try {
+    const entries = {};
+    for (const [p, l] of Object.entries(LAB.entries)) if (l.length) entries[p] = l;
+    localStorage.setItem(STORE, JSON.stringify({v: 1, finder: LAB.finder, entries}));
+  } catch (_) { /* quota, private window */ }
+}
+
+/* ---- values ---------------------------------------------------------------------------------- */
+function fmtVal(op, v) {
+  if (typeof v !== 'number' || !isFinite(v)) return v == null ? '' : String(v);
+  if (op === 'exposure' || op === 'shadows_ev') return (v < 0 ? '-' : '+') + Math.abs(v).toFixed(2) + ' EV';
+  return (v < 0 ? '-' : '+') + Math.abs(v).toFixed(1).replace(/\.0$/, '');
+}
+const pct = x => { const v = (+x || 0) * 100; return (v < 10 && v !== 0 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)) + ' %'; };
+const MARK_NAME = /mark:(thing|area):(?:\d(?:\.\d+)?,){3}\d(?:\.\d+)?(?::([^/@]*))?(?:\/([^@]*))?(?:@(.*))?$/;
+function niceName(n) {
+  const s = String(n), m = MARK_NAME.exec(s); if (!m) return s;
+  const bits = ['marked ' + (m[1] === 'thing' && m[2] ? m[2] : 'area')];
+  if (m[3]) bits.push(m[3] === 'guarded' ? 'protected part' : m[3]); if (m[4]) bits.push(m[4]);
+  return bits.join(' · ');
+}
+const toolText = t => typeof t === 'string' ? t : ((t.name || t.op || '') + ' ' + fmtVal(t.op, t.value)).trim();
+const ASPECT_LINE = g => {
+  if (!g || (!g.line && !g.aspect)) return '';
+  const a = g.line ? 'Straightened ' + Math.abs(+g.angle || 0).toFixed(1) + '°' : '';
+  const b = g.aspect ? (a ? ' and cropped to ' : 'Cropped to ') + g.aspect : '';
+  return a + b + (typeof g.kept === 'number' && g.kept < 0.995 ? ', ' + Math.round(g.kept * 100) + ' % kept' : '');
+};
+
+/* ---- the frame ------------------------------------------------------------------------------- */
+function fit() {              // the frame takes the picture's shape inside #canvas; on load of #after and on resize
+  const img = $('#after'), c = $('#canvas'), w = img.naturalWidth, h = img.naturalHeight; if (!w || !h) return;
+  const s = Math.min((c.clientWidth - 32) / w, (c.clientHeight - 32) / h);
+  $('#frame').style.width = Math.max(1, Math.floor(w * s)) + 'px'; $('#frame').style.height = Math.max(1, Math.floor(h * s)) + 'px';
+}
+function tint(list, color) {
+  const t = $('#tint'); t.replaceChildren();
+  (list || []).forEach(o => {
+    const a = o && o.alpha; if (typeof a !== 'string' || !PNG.test(a)) return;
+    const d = el('div', 'tl'); d.style.backgroundColor = color;
+    const u = 'url("' + a + '")'; d.style.maskImage = u; d.style.webkitMaskImage = u; t.appendChild(d);
+  });
+}
+function placeOval(n, box) {
+  n.style.left = box[0] * 100 + '%'; n.style.top = box[1] * 100 + '%';
+  n.style.width = (box[2] - box[0]) * 100 + '%'; n.style.height = (box[3] - box[1]) * 100 + '%';
+}
+function ghost(box) { const g = $('#ghost'); if (LAB.straighten || LAB.aspect) return; if (Array.isArray(box) && box.length === 4 && box.every(Number.isFinite)) { placeOval(g, box); g.hidden = false; } else g.hidden = true; }
+function unghost() { $('#ghost').hidden = true; $('#tint').replaceChildren(); }
+function showing() {
+  const engine = LAB.view === 'try' && LAB.compare && LAB.which === 'engine' && LAB.tried && LAB.tried.compare;
+  const s = LAB.hold ? 'before' : engine ? 'engine' : 'after';
+  $('#frame').dataset.showing = s;
+  const tag = $('#tag');
+  tag.hidden = s === 'after'; tag.textContent = s === 'before' ? (LAB.view === 'how' ? 'Before this step' : 'Original') : "AutoEdit's edit";
+  $('#origBtn').setAttribute('aria-pressed', String(LAB.hold));
+}
+function setHold(on) { if (LAB.hold === on) return; LAB.hold = on; showing(); }
+function clearPending() { LAB.pending = null; $('#pend').hidden = true; $('#markTag').hidden = true; $('#say').placeholder = 'Say what to change, e.g. warm the photo a little'; }
+function setPending(box) {
+  LAB.pending = box; placeOval($('#pend'), box); $('#pend').hidden = false; $('#markTag').hidden = false;
+  $('#say').placeholder = 'What should change in the oval? e.g. brighten this a little'; $('#say').focus();
+}
+function setMarking(on) {
+  LAB.marking = on; $('#markBtn').setAttribute('aria-pressed', String(on)); document.body.classList.toggle('marking', on);
+  if (!on) clearPending();
+}
+
+/* ---- the strip and the folder ---------------------------------------------------------------- */
+async function loadFolderPath(path) {     // the picker's folder; also a console handle of the walk-through
+  const r = await fetch('/api/v1/groups?dir=' + encodeURIComponent(path)), g = await r.json().catch(() => ({}));
+  if (!r.ok || !Array.isArray(g)) return say(g.error || 'The folder could not be read.', 'bad');
+  if (!g.length) return say('No photos in this folder.');
+  LAB.dir = path;
+  LAB.files = g.map(x => ({name: x.raw || x.pixel, path: join(path, x.raw || x.pixel),
+    thumb: join(path, x.pixel || x.raw), checked: true, status: ''}));
+  document.body.dataset.open = '1';
+  $('#folder').textContent = path.replace(/\/+$/, '').split(/[\\/]/).pop(); $('#folder').title = path;
+  $('#empty').hidden = true; $('#frame').hidden = false;
+  renderStrip(); select(0);
+}
+function renderStrip() {
+  const ul = $('#film'); ul.replaceChildren();
+  LAB.files.forEach((f, i) => {
+    const li = el('li'), b = el('button', 'tile'), img = el('img'), c = el('input'), d = el('span', 'dot');
+    b.type = 'button'; b.setAttribute('aria-label', f.name); b.onclick = () => select(i);
+    img.loading = 'lazy'; img.alt = ''; img.src = thumb(f.thumb, 112); b.appendChild(img);
+    c.type = 'checkbox'; c.checked = f.checked; c.setAttribute('aria-label', 'Include ' + f.name + ' in the batch');
+    c.onchange = () => { f.checked = c.checked; stripCounts(); };
+    d.dataset.status = f.status; if (!f.status) delete d.dataset.status;
+    f.tile = b; f.box = c; f.dot = d; li.append(b, c, d); ul.appendChild(li);
+  });
+  stripCounts();
+}
+function stripCounts() {
+  const n = LAB.files.length, c = LAB.files.filter(f => f.checked).length, all = $('#all');
+  all.checked = c === n && n > 0; all.indeterminate = c > 0 && c < n;
+  $('#count').textContent = n + (n === 1 ? ' photo' : ' photos');
+  $('#batchBtn').textContent = 'Edit ' + c + (c === 1 ? ' photo' : ' photos');
+  $('#batchBtn').disabled = c === 0 || batchRunning();
+}
+
+/* ---- choosing a photo ------------------------------------------------------------------------ */
+function resetViews() {
+  ['#changes', '#steps', '#stepDetail', '#sliders', '#facts', '#lesson'].forEach(s => $(s).replaceChildren());
+  $('#values tbody').replaceChildren(); $('#values').hidden = true; $('#said').textContent = ''; $('#which').hidden = true;
+  $('#tryCompare').setAttribute('aria-pressed', 'false'); $('#engine').removeAttribute('src');
+}
+function select(i) {
+  if (i < 0 || i >= LAB.files.length) return;
+  LAB.sel = i; const p = photo();
+  LAB.answer = LAB.how = LAB.tried = null; LAB.step = 0; LAB.sliders = {}; LAB.compare = false; LAB.which = 'yours';
+  Object.values(flights).forEach(f => { f.shown = ''; });
+  setMarking(false); unghost(); resetViews();
+  $('#before').src = thumb(p.thumb, 1600); $('#after').src = thumb(p.thumb, 1600);
+  LAB.files.forEach((f, k) => { if (f.tile) { if (k === i) f.tile.setAttribute('aria-current', 'true'); else f.tile.removeAttribute('aria-current'); } });
+  p.tile.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  $('#photoName').textContent = p.name.replace(/\.[^.]+$/, ''); $('#photoMeta').textContent = ''; $('#geoNote').textContent = '';
+  $('#exportNote').textContent = '';
+  say(''); drawChips(); showing();
+  clearTimeout(selTimer); selTimer = setTimeout(refresh, 250);
+}
+
+/* ---- views ----------------------------------------------------------------------------------- */
+const HEADS = {edit: '#photoName', how: '#howTitle', try: '#tryTitle'};
+const VIEWS = {edit: '#viewEdit', how: '#viewHow', try: '#viewTry'};
+function setView(v) {
+  LAB.view = v; setHold(false);
+  $('#which').hidden = v !== 'try' || !(LAB.tried && LAB.tried.compare);
+  for (const k of Object.keys(VIEWS)) $(VIEWS[k]).hidden = k !== v;
+  $('#export').disabled = v !== 'edit';
+  if (v === 'edit') paintEdit(); else if (v === 'how') paintHow(); else paintTry();
+  $(HEADS[v]).focus(); showing(); refresh();
+}
+const curAnswer = () => LAB[{edit: 'answer', how: 'how', try: 'tried'}[LAB.view]];
+
+function metaLine(j) {
+  const r = j.result || {}, rc = (r.audit || {}).run_config || {}, parts = [];
+  const finder = rc.backend === 'sam3' ? 'SAM 3' : rc.backend || LAB.finder, base = (r.scene || 'photo') + ' · regions by ' + finder;
+  parts.push([base, '']);
+  if (r.needs_review) parts.push([' · worth a look: ' + (r.review_reason || 'see the report'), 'warn']);
+  const n = (j.instruction_problems || []).length + (j.marks || []).reduce((a, m) => a + ((m.problems || []).length ? 1 : 0), 0);
+  if (n) parts.push([' · ' + n + ' not understood', 'bad']);
+  sayParts(parts); $('#photoMeta').textContent = base; $('#geoNote').textContent = ASPECT_LINE(r.geometry);
+}
+function paintEdit() {
+  const j = LAB.answer;
+  if (!j) { setThumb('#before'); setThumb('#after'); $('#engine').removeAttribute('src'); }
+  else { setImg('#before', j.before); setImg('#after', j.after); metaLine(j); }
+  $('#before').alt = 'Original'; $('#after').alt = 'Edited photo'; $('#engine').removeAttribute('src'); tint([]);
+  drawChips(); showing();
+}
+function showEdit(j) { LAB.answer = j; if (LAB.view === 'edit') paintEdit(); }
+
+/* ---- chips ----------------------------------------------------------------------------------- */
+const norm = s => String(s).trim().toLowerCase().replace(/\s+/g, ' ');
+function markState(c, info, finder) {     // the one line of state under a mark chip (F37)
+  if (!info) return {};
+  const pr = info.problems || [];
+  if (pr.length) { const m = /^not understood \((.*?)\): "/.exec(pr[0]); return {text: m ? m[1] : 'not understood', bad: true}; }
+  const w = info.word || 'thing', held = {clamped: ' · held back in part', blocked: ' · held back'}[info.status] || '';
+  if (info.kind === 'thing') {
+    if (info.found) return {text: 'the ' + w + held};
+    return {text: info.why === 'bigger' ? 'That is part of something bigger' : info.why === 'small' ? 'The ' + w + ' is too small here' : 'No ' + w + ' found in the oval', useOval: true};
+  }
+  if (info.kind === 'area') return {text: 'the oval' + held + (finder === 'sam3' && c.kind === 'auto' ? '. Name the thing to follow its outline: this jacket' : '')};
+  return {};
+}
+function drawChips() {
+  const ul = $('#chips'); ul.replaceChildren();
+  const p = photo(); if (!p) return;
+  const l = LAB.entries[p.path] || [], a = curAnswer() || {}, probs = a.instruction_problems || [];
+  const finder = (((a.result || {}).audit || {}).run_config || {}).backend;
+  let k = 0;
+  l.forEach((e, i) => {
+    const li = el('li', 'chip'), row = el('div', 'row'), x = el('button', 'x', '×');
+    x.type = 'button'; const done = () => { saveStore(); drawChips(); refresh(); };
+    if (!isMark(e)) {
+      const t = norm(e), bad = probs.find(line => { const s = line.indexOf('"'), z = line.lastIndexOf('"'); return s >= 0 && z > s && t.includes(norm(line.slice(s + 1, z))); });
+      row.appendChild(el('span', 'txt', e));
+      if (bad) { li.classList.add('bad'); li.title = bad; row.appendChild(el('span', 'tg', 'not understood')); }
+      if ((a.result && a.result.adjustments || []).some(j => j.via === 'local' && j.source && t.includes(j.source))) row.appendChild(el('span', 'tg', 'local model'));
+      x.setAttribute('aria-label', 'Remove: ' + e); x.onclick = () => { l.splice(i, 1); done(); };
+      row.appendChild(x); li.appendChild(row);
+    } else {
+      const idx = k++, info = (a.marks || [])[idx], st = markState(e, info, finder), g = el('span', 'glyph');
+      g.setAttribute('aria-hidden', 'true'); row.append(g, el('span', 'txt', e.edit));
+      x.setAttribute('aria-label', 'Remove: ' + e.edit); x.onclick = () => { l.splice(i, 1); done(); };
+      row.appendChild(x); li.appendChild(row);
+      if (st.bad) li.classList.add('bad');
+      if (st.text) {
+        const s = el('div', 'st' + (st.bad ? ' bad' : ''), st.text);
+        if (st.useOval) { const b = el('button', null, 'Use the oval'); b.type = 'button'; b.onclick = () => { e.kind = 'area'; done(); }; s.appendChild(b); }
+        li.appendChild(s);
+      }
+      const on = () => { ghost(e.box); tint(((a.mark_overlays) || []).filter(o => info && (info.targets || []).includes(o.target)), 'var(--mark)'); };
+      li.addEventListener('pointerenter', on); li.addEventListener('focusin', on);
+      li.addEventListener('pointerleave', unghost); li.addEventListener('focusout', unghost);
+    }
+    ul.appendChild(li);
+  });
+}
+
+/* ---- say what to change ---------------------------------------------------------------------- */
+$('#prompt').addEventListener('submit', ev => {
+  ev.preventDefault();
+  const p = photo(), t = $('#say').value.trim(); if (!p || !t) return;
+  const l = LAB.entries[p.path] || (LAB.entries[p.path] = []);
+  if (LAB.pending) {
+    if (l.filter(isMark).length >= MAX_MARKS) return say('This photo has 20 marks; remove one first.', 'bad');
+    if (t.length > 300) return say('Keep what the oval should change under 300 characters.', 'bad');
+    l.push({box: LAB.pending, kind: 'auto', edit: t}); setMarking(false);
+  } else {
+    if (textOf([...l, t]).length > MAX_TEXT) return say('Too many changes on this photo; remove one first.', 'bad');
+    l.push(t);
+  }
+  $('#say').value = ''; saveStore(); drawChips(); refresh();
+});
+$('#markBtn').onclick = () => setMarking(!LAB.marking);
+(function markDrag() {
+  const f = $('#frame'); let a = null;
+  const pt = e => { const r = f.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0)) return null;
+    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; };
+  const boxOf = (p, q) => [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
+  f.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    if (!LAB.marking) { setHold(true); return; }
+    const p = pt(e); if (!p) return; e.preventDefault(); clearPending(); a = p;
+    try { f.setPointerCapture(e.pointerId); } catch (_) { /* a synthetic pointer */ }
+  });
+  f.addEventListener('pointermove', e => { if (!a) return; const q = pt(e); if (!q) return; placeOval($('#pend'), boxOf(a, q)); $('#pend').hidden = false; });
+  f.addEventListener('pointerup', e => {
+    setHold(false); if (!a) return;
+    const q = pt(e) || a, box = boxOf(a, q).map(v => Math.round(v * 1e4) / 1e4); a = null;
+    if (box[2] - box[0] < MIN_SIDE || box[3] - box[1] < MIN_SIDE) clearPending(); else setPending(box);
+  });
+  f.addEventListener('pointercancel', () => { setHold(false); if (a) { a = null; clearPending(); } });
+  f.addEventListener('pointerleave', () => { if (!a) setHold(false); });
+  window.addEventListener('blur', () => setHold(false));
+})();
+$('#origBtn').onclick = () => setHold(!LAB.hold);
+
+/* ---- look, kind, strength, geometry ---------------------------------------------------------- */
+const fillRange = r => r.style.setProperty('--p', ((+r.value - +r.min) / ((+r.max - +r.min) || 1)) * 100 + '%');
+$('#look').onchange = e => { LAB.look = e.target.value; refresh(); };
+$('#genre').onchange = e => {
+  LAB.genre = e.target.value; const g = GENRES.find(x => x.name === LAB.genre);
+  $('#genreNote').textContent = g ? g.description || '' : ''; refresh();
+};
+$('#strength').addEventListener('input', e => { $('#strengthVal').textContent = (+e.target.value).toFixed(2); fillRange(e.target); });
+$('#strength').addEventListener('change', e => {
+  LAB.strength = +e.target.value; $('#strengthReset').hidden = false; refresh();
+});
+$('#strengthReset').onclick = () => {
+  LAB.strength = null; $('#strength').value = DEFAULT_STRENGTH; $('#strengthVal').textContent = DEFAULT_STRENGTH.toFixed(2);
+  fillRange($('#strength')); $('#strengthReset').hidden = true; refresh();
+};
+function geoLock() {       // a mark's box is read on the uncut photo (F32): no marking on a turned or cut preview
+  const on = !!(LAB.straighten || LAB.aspect); $('#markBtn').disabled = on;
+  $('#markBtn').title = on ? 'Turn off Straighten and Crop to mark: an oval is placed on the whole photo' : '';
+  if (on) { setMarking(false); unghost(); }
+}
+$('#straighten').onchange = e => { LAB.straighten = e.target.checked; geoLock(); refresh(); };
+$('#crop').onchange = e => { LAB.aspect = e.target.value; geoLock(); refresh(); };
+
+/* ---- surprise me ----------------------------------------------------------------------------- */
+let surpriseTok = 0;
+async function surprise() {
+  const p = photo(); if (!p) return; const tok = ++surpriseTok, d = $('#surprise');
+  if (!d.open) d.showModal();
+  $('#surpriseGrid').replaceChildren(); $('#surpriseNote').textContent = 'Rendering six looks…'; $('#surpriseMore').disabled = true;
+  try {
+    const j = await post('/api/v1/variants', {file: p.path, surprise: true, ...options()}); if (tok !== surpriseTok) return;
+    $('#surpriseNote').textContent = 'Seed ' + j.seed + '. The same seed gives the same six.';
+    (j.looks || []).forEach(name => {
+      const v = (j.variants || []).find(x => x.name === name) || {}, b = el('button', 'lookTile'), img = el('img');
+      b.type = 'button'; img.alt = nice(name); const s = pic(v.after); if (s) img.src = s;
+      b.append(img, el('span', null, nice(name)));
+      if (v.needs_review) b.appendChild(el('small', null, 'the safety check flags it on this photo'));
+      b.onclick = () => {
+        const sel = $('#look'); if (![...sel.options].some(o => o.value === name)) sel.add(new Option(nice(name), name));
+        sel.value = name; LAB.look = name; d.close(); refresh();
+      };
+      $('#surpriseGrid').appendChild(b);
+    });
+  } catch (e) { if (tok === surpriseTok) $('#surpriseNote').textContent = errText(e); }
+  if (tok === surpriseTok) $('#surpriseMore').disabled = false;
+}
+$('#surpriseBtn').onclick = surprise;
+$('#surpriseMore').onclick = surprise;
+
+/* ---- how it was done ------------------------------------------------------------------------- */
+const STATUS_WORD = {applied: 'applied', clamped: 'held back in part', blocked: 'held back'};
+function lines(box, o) { [['does', ''], ['when', 'When: '], ['watch', 'Watch: ']].forEach(([k, pre]) => { if (o && o[k]) box.appendChild(el('p', null, pre + o[k])); }); }
+function showHow(j) {
+  LAB.how = j; LAB.step = 0; if (LAB.view === 'how') paintHow();
+}
+function paintHow() {
+  const j = LAB.how, ch = $('#changes'), st = $('#steps'); ch.replaceChildren(); st.replaceChildren(); $('#stepDetail').replaceChildren();
+  if (!j) { setThumb('#before'); setThumb('#after'); drawChips(); showing(); return; }
+  const walk = j.walkthrough || [];
+  if (!walk.length) ch.appendChild(el('li', null, "No change of your own on this photo: the steps below are AutoEdit's edit."));
+  walk.forEach(w => {
+    const li = el('li'), lab = el('p', 'lab'), m = w.mask || {};
+    lab.append(document.createTextNode(w.label || niceName(w.target)));
+    (w.sources || []).forEach(s => { lab.append(document.createTextNode(' '), el('q', null, s)); });
+    const word = m.found === false ? 'not found' : STATUS_WORD[w.status] || w.status || '';
+    if (word) lab.append(document.createTextNode(' · ' + word));
+    li.appendChild(lab);
+    if (m.line) li.appendChild(el('p', null, m.line));
+    if ((w.parts || []).length) li.appendChild(el('p', null, w.parts.map(q => q.label + ' ' + pct(q.share)).join(' · ')));
+    (w.tools || []).forEach(t => (t.applied || []).forEach(a => li.appendChild(el('p', null,
+      (t.name || t.op) + ' asked ' + fmtVal(t.op, t.asked) + ': ' + a.part + ' ' + fmtVal(t.op, a.value) + (a.state === 'held' || a.state === 'blocked' ? ' (' + a.state + ')' : '')))));
+    (w.held || []).forEach(h => li.appendChild(el('p', null, h)));
+    li.tabIndex = 0;
+    const on = () => {
+      ghost(m.box); const marks = (j.mark_overlays || []).filter(o => o.target === w.target);
+      if (marks.length) tint(marks, 'var(--mark)'); else tint((j.mask_overlays || []).filter(o => m.name && o.name === m.name), 'var(--accent)');
+    };
+    li.addEventListener('pointerenter', on); li.addEventListener('focusin', on);
+    li.addEventListener('pointerleave', unghost); li.addEventListener('focusout', unghost);
+    ch.appendChild(li);
+  });
+  (j.steps || []).forEach((s, i) => {
+    const li = el('li'), b = el('button', null, (i + 1) + '. ' + (s.title || s.kind)); b.type = 'button'; b.onclick = () => chooseStep(i);
+    li.appendChild(b); st.appendChild(li);
+  });
+  chooseStep(Math.min(LAB.step, Math.max(0, (j.steps || []).length - 1)));
+}
+function chooseStep(i) {
+  const j = LAB.how, steps = (j && j.steps) || []; if (!steps.length) return;
+  LAB.step = Math.max(0, Math.min(steps.length - 1, i)); const s = steps[LAB.step];
+  setImg('#after', s.after); setImg('#before', (steps[LAB.step - 1] || s).after);
+  $('#after').alt = 'Step ' + (LAB.step + 1); $('#before').alt = 'Before step ' + (LAB.step + 1);
+  [...$('#steps').querySelectorAll('button')].forEach((b, k) => { if (k === LAB.step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
+  sayParts([['Step ' + (LAB.step + 1) + ' of ' + steps.length + ' · ' + (s.title || s.kind), '']]);
+  const d = $('#stepDetail'); d.replaceChildren();
+  if ((s.kind === 'tools' || s.kind === 'grain') && (s.tools || []).length) {
+    s.tools.forEach(t => { const b = el('div'); b.appendChild(el('strong', null, toolText(t))); lines(b, t); d.appendChild(b); });
+  } else { const b = el('div'); lines(b, s); if (b.childNodes.length) d.appendChild(b); }
+  (s.where || []).forEach(w => {
+    const r = el('p', 'where', w.target + ' ' + pct(w.coverage) + ((w.tools || []).length ? ' · ' + w.tools.map(toolText).join(', ') : ''));
+    r.tabIndex = 0;
+    const on = () => tint((j.mask_overlays || []).filter(o => o.name === w.target || o.name === w.name), 'var(--accent)');
+    r.addEventListener('pointerenter', on); r.addEventListener('focusin', on);
+    r.addEventListener('pointerleave', unghost); r.addEventListener('focusout', unghost); d.appendChild(r);
+  });
+  if ((s.typed || []).length) {
+    const labs = s.typed.map(k => { const w = (j.walkthrough || [])[k]; return w ? (w.label || niceName(w.target)) : ''; }).filter(Boolean);
+    if (labs.length) d.appendChild(el('p', null, 'Your changes here: ' + labs.join(', ')));
+  }
+  (s.notes || []).forEach(n => d.appendChild(el('p', null, n)));
+  if (s.moved != null) d.appendChild(el('p', null, 'Moved ' + Math.round(s.moved * 10) / 10 + ' levels of 255 on average'));
+  showing();
+}
+
+/* ---- try it yourself ------------------------------------------------------------------------- */
+function showTry(j) { LAB.tried = j; if (LAB.view === 'try') paintTry(); }
+function paintTry() {
+  const j = LAB.tried;
+  if (!j) { setThumb('#before'); setThumb('#after'); drawChips(); showing(); return; }
+  setImg('#before', j.before); setImg('#after', j.after); $('#after').alt = 'Edited photo'; $('#before').alt = 'Original'; tint([]);
+  const box = $('#sliders');
+  if (!box.childNodes.length) ((j.try || {}).sliders || []).forEach(s => {
+    const w = el('div', 'sl'), top = el('div', 'line2'), id = 'sl_' + s.op, lab = el('label', null, s.name || s.op), val = el('span'),
+      r = el('input'); lab.htmlFor = id; r.id = id; r.type = 'range'; r.min = s.min; r.max = s.max; r.step = s.step; r.dataset.op = s.op;
+    const set = v => { const t = fmtVal(s.op, +v); val.textContent = t; r.setAttribute('aria-valuetext', t); fillRange(r); };
+    r.value = LAB.sliders[s.op] || 0; set(r.value);
+    const teach = () => { const L = $('#lesson'); L.replaceChildren(); L.appendChild(el('strong', null, s.name || s.op)); lines(L, s); };
+    r.addEventListener('input', () => set(r.value)); r.addEventListener('focus', teach); r.addEventListener('pointerdown', teach);
+    r.addEventListener('change', () => { const v = +r.value; if (v) LAB.sliders[s.op] = v; else delete LAB.sliders[s.op]; set(r.value); refresh(); });
+    top.append(lab, val); w.append(top, r); box.appendChild(w);
+  });
+  const c = j.compare;
+  $('#which').hidden = !c; if (!c) LAB.which = 'yours';
+  if (c) setImg('#engine', c.engine);
+  paintCompare(c); syncWhich(); showing();
+}
+function syncWhich() { $('#whichYours').setAttribute('aria-pressed', String(LAB.which === 'yours')); $('#whichEngine').setAttribute('aria-pressed', String(LAB.which === 'engine')); }
+function whereName(w) { return w === 'global' ? 'Whole photo' : String(w).startsWith('instruction:') ? 'the ' + String(w).slice(12) : niceName(w); }
+function paintCompare(c) {
+  const f = $('#facts'), tb = $('#values tbody'), said = $('#said'); f.replaceChildren(); tb.replaceChildren(); said.textContent = '';
+  $('#values').hidden = !c; if (!c) return;
+  [...(c.checks || [])].sort((a, b) => (b.flag ? 1 : 0) - (a.flag ? 1 : 0)).forEach(k => {
+    const li = el('li'); if (k.flag) li.appendChild(el('span', 'pt')); li.appendChild(el('span', null, (k.name || k.key) + ': ' + k.line)); f.appendChild(li);
+  });
+  const groups = new Map();
+  (c.tools || []).forEach(t => { if (!groups.has(t.where)) groups.set(t.where, []); groups.get(t.where).push(t); });
+  [...groups.keys()].sort((a, b) => (a === 'global' ? 0 : 1) - (b === 'global' ? 0 : 1)).forEach(w => {
+    const tr = el('tr', 'grp'), th = el('th', null, whereName(w)); th.colSpan = 3; th.scope = 'colgroup'; tr.appendChild(th); tb.appendChild(tr);
+    groups.get(w).forEach(t => {
+      const r = el('tr'), y = el('td', 'n', fmtVal(t.op, t.yours) + (t.set != null && t.set !== t.yours ? ' (set ' + fmtVal(t.op, t.set) + ')' : ''));
+      r.append(el('td', null, t.name || t.op), y, el('td', 'n', fmtVal(t.op, t.engine))); tb.appendChild(r);
+    });
+  });
+  const s = c.said || {}, q = x => x ? 'quality ' + x.quality + (x.needs_review ? ', worth a look' : '') : '';
+  said.textContent = 'Your version: ' + q(s.yours) + '. AutoEdit: ' + q(s.engine) + '.';
+}
+$('#tryCompare').onclick = () => { LAB.compare = !LAB.compare; $('#tryCompare').setAttribute('aria-pressed', String(LAB.compare)); refresh(); };
+$('#tryReset').onclick = () => { LAB.sliders = {}; $('#sliders').querySelectorAll('input').forEach(r => { r.value = 0; r.dispatchEvent(new Event('input')); }); refresh(); };
+$('#whichYours').onclick = () => { LAB.which = 'yours'; syncWhich(); showing(); };
+$('#whichEngine').onclick = () => { LAB.which = 'engine'; syncWhich(); showing(); };
+
+$('#howBtn').onclick = () => setView('how');
+$('#tryBtn').onclick = () => setView('try');
+$('#howBack').onclick = $('#tryBack').onclick = () => setView('edit');
+
+/* ---- export and batch ------------------------------------------------------------------------ */
+$('#export').onclick = async () => {
+  const b = previewBody(), note = $('#exportNote'); if (!b || LAB.view !== 'edit') return;
+  const btn = $('#export'); btn.disabled = true; note.className = ''; note.textContent = 'Exporting…';
+  try {
+    const j = await post('/api/v1/run-one', b), out = String(j.image_out || '');
+    note.textContent = 'Saved ' + (out.split(/[\\/]/).pop() || 'the photo') + ' in AutoEdit Exports'; note.title = out;
+  } catch (e) { note.className = 'bad'; note.textContent = errText(e); note.removeAttribute('title'); }
+  btn.disabled = LAB.view !== 'edit';
+};
+const batchRunning = () => !!LAB.job && !ENDED.includes(LAB.job.status);
+$('#all').onchange = e => { LAB.files.forEach(f => { f.checked = e.target.checked; f.box.checked = f.checked; }); stripCounts(); };
+const ENDED = ['done', 'cancelled', 'error', 'failed'];
+function applySnap(s) {
+  const j = LAB.job; if (!j || ENDED.includes(j.status)) return;   // a late answer never reopens a finished batch
+  j.status = s.status;
+  const bar = $('#batchBar'); bar.hidden = false; bar.firstElementChild.style.width = (s.total ? Math.round(s.processed / s.total * 100) : 0) + '%';
+  const note = $('#batchNote'); note.className = ''; note.removeAttribute('title');
+  (s.items || []).forEach(it => {
+    const f = LAB.files.find(x => x.path === it.src);
+    if (!f) return; f.status = it.status; f.dot.dataset.status = it.status; if (it.error) f.tile.title = it.error; else f.tile.removeAttribute('title');
+  });
+  const bits = ['Editing ' + s.processed + ' of ' + s.total];
+  if (s.review) bits.push(s.review + ' to look at'); if (s.failed) bits.push(s.failed + ' failed');
+  if (s.eta_s != null && s.status === 'running') bits.push('about ' + Math.round(s.eta_s) + ' s left');
+  const ended = !batchRunning();
+  if (s.status === 'paused') note.textContent = 'Paused · ' + bits.slice(1).join(' · ');
+  else if (s.status === 'done') {
+    note.className = 'ok'; note.textContent = 'Done: ' + s.done + (s.done === 1 ? ' photo' : ' photos') + ' in AutoEdit Exports'
+      + (s.review ? ' · ' + s.review + ' to look at' : '') + (s.failed ? ' · ' + s.failed + ' failed' : ''); note.title = s.out_dir || '';
+  } else if (s.status === 'cancelled') note.textContent = 'Stopped after ' + s.processed + ' of ' + s.total + '.';
+  else if (s.status === 'error' || s.status === 'failed') {
+    const bad = (s.items || []).find(i => i.error); note.className = 'bad'; note.textContent = 'The batch stopped: ' + ((bad && bad.error) || s.status);
+  } else note.textContent = bits.join(' · ');
+  $('#pause').textContent = s.status === 'paused' ? 'Resume' : 'Pause';
+  $('#pause').hidden = $('#cancel').hidden = ended; stripCounts();
+}
+$('#batchBtn').onclick = async () => {
+  const files = LAB.files.filter(f => f.checked); if (!files.length || batchRunning()) return;
+  const edits = {}, marks = {};
+  files.forEach(f => { const l = LAB.entries[f.path] || [], t = textOf(l), m = marksOf(l); if (t) edits[f.path] = t; if (m.length) marks[f.path] = m; });
+  const body = {input_dir: LAB.dir, files: files.map(f => f.path), ...options()};
+  if (Object.keys(edits).length) body.photo_edits = edits; if (Object.keys(marks).length) body.photo_marks = marks;
+  const note = $('#batchNote'); note.className = ''; note.textContent = 'Starting…'; $('#batchBtn').disabled = true;
+  LAB.files.forEach(f => { f.status = ''; delete f.dot.dataset.status; });
+  try {
+    const s = await post('/api/v1/jobs', body); LAB.job = {id: s.id, status: s.status || 'running', es: null}; applySnap(s);
+    const es = new EventSource('/api/v1/jobs/' + encodeURIComponent(s.id) + '/events'); LAB.job.es = es;
+    es.addEventListener('snapshot', ev => { try { applySnap(JSON.parse(ev.data)); } catch (_) { /* a broken frame */ } });
+    es.addEventListener('done', ev => { try { applySnap(JSON.parse(ev.data)); } catch (_) { /* a broken frame */ } es.close(); });
+    es.onerror = () => {      // the stream is lost: ask for the state every two seconds until the batch ends
+      es.close(); const id = LAB.job && LAB.job.id;
+      const poll = () => { if (!LAB.job || LAB.job.id !== id || !batchRunning()) return;
+        getj('/api/v1/jobs/' + encodeURIComponent(id)).then(applySnap).catch(() => {}).finally(() => setTimeout(poll, 2000)); };
+      if (batchRunning()) setTimeout(poll, 2000);
+    };
+  } catch (e) { LAB.job = null; note.className = 'bad'; note.textContent = errText(e); stripCounts(); }
+};
+const control = action => LAB.job && post('/api/v1/jobs/' + encodeURIComponent(LAB.job.id) + '/control', {action}).then(applySnap).catch(e => { $('#batchNote').className = 'bad'; $('#batchNote').textContent = errText(e); });
+$('#pause').onclick = () => control(LAB.job && LAB.job.status === 'paused' ? 'resume' : 'pause');
+$('#cancel').onclick = () => control('cancel');
+
+/* ---- opening a folder ------------------------------------------------------------------------ */
+async function openFolder() {
+  try { const r = await post('/api/v1/pick?kind=folder', {}); if (r.path) await loadFolderPath(r.path); }
+  catch (e) { say(errText(e), 'bad'); }
+}
+$('#open').onclick = $('#open2').onclick = openFolder;
+
+/* ---- settings -------------------------------------------------------------------------------- */
+let versionDone = false;
+function dlgOpen(d, opener) {
+  d.showModal(); d.addEventListener('close', () => { try { opener.focus(); } catch (_) { /* gone */ } }, {once: true});
+}
+['#settings', '#surprise'].forEach(s => { const d = $(s); d.addEventListener('click', e => { if (e.target === d) d.close(); }); });
+$('#settingsClose').onclick = () => $('#settings').close();
+$('#surpriseClose').onclick = () => $('#surprise').close();
+$('#surprise').addEventListener('close', () => { surpriseTok++; try { $('#surpriseBtn').focus(); } catch (_) { /* gone */ } });
+$('#settingsBtn').onclick = async () => {
+  dlgOpen($('#settings'), $('#settingsBtn'));
+  const note = $('#styleNote'), ul = $('#styleList'); ul.replaceChildren(); note.textContent = 'Reading…';
+  if (!versionDone) getj('/api/v1/version').then(v => { versionDone = true; $('#version').textContent = 'Engine ' + v.engine + ' · API ' + v.api; }).catch(() => {});
+  try {
+    const s = await getj('/api/v1/style/suggestions');
+    if (!s.on) { note.textContent = "Off: your edits are not kept. It starts with history = true under [run] in your profile's defaults.toml."; return; }
+    const list = s.suggestions || [];
+    note.textContent = s.photos + (s.photos === 1 ? ' photo' : ' photos') + ' on ' + s.days + (s.days === 1 ? ' day.' : ' days.') + (list.length ? '' : ' No suggestion yet.');
+    list.forEach(x => { const li = el('li', null, x.ask); li.appendChild(el('small', null, x.fact)); ul.appendChild(li); });
+    if (list.length) ul.appendChild(el('li', 'fine', 'To add them to a new look: autoedit style suggest --yes NAME'));
+  } catch (e) { note.textContent = errText(e); }
+};
+function buildFinders(choices, help) {
+  const box = $('#finders'); box.replaceChildren();
+  const order = ['auto', 'sam3', 'stub'], list = [...order.filter(c => choices.includes(c)), ...choices.filter(c => !order.includes(c))];
+  list.forEach(c => {
+    const l = el('label', 'radio'), r = el('input'); r.type = 'radio'; r.name = 'finder'; r.value = c; r.checked = LAB.finder === c;
+    r.onchange = () => { LAB.finder = c; saveStore(); refresh(); };
+    l.append(r, document.createTextNode(FINDERS[c] || c)); box.appendChild(l);
+  });
+  $('#finderHelp').textContent = help || '';
+}
+
+/* ---- keys ------------------------------------------------------------------------------------ */
+const typing = t => !!t && !!t.matches && t.matches('input, select, textarea, [contenteditable]');
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
+  if (e.key === 'Escape') {
+    if (LAB.pending) { clearPending(); $('#ghost').hidden = true; }
+    else if (LAB.marking) setMarking(false);
+    else if (LAB.view !== 'edit') setView('edit');
+    else return;
+    e.preventDefault(); return;
+  }
+  if (typing(e.target) || document.body.dataset.open !== '1') return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === 'ArrowLeft' || k === 'ArrowRight') {
+    const d = k === 'ArrowRight' ? 1 : -1;
+    if (LAB.view === 'how') chooseStep(LAB.step + d); else select(LAB.sel + d); e.preventDefault();
+  } else if (k === 'b') { if (!e.repeat) setHold(true); }
+  else if (k === 'o') setMarking(!LAB.marking);
+  else if (k === '/') { e.preventDefault(); $('#say').focus(); }
+  else if ((k === '1' || k === '2') && LAB.view === 'try' && LAB.tried && LAB.tried.compare) { LAB.which = k === '1' ? 'yours' : 'engine'; syncWhich(); showing(); }
+});
+document.addEventListener('keyup', e => { if (e.key.toLowerCase() === 'b') setHold(false); });
+
+/* ---- start ----------------------------------------------------------------------------------- */
+new ResizeObserver(fit).observe($('#canvas'));
+$('#after').addEventListener('load', fit);
+(async function start() {
+  loadStore(); buildFinders(Object.keys(FINDERS), '');
+  const [sc, ge] = await Promise.allSettled([getj('/api/v1/settings/schema'), getj('/api/v1/genres')]);
+  if (sc.status === 'fulfilled') {
+    const by = {}; (sc.value.settings || []).forEach(s => { by[s.key] = s; });
+    const look = by.look, it = by.intensity, be = by.backend;
+    (look && look.choices || []).forEach(n => $('#look').add(new Option(nice(n), n)));
+    if (it) {
+      const s = $('#strength'); s.min = it.min; s.max = it.max; s.step = 0.05; DEFAULT_STRENGTH = it.default; s.value = it.default;
+      $('#strengthVal').textContent = (+it.default).toFixed(2);
+    }
+    if (be && be.choices) buildFinders(be.choices, be.help);
+  } else { say('Settings could not be read: ' + errText(sc.reason), 'bad'); ['#look', '#strength'].forEach(s => { $(s).disabled = true; }); }
+  fillRange($('#strength'));
+  if (ge.status === 'fulfilled' && Array.isArray(ge.value)) {
+    GENRES = ge.value.filter(g => g.offered); GENRES.forEach(g => $('#genre').add(new Option(nice(g.name), g.name)));
+    $('#genreField').hidden = !GENRES.length;     // only tested packs and your own are offered (F30)
+  } else { $('#genre').disabled = true; if (sc.status === 'fulfilled') say('Settings could not be read: ' + errText(ge.reason), 'bad'); }
+})();
+</script>
+</body>
+</html>

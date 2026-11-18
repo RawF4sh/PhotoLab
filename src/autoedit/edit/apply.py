@@ -15,6 +15,34 @@ from . import gates, ops, par
 from .palette import palette_grade
 
 
+def global_steps(out, global_settings, guard_mask=None, guard_ops=None):
+    """The global pass of `apply_image`, one step of `ops.STEPS` at a time (F29). Yields (the ops of the step that
+    have a value, the picture after it) for every step that renders something. The last picture is bit for bit what
+    the one-pass code gives; with a guard every picture is the blend of the two renders so far."""
+    guard = guard_mask is not None and bool(guard_ops)
+    full = kept = out
+    shown = False
+    for step in ops.STEPS:
+        part = {k: global_settings[k] for k in step if global_settings.get(k)}
+        if not part:
+            continue
+        was_full, was_kept = full, kept
+        full = ops.apply_ops(was_full, part)
+        keep = {k: v for k, v in part.items() if k not in guard_ops} if guard else part
+        # until a guarded op has a value the two renders are one array
+        kept = full if (was_kept is was_full and keep == part) else (ops.apply_ops(was_kept, keep) if keep else was_kept)
+        if full is was_full and kept is was_kept:
+            continue                # a value apply_ops renders nothing for (lut, grain), or an op with nothing to do
+        shown = True
+        yield tuple(part), (_guard_blend(full, kept, guard_mask) if guard else full)
+    if guard and not shown:         # the one-pass code blends the input with itself
+        yield (), _guard_blend(out, out, guard_mask)
+
+
+def _guard_blend(full, guarded, guard_mask):
+    return par.rows(lambda f, g, m: f * (1.0 - m[..., None]) + g * m[..., None], full, guarded, guard_mask)
+
+
 def apply_image(
     full_rgb: np.ndarray,
     regions: list[tuple[np.ndarray, Settings] | list[tuple[np.ndarray, Settings]]],
@@ -30,6 +58,7 @@ def apply_image(
     on_stage=None,
     highlight_hold: tuple[float, float] | None = None,
     chroma_reference: np.ndarray | None = None,
+    on_step=None,
 ) -> np.ndarray:
     """full_rgb: float HxWx3 gamma [0,1].
     regions: [(alpha_full, settings), ...] priority desc — arbitrated, claim-composited. An entry
@@ -45,7 +74,9 @@ def apply_image(
     highlight_hold: (start, full) of the F6 highlight hold, or None (default) for no new code.
     chroma_reference: what the oversaturation gate compares against, when the caller has it
     already (the pipeline computes the denoised source once per photo). None: the source,
-    denoised here when `denoise` is active."""
+    denoised here when `denoise` is active.
+    on_step: a read-only observer, `on_step(ops of a step, picture after it)` for every step of the global pass
+    that renders something (`global_steps`, F29). None: no new code runs."""
     out = full_rgb.astype(np.float32).copy()
     claimed = np.zeros(out.shape[:2], dtype=np.float32)
 
@@ -89,7 +120,10 @@ def apply_image(
     if on_stage is not None:
         on_stage("after_composition", out)
 
-    if global_settings:
+    if global_settings and on_step is not None:
+        for keys, out in global_steps(out, global_settings, guard_mask, guard_ops):
+            on_step(keys, out)
+    elif global_settings:
         if guard_mask is not None and guard_ops:
             # Two renders by design: the kept ops include ones whose result depends on the whole
             # frame, so the guarded pass cannot run on a crop. Every step before the first guarded
@@ -140,7 +174,7 @@ def apply_image(
             # the source's colour noise back onto the denoised result (measured at ISO 12800:
             # 7 levels of colour grain with the raw source as reference, 0.4 with this). So the
             # reference gets the same noise reduction as the edit.
-            reference = ops.denoise(reference, global_settings["denoise"])
+            reference = ops.denoise(reference, global_settings["denoise"], global_settings.get("denoise_stars", 0.0))
         out, limited = gates.chroma_guard(
             reference, out,
             max_increase=chroma_max_increase,

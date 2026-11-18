@@ -10,6 +10,11 @@ import time
 from . import aesthetic_jobs, curate_jobs, jobs, service
 
 
+# F38: the test UI page may load nothing but itself, data: pictures and same-origin requests.
+LAB_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+           "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'")
+
+
 def create_app(configs_dir: str = "configs", local_only: bool = True, profile: str | None = None):
     from urllib.parse import urlparse
 
@@ -92,6 +97,10 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     def classic() -> str:
         return _page("index.html")           # the minimal functional UI
 
+    @app.get("/lab", response_class=HTMLResponse)
+    def lab():
+        return HTMLResponse(_page("lab.html"), headers={"Content-Security-Policy": LAB_CSP})   # the test UI (F38)
+
     @api.get("/styles")
     def styles():
         return guard(lambda: service.list_styles(configs_dir, profile))
@@ -99,6 +108,10 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     @api.get("/presets")
     def presets():
         return guard(lambda: service.list_presets(configs_dir, profile))
+
+    @api.get("/genres")
+    def genres():
+        return guard(lambda: service.list_genres(configs_dir, profile))
 
     @api.get("/settings/schema")
     def settings_schema():
@@ -310,6 +323,23 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
             file = payload["file"]
             service.ensure_allowed(file, payload.get("aesthetic_model"))
             return service.make_variants(file, payload, configs_dir, profile=profile)
+        return guard(go)
+
+    # ── style from your edits (F27): what the history suggests, and the yes ──
+    @api.get("/style/suggestions")
+    def style_suggestions(look: str = ""):
+        from .. import style
+        return guard(lambda: style.overview(profile, configs_dir, look or None))
+
+    @api.post("/style/accept")
+    def style_accept(payload: dict = Body(...)):
+        def go():
+            from .. import style
+            _require(payload, "name")
+            ids = payload.get("ids")
+            if ids is not None and not (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):
+                raise ValueError("ids must be a list of strings")
+            return style.add_to_look(profile, payload["name"], ids, payload.get("look") or None, configs_dir)
         return guard(go)
 
     app.include_router(api, prefix="/api/v1")

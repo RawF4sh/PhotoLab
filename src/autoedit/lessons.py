@@ -8,6 +8,7 @@ from . import instructions
 from .segment.base import parse_mark
 
 _RANK = ["not_found", "blocked", "clamped", "applied"]
+TABLES = ("op", "mask", "guard", "step", "check", "try")
 _LINES = ("name", "does", "when", "watch")
 _WHY = {"nothing": "No {word} was found in the oval.",
         "small": "The {word} is too small in this photo.",
@@ -15,13 +16,13 @@ _WHY = {"nothing": "No {word} was found in the oval.",
 
 
 def load(path: str) -> dict:
-    """lessons.toml as {"op": {...}, "mask": {...}, "guard": {...}}. A missing file gives empty
+    """lessons.toml as one dict per name of `TABLES`. A missing file gives empty
     tables: a walk-through then has its facts and no lesson lines."""
     data = {}
     if os.path.exists(path):
         with open(path, "rb") as f:
             data = tomllib.load(f)
-    return {k: dict(data.get(k, {})) for k in ("op", "mask", "guard")}
+    return {k: dict(data.get(k, {})) for k in TABLES}
 
 
 def _lines(lessons: dict, table: str, key: str) -> dict:

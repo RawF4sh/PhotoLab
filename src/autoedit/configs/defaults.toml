@@ -2,12 +2,25 @@
 
 [run]
 style = "natural"          # styles.toml profile: look + default concepts + brief
+# genre = "landscape"      # a genre pack from genres.toml (F30, `autoedit genres list`); left out = none
 intensity = 0.8
 decider = "rules"          # "rules" | "llm"
 emit = "baked"             # only "baked" exists (an editable XMP hand-off is not implemented)
 consistency = "brightness" # "bursts": bring frames of one framing to one level and white balance (F9, opt-in)
 denoise = false            # true: noise reduction on high-ISO frames, chroma first (F7, opt-in)
+night_sky = false          # true: night frames keep their darkness, lose a town's glow and stuck pixels; denoise and sharpen spare the stars (F31, opt-in)
+backdrop = false           # true: even out a light backdrop and take it to a set white, see [backdrop] in rules.toml (F34, opt-in)
+consistency_wb = false     # true: a group of photos gets one white balance, the median cast of its frames (F34, opt-in)
+colour_report = false      # true: report how far the subject colour spreads inside each group, in run.json and at the end of a run (F34, opt-in)
+grain_size = 1.0           # film grain clump size, 0.5 to 4; it follows the size of the export (F23)
+history = false           # true: one line per exported photo in your profile, for `autoedit style suggest` (F27, opt-in)
+lut_amount = 100.0         # how much of a --lut file is blended in, 0 to 100 (F25)
+# lut = "film.cube"        # a .cube 3D LUT laid over the finished photo (F25); left out = none
+# grain = 25               # film grain 0..100, added to the export after the resize (F23); left out = the look's own, 0 = none
 levels = false             # true: pull each frame's measured black point to a true black (F5, opt-in)
+# neutral = [0.5, 0.5]     # a spot, X and Y as shares of the frame, that is grey or white: the white balance makes it neutral (F34); left out = none
+# wb = [0.0, 0.0]          # the white balance [temp, tint] for every photo of the run, as --neutral-from measures it (F34); left out = the rules'
+straighten = false         # true: turn the export so a clear waterline or horizon is level, at most 5 degrees; the edges are cut (F32, opt-in)
 translator = "auto"        # a small local model (Ollama) reads --edit clauses the word list misses; "off" never asks (F20)
 light_shaping = false      # true: a soft warm glow where the sun is, see [sun_glow] in compose.toml (F18, opt-in)
 highlight_hold = false     # true: keep source-blown highlights white, see [highlight_hold] in rules.toml (F6, opt-in)
@@ -43,6 +56,7 @@ format = "jpeg"            # "jpeg" | "tiff" | "webp" | "png"
 quality = 95               # 95 preserves the anti-banding dither in flat skies (matches the web UI)
 metadata = "shareable"     # EXIF in exports: "keep" (all) | "shareable" (no GPS, no serial numbers) | "none"
 # long_edge = 2048         # longest side of the export in pixels (never upscales); left out = full size
+# aspect = "4:5"           # crop the export to this shape W:H, placed on the subject (F32); left out = the photo's own shape
 name = "{stem}"            # file name without extension; fields {stem} {style} {n} (n takes a format: {n:04d})
 subdir = ""                # subfolder of the output folder
 # export = "web"           # a preset from exports.toml (full | web | social | archive | webp)

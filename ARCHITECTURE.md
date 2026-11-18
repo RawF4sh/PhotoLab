@@ -284,8 +284,10 @@ A tool that reads `rules.toml` directly never sees them.
 
 ### looks.toml (`looks.py`) — magnitude shaping
 
-A look never adds new decisions; it scales/offsets existing ones, then everything is scaled by
-intensity:
+A look scales/offsets existing decisions, then everything is scaled by intensity. Two exceptions
+add a decision of their own: `grain` (F23) and black and white (F24: `bw` with six colour weights,
+taken as written, not scaled by intensity). `dehaze_add` (F24) is a global offset, negative for a
+faded look:
 
 ```
 final = clamp(base * look_mul + look_add) * intensity
@@ -340,6 +342,30 @@ any instructed thing, and skin or snow inside it gets cells of its own that keep
 area mark is a soft oval blended as a layer of its own, like a place; where such a layer (an area
 mark or a named place) lies on skin or snow that the run found, that part is a second layer
 (`…/guarded`) with the change after their policy.
+A look may also carry a `habit` table (F27: `[NAME.habit.SCENE.TARGET] op = value`), replayed per
+scene as the same typed instruction (scope `look`), inside `[limits]`. `history.py` keeps a local,
+opt-in history of the user's own changes per export; `style.py` finds habits in it and, with
+`--yes NAME`, writes them into a new look of the profile.
+
+`lookfile.py` (F28) writes and reads a look as one `.aelook` file (format version, every look field,
+an optional palette and habit table, author and licence lines), checked whole on import; `lookcard.py`
+renders a look on sample photos as a before-and-after sheet (PNG and HTML).
+
+`teach.py` (F29) replays a preview one step at a time (`apply_image(..., on_step=)`, `edit.apply.global_steps`,
+bit-identical to the one-pass render) and renders a "try first" version from sliders alone, with the
+engine's version and the checks' facts beside it: two keys on `POST /preview`, `steps` and `try`.
+`pick.py` (F35) ranks the frames of each burst by subject sharpness and exposure (`autoedit pick`).
+`night.py` (F31, off by default): a night frame takes the scene `night` through `classify(override=)`; its rules
+live only in `[opt_in.night_sky.night.*]`; `hot_pixels` and `sky_gradient` are the first step of `ops.STEPS`, done on
+the decoded photo before the regions; `denoise_stars` and `sharpen_stars` spare star cores.
+`neutral.py` and `backdrop.py` (F34, off by default): a neutral pick replaces the rules' white balance
+(block A of `process_one`); the backdrop is evened on the finished picture after the gates and the reference
+match, before a LUT; `consistency.py` evens white balance in a group (`consistency_wb`) and reports colour.
+`merge.py` (F33) is a tool before the pipeline, not a stage: `autoedit merge` turns a set of frames into
+one linear TIFF that `autoedit run` then edits.
+`genres.py` (F30) reads `genres.toml` and turns a pack into run settings below the user's own (`--genre`);
+a pack selects data only: `rules.load(require=)` takes its opt-in rule sets.
+
 `lessons.py` turns the plan into the walk-through that Studio's "Show me how" and
 `autoedit adjust --explain` show; its texts are data in `configs/lessons.toml`.
 
@@ -379,8 +405,18 @@ curve does and a bare multiply cannot:
 ```
 white balance → exposure (+ highlight knee) → shadow lift → tone(highlights/shadows/whites/blacks)
   → contrast → curve → dehaze → clarity → black/white point → vibrance/saturation → targeted HSL
-  → color grade → denoise → sharpen
+  → color grade → black and white → denoise → sharpen → (lut) → (grain)
 ```
+
+`grain` (F23) is the last entry of `STEPS` in name only: `apply_ops` does not render it. The
+export (`emit.write_image`) adds it after the resize, and the preview after its own resize, so
+every check runs on the picture without grain and a web export looks like the full-size one.
+Off by default (`--grain N`, `--grain-size`, a look's `grain`, "add grain").
+
+`lut` (F25) is the step before `grain`, also in name only: `process_one` lays a `.cube` LUT
+(`lut.py`, a strict reader; tetrahedral interpolation in `ops.lut_map`) over the finished
+picture, after the oversaturation gate and before the review check. Off by default (`--lut`,
+`--lut-amount`); `autoedit looks lut NAME -o FILE.cube` writes a look's whole-picture colour part.
 
 The order is data: `ops.STEPS` (a tuple of key groups), read by `apply_ops` and by the guarded
 pass in `edit/apply.py`. The per-pixel stretches (tone, colour) run on row strips in threads
@@ -544,6 +580,12 @@ guard/gate actions, intent terms, batch normalization). The reported settings ar
 what the sidecar shows. The batch also writes a `run.json` manifest (scene mix, concept hits,
 failures, duration).
 
+**Geometry (F32, off by default).** `geometry.py` decides in `process_one`, from the water and sky
+masks (straighten, at most 5 degrees) and the subject mask (crop to `out_aspect`), a `Geometry` record
+(`Result.geometry`: angle, frame, share kept). No pixel moves there: `write_image` turns and cuts the
+finished picture first, after every check, sharpening and a LUT, then resizes to `long_edge`, then adds
+grain. Previews warp every picture they answer with the same record. The safety workflow drops it.
+
 A product export (batch, Studio job, single edit) also carries the source photo's EXIF, filtered by
 the `metadata` run setting (`keep`, `shareable` — the default, which drops the GPS block and the
 camera and lens serial numbers — or `none`), and an embedded sRGB ICC profile. `imageio.export_exif` builds the block from the
@@ -597,7 +639,8 @@ cache). It warns when the digest of the config files differs from the batch's, a
 A local FastAPI app (`web/app.py`) over framework-agnostic logic (`web/service.py`), plus a
 single self-contained `static/studio.html` (vanilla HTML/CSS/JS, no build step) — a Lightroom/
 Capture One-shaped editor: top bar · filmstrip · before/after stage · Develop panel · status bar ·
-run drawer · review/settings modals.
+run drawer · review/settings modals. A second page, `static/lab.html` at `/lab` (F38), uses the same
+`/api/v1` routes for a minimal test UI of the newer features; it changes no route.
 
 ### Endpoints
 
@@ -637,6 +680,11 @@ cache) means one model load per process; an `INFERENCE_LOCK` serializes GPU infe
 ships before/after capped at 2560px as **lossless WebP** — pixel-exact like PNG (JPEG's DCT would
 quantize away the anti-banding dither and re-contour skies) but a much smaller payload.
 Segmentation stays at analysis size and is cached, so a re-preview doesn't re-pay SAM cost.
+
+Above that bound the analysis picture is still made from the original, exactly as an export makes
+it (`process_one(..., proxy=)`), so preview and export see the same masks, source stats and
+decisions, and a single-photo export of a previewed photo finds its masks in the cache (F37, T9).
+The post-edit stats still come from renders of two sizes, so a quality warning can differ.
 
 ### RAW+JPEG pairing (UI)
 
@@ -706,7 +754,7 @@ autoedit styles | presets | exports | settings [--json]   # list profiles / pres
 ## 18. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable.
-**754 tests** in 84 files currently green (run on two Python interpreters, with different Pillow and
+**1027 tests** in 99 files currently green (run on two Python interpreters, with different Pillow and
 FastAPI versions). Any new edit op needs a math test; rule changes need a golden test —
 percentile/WB rule goldens assert BOTH the new adaptive behavior on populated stats AND exact
 byte-for-byte reproduction of the pre-retune output on zero-filled stats. Coverage includes:

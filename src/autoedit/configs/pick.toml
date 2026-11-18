@@ -1,0 +1,28 @@
+# Pick the keepers (`autoedit pick`): rank the frames of each burst by how sharp the subject is,
+# by exposure, and (with a model) by the scorer. A profile's pick.toml is merged over this file.
+
+[measure]
+long_edge = 2048        # every frame is judged on a picture of this size (never enlarged), so frame size does not decide
+local_radius = 16       # sharpness is fine detail over local contrast; local means a square of 33 pixels of that picture
+min_contrast = 0.02     # a judged area with less local contrast (RMS, of 1) is flat: its noise must not count as sharpness
+concepts = ["subject"]  # what the segmenter is asked for; a frame is judged inside these masks (--concepts replaces the list)
+min_score = 0.4         # a mask the segmenter is less sure of than this is not used
+min_coverage = 0.002    # masks that cover less of the frame than this are not used: the whole frame is judged
+
+[exposure]
+clip_full = 0.1         # this share of the judged area blown (a channel above 0.98) is the full penalty
+dark_p50 = 0.25         # a judged area with a median luma below this (two stops under mid grey) counts as dark; the penalty is full at 0
+
+[weights]
+exposure = 0.3          # the full exposure penalty: what a frame loses against the sharpest frame of its burst, whose sharpness counts as 1
+scorer = 0.15           # the whole range of the scorer, 0 to 1 (only with --aesthetic-model)
+
+# Values written here replace those of [consistency] in rules.toml for `autoedit pick` only.
+# [burst]
+# max_gap_s = 2
+# max_span_s = 20
+# min_similarity = 0.8
+
+[sheet]
+thumb = 360             # long edge of a frame's picture on the sheet
+crop = [360, 240]       # the window of the judged picture at full scale

@@ -280,13 +280,15 @@ def advance(out: str, *, photos: str | None = None, finish: bool = False, profil
         state["votes"][d] = [state["votes"][d][0] + p, state["votes"][d][1] + m]
     result = {"base": state["base"], "votes": votes, "totals": state["votes"], "name": state["name"]}
     if finish or number >= state["rounds"]:
+        from . import looks as looks_mod
         from .cli import write_look
 
         fitted = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in state["base"].items()}
         where = profile or paths.default_profile_dir()
         mine = os.path.join(where, "looks.toml")
         result["replaced"] = os.path.isfile(mine) and state["name"] in paths.read_config(mine)
-        result["look_path"] = write_look(where, state["name"], fitted)[0]
+        habit = looks_mod.load_habits(paths.config_paths(configs_dir, profile)["looks_path"]).get(state["look"])
+        result["look_path"] = write_look(where, state["name"], fitted, habit=habit)[0]
         state["done"] = True
         result["done"] = True
         _write_state(out, state)
