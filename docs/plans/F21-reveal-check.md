@@ -537,3 +537,35 @@ Models and effort as [AGENT_ROUTING.md](../AGENT_ROUTING.md) sets them.
   gets its own threshold (see "Rules that follow from the numbers").
 - **Open:** T0's measurement itself (the owner's labelled photos) comes next; T2 to T4 follow its numbers (F36, which
   they also waited for, is closed); then the Checker's review of the whole feature.
+
+### Result of the measurement (T0, first part, 2026-11-17)
+
+134 of the owner's photos: 15 phone photos (14 with a readable plate, labelled by the owner) and 120
+camera photos drawn at random from one holiday folder (119 labelled by the session from the
+labelling page's previews, one left out because its plates could not be judged from the preview).
+`scripts/eval_reveal.py run --tiles`, SAM 3, one run. The photos and the labels stay outside the repo.
+
+| Kind | With it | Hits (proxy) | False alarms (proxy) | `min_score` | Tiles | Verdict |
+|---|---|---|---|---|---|---|
+| plate | 14 | 14 of 14 | 1 of 120 | 0.40 | 14 of 14, 2 false alarms | ok |
+| writing | 10 | 10 of 10 | 10 of 124 | 0.40 | no gain | ok |
+| people | 59 | 59 of 59 | 6 of 75 | 0.80 | no gain | ok |
+| face | 40 | 39 of 40 | 9 of 94 | 0.80 | 28 of 40 at 0.90 | ok |
+| child | 33 | 33 of 33 | 9 of 101 | 0.65 | no gain | ok |
+| address, screen, document, card, badge, key, code | 0 | | | | | not measured |
+
+- **Plates pass the stop rule** (14 of 14, needed 9 of 10), on the proxy alone and only through the
+  word "license plate". But 14 photos is under the 20 the spec asks for, and all 14 are close,
+  well-lit phone photos of cars; plates far away in a street scene were not in the set.
+- **Tiles are not built**: they added no hit to any kind and lowered "face". About 10 s per photo
+  for the proxy pass, 44 s more with tiles.
+- **"child" stays**, with a measured `min_score` of 0.65 and 9 false alarms in 101 (teenagers and
+  small adults). Its label stays "possibly a child".
+- **What these numbers cannot say:** half the labels are the session's, made from 1280-pixel previews,
+  so a "false alarm" for people or face may be a real person the preview hid (the scores of the
+  false alarms were not looked at one by one). Seven kinds had no photo at all; the owner's photos
+  have no screens, documents, cards, badges, keys or codes in this sample.
+- **Before T2:** the owner decides whether this is enough. Either T2 starts with these thresholds
+  and the seven unmeasured kinds ship with `weak = true` ("may miss"), or a second set with at
+  least 20 screens, 20 documents and 6 more plates is labelled and run first (the script resumes,
+  only the new photos are measured).
