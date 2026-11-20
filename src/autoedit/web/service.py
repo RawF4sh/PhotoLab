@@ -30,7 +30,7 @@ _ALLOWED = (
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
     "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "night_sky", "raw_mode",
-    "highlight_hold", "light_shaping", "out_long_edge", "out_name", "out_subdir",
+    "highlight_hold", "light_shaping", "snap_edges", "out_long_edge", "out_name", "out_subdir",
     "translator", "grain", "grain_size", "lut", "lut_amount", "history", "straighten", "out_aspect",
     "neutral", "wb", "backdrop", "consistency_wb", "colour_report", "reveal_check",
 )

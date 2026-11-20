@@ -66,6 +66,9 @@ omit_zero_global_ops = ["temp", "tint", "shadows_ev"]
 # Inside a burst each frame is moved toward the burst's median: exposure by at most max_ev stops,
 # temp and tint by at most max_wb units. A burst never reaches more than max_span_s past its first
 # frame (a longer run is split), so a real change of light is not flattened.
+[masks]
+snap_edge_px = 12     # with snap_edges on: gaps this close to the frame edge (proxy pixels) are filled
+
 [consistency]
 max_gap_s = 30
 max_span_s = 120
@@ -79,6 +82,14 @@ max_wb = 4
 max_wb_cast = 8
 wb_min_confidence = 0.3
 colour_of = ["subject", "person"]
+# Mode timelapse (F43): each frame is moved to the running median of its neighbours, by at most timelapse_max_ev.
+timelapse_window = 9     # frames in the running median (odd)
+timelapse_max_ev = 0.5   # largest correction of one frame
+timelapse_step_ev = 0.75 # a jump of the light this big inside a window is real: a frame is evened only with the frames on its own side
+
+[search]
+min_coverage = 0.02   # a concept counts for search and keywords from this share of the frame
+exclude = ["skin", "subject"]   # engine-internal guard concepts: never a keyword (reveal kinds are left out too)
 
 # ─────────────────────────── skin-safe guard ───────────────────────────
 # Global finishing ops that must NOT hit skin/face at full strength (pros reject over-clarified,

@@ -11,7 +11,7 @@ import hashlib
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -21,6 +21,7 @@ from .concepts import load_concepts, meta_for
 from .contract import Adjustment, Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
+from .edit.mask import snap_to_edges
 from .edit import apply_image, banding, build_alpha, gates, ops, par, reference as ref_match, linear_alpha
 from .imageio import Image, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
 from .notes import build_notes
@@ -313,6 +314,10 @@ class Pipeline:
 
         stage_started = time.perf_counter()
         raw = self.segmenter.segment(proxy, words) if words else []
+        px = self._snap_px()
+        if px:   # once, at the root: regions, instruction cells and marks all see the same masks. New arrays: cached masks are shared and never written into.
+            snap = set(concepts) | set(instructions.extra_concepts(adjs + self._all_habits(), concepts))
+            raw = [replace(rm, mask=snap_to_edges(rm.mask, px)) if rm.name in snap else rm for rm in raw]
         stage_timings["segment"] = (time.perf_counter() - stage_started) * 1000
         stage_started = time.perf_counter()
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
@@ -1123,6 +1128,9 @@ class Pipeline:
             result.audit["run_inputs"]["lut"] = self.lut.name
             result.audit["lut"] = {"name": self.lut.name, "digest": self.lut.digest, "points": self.lut.points}
         return out_rgb, result
+
+    def _snap_px(self) -> int:
+        return int((self.rules.get("masks") or {}).get("snap_edge_px", 12)) if self.cfg.snap_edges else 0
 
     def _get_ref_proxy(self) -> Image | None:
         """Decode the reference image ONCE per run (downscaled to analysis size) and cache it.

@@ -77,6 +77,8 @@ autoedit run ./photos ./out --concepts "sky,skin,dress,foliage"   # arbitrary co
 autoedit run ./photos ./out --decider llm --allow-cloud           # BYO-key LLM (see Privacy)
 autoedit run ./photos ./out --dry-run                              # decisions + sidecars, no pixels
 autoedit curate ./photos ./curated --mode best --count 300         # copy likely keepers for review
+autoedit find ./out snow lake                                   # photos by what is in them
+autoedit declare ./out                                          # what was changed, per photo, with hashes
 autoedit check ./photos                                         # what the photos may give away (needs SAM 3)
 autoedit train-aesthetic labels.csv ./images ./aesthetic.json       # train a lightweight taste scorer
 autoedit curate ./photos ./curated --mode aesthetic --aesthetic-model ./aesthetic.json

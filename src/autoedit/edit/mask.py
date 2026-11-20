@@ -17,6 +17,22 @@ from .filters import gaussian_blur, guided_filter
 _GUIDE_CAP = 1600  # run the guided filter at ≤ this long edge for speed, then upsample the alpha
 
 
+def snap_to_edges(mask: np.ndarray, band: int) -> np.ndarray:
+    """A new bool mask: where the mask has a True pixel within `band` pixels of a frame edge, the
+    gap between that edge and the first True pixel (per column / row) is filled. Input untouched.
+    The four passes run one after the other on the result, so the corners fill too."""
+    out = mask.copy()
+    if band <= 0:
+        return out
+    h, w = mask.shape
+    for view in (out, out[::-1], out.T, out.T[::-1]):
+        b = min(band, view.shape[0])
+        win = view[:b]
+        r = np.where(win.any(axis=0), win.argmax(axis=0), 0)   # first True row per column
+        view[:b][np.arange(b)[:, None] < r[None, :]] = True    # views write through to `out`
+    return out
+
+
 def blobs(mask: np.ndarray, grid: int) -> list[np.ndarray]:
     """The 8-connected groups of True pixels, found on a grid of at most grid x grid cells,
     largest first, each as a full-size mask."""

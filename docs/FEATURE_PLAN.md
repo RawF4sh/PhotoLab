@@ -61,6 +61,11 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F36 | Speed and frameworks: SAM 3 reads each photo once | M | done (built before F21); a lock for SAM 3 jobs was built, measured and dropped; the worker default waits for the owner |
 | F37 | Point and tell: circle a thing, say what to change, see how it was done | L | done (built before F21's open tasks; T9, the preview of a large photo, added on 2026-11-17); five things found on the way: three done on 2026-11-18 (disk cap, Studio limits from the server, the guide section), two wait for the owner (filling holes, the "bigger" message) |
 | F38 | AutoEdit Lab: a minimal test UI | M | done (`/lab`, `web/static/lab.html`): a second page beside Studio for the features of the unattended run; Studio and the API unchanged; spec [F38](plans/F38-test-ui.md) |
+| F39 | Masks that reach the frame edge | S | done, off by default (`--snap-edges`); spec [F39](plans/F39-edge-masks.md) |
+| F40 | An exit code for failed photos | S | done (`run --strict`); the default stays 0 until the owner says otherwise; spec [F40](plans/F40-failure-exit-code.md) |
+| F41 | Search by what is in the photo, and keywords | M | done (`autoedit find`, `autoedit keywords`, keywords as `.xmp` beside the export); spec [F41](plans/F41-search-and-keywords.md) |
+| F42 | Edit declaration | M | done (`autoedit declare`); no signing (C2PA needs a certificate); merged frames not declared; spec [F42](plans/F42-edit-declaration.md) |
+| F43 | Timelapse flicker | M | done, off by default (`--consistency timelapse`); tested on made-up frames, a real timelapse is open; spec [F43](plans/F43-timelapse-flicker.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the

@@ -116,6 +116,11 @@ label = "Glow where the sun is"
 group = "quality"
 help = "Adds a soft warm glow around the sun or a bright light when the photo has a clear one."
 
+[setting.snap_edges]
+label = "Fill gaps at the frame edge"
+group = "quality"
+help = "Extends a marked area that stops just short of the edge of the picture to the edge, so no thin unedited rim is left."
+
 [setting.levels]
 label = "Set black and white point"
 group = "quality"
@@ -156,7 +161,7 @@ advanced = true
 [setting.consistency]
 label = "Consistency"
 group = "batch"
-help = "Brightness evens out the whole shoot; bursts also evens out frames shot of the same scene."
+help = "Brightness evens out the shoot; bursts evens frames of one scene; timelapse evens flicker between frames in order."
 
 [setting.consistency_wb]
 label = "Same white balance"

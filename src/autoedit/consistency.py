@@ -81,7 +81,8 @@ class Bias:
 
 # Fallbacks when rules.toml has no [consistency] block; the tuning values live there.
 BURST_DEFAULTS = {"max_gap_s": 30.0, "max_span_s": 120.0, "min_similarity": 0.8, "max_ev": 0.5, "max_wb": 4.0,
-                  "max_wb_cast": 8.0, "wb_min_confidence": 0.3, "colour_of": ["subject", "person"]}
+                  "max_wb_cast": 8.0, "wb_min_confidence": 0.3, "colour_of": ["subject", "person"],
+                  "timelapse_window": 9, "timelapse_max_ev": 0.5, "timelapse_step_ev": 0.75}
 
 
 def capture_time(path: str) -> float | None:
@@ -200,6 +201,49 @@ def burst_biases(decided: list[dict], max_ev: float, max_wb: float) -> list[tupl
         ev = max(ev, -max(d["exposure"], 0.0))                                   # cancel a lift, never cut
         ev = min(ev, max(0.0, d["headroom_ev"] - 0.15 - d["exposure"]))          # never into clipping
         out.append((ev, max(-max_wb, min(max_wb, t_mid - d["temp"])), max(-max_wb, min(max_wb, n_mid - d["tint"]))))
+    return out
+
+
+def timelapse_biases(lums: list[float], window: int, max_ev: float, step_ev: float = 0.75) -> list[float]:
+    """Per frame, in order: the exposure bias in EV that moves its luminance to the running median of its neighbours
+    (`window` frames centred on it, shrunk at the ends, along the window's slope), clamped to +-max_ev. Luminance is compared in log2 (EV).
+    A real sudden change of light is kept: when inside a frame's window the median EV of the frames before it and of the
+    frames after it differ by more than `step_ev`, only the frames on the frame's own side of the step are used."""
+    ev = [math.log2(max(v, 1e-6)) for v in lums]
+    half = max(window, 1) // 2
+    # Each neighbour is carried to this frame along the window's own fitted slope, so a slow ramp is
+    # not mistaken for flicker, also in the lopsided windows at the ends.
+    out = []
+    for i, e in enumerate(ev):
+        lo, hi = max(0, i - half), min(len(ev), i + half + 1)
+        if lo < i < hi - 1:
+            before, after = _median(ev[lo:i]), _median(ev[i + 1:hi])
+            if abs(after - before) > step_ev:      # a step inside the window: stay on this frame's side of it
+                lo, hi = (lo, i + 1) if abs(e - before) <= abs(e - after) else (i, hi)
+        # Theil-Sen slope (median of the pairwise slopes): a single frame across the edge of a step cannot tilt it.
+        k = _median([(ev[b] - ev[a]) / (b - a) for a in range(lo, hi) for b in range(a + 1, hi)]) if hi - lo > 1 else 0.0
+        out.append(max(-max_ev, min(max_ev, _median([ev[j] + k * (i - j) for j in range(lo, hi)]) - e)))
+    return out
+
+
+def _timelapse_plan(images: list[str], pipeline, thr: dict) -> dict[str, Bias]:
+    """Frames in capture order (file name when any has no time), each evened on what it will look like once edited.
+    RAW files and the other files are evened apart, as `kind_biases` does for bursts: a RAW decode sits about a stop and
+    a half below the camera JPEG, which is no flicker."""
+    times = [capture_time(p) for p in images]
+    order = sorted(images, key=lambda p: (times[images.index(p)], p)) if None not in times else sorted(images)
+    got = [(p, d) for p in order if (d := _decided(pipeline, p)) is not None]
+    out = {}
+    for raw in (True, False):
+        part = [(p, d) for p, d in got if is_raw(p) == raw]
+        if len(part) < 2:
+            continue
+        # The same level `burst_biases` compares (decided exposure included), as a luminance so the log2 gives it back.
+        lums = [2.0 ** (2.2 * math.log2(max(d["fg_p50"], 1e-3)) + d["exposure"] + 0.5 * d["shadows_ev"]) for _p, d in part]
+        for (p, d), ev in zip(part, timelapse_biases(lums, int(thr["timelapse_window"]), thr["timelapse_max_ev"],
+                                                     float(thr["timelapse_step_ev"]))):
+            ev = min(ev, max(0.0, d["headroom_ev"] - 0.15 - d["exposure"]))      # never into clipping, as bursts
+            out[p] = Bias(group="t1", exposure=ev)
     return out
 
 
@@ -322,7 +366,9 @@ def plan(images: list[str], cfg, pipeline, thr: dict | None = None, progress=Non
     """The consistency bias of every image, for the mode in `cfg.consistency`.
     "brightness": brightness clusters, a nudge of at most 0.15.
     "bursts": frames of one framing shot close together are brought to one level and one white
-    balance. A photo that fails to measure simply gets no bias. `progress`, when given, is called
+    balance.
+    "timelapse": frames in order are moved to the running median of their neighbours (F43).
+    A photo that fails to measure simply gets no bias. `progress`, when given, is called
     with a short line of text now and then: the bursts plan decodes and decides every burst
     photo once before the first render, which takes minutes on a large shoot."""
     if len(images) < 2:
@@ -333,6 +379,8 @@ def plan(images: list[str], cfg, pipeline, thr: dict | None = None, progress=Non
     words = thr.get("colour_of")
     if not (isinstance(words, list) and all(isinstance(w, str) and w for w in words)):
         raise ValueError(f"rules.toml [consistency] colour_of must be a list of words (got {words!r})")
+    if cfg.consistency == "timelapse":
+        return _with_rules(pipeline, lambda: _timelapse_plan(images, pipeline, thr))
     if cfg.consistency == "bursts":
         return _bursts_plan(images, pipeline, thr, progress, by_cast)
     out = _brightness_plan(images)

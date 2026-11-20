@@ -303,6 +303,15 @@
       "advanced": false
     },
     {
+      "key": "snap_edges",
+      "label": "Fill gaps at the frame edge",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Extends a marked area that stops just short of the edge of the picture to the edge, so no thin unedited rim is left.",
+      "advanced": false
+    },
+    {
       "key": "levels",
       "label": "Set black and white point",
       "group": "quality",
@@ -375,9 +384,10 @@
       "default": "brightness",
       "choices": [
         "brightness",
-        "bursts"
+        "bursts",
+        "timelapse"
       ],
-      "help": "Brightness evens out the whole shoot; bursts also evens out frames shot of the same scene.",
+      "help": "Brightness evens out the shoot; bursts evens frames of one scene; timelapse evens flicker between frames in order.",
       "advanced": false
     },
     {

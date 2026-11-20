@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Edge masks, exit code, search, edit declaration, timelapse (F39–F43)
+
+### Added
+- **`--snap-edges`** (F39): region masks that stop a few pixels short of the frame edge are
+  extended to it, so a region edit leaves no thin unedited rim. Off by default; `[masks]
+  snap_edge_px` in `rules.toml`.
+- **`autoedit run --strict`** (F40): ends with 1 when any photo failed. Without it, 0 as before.
+- **`autoedit find FOLDER WORD ...`** and **`autoedit keywords FOLDER`** (F41): search a run's
+  sidecars by scene and detected concepts ("snow lake"), and write the concepts as keywords into a
+  `.xmp` beside each export. Reveal kinds (people, faces, plates…) are searchable but never keywords.
+- **`autoedit declare FOLDER`** (F42): `declaration.html` and `.json`, per photo what was changed
+  (whole photo, regions, shapes, geometry, look, repairs, other steps) with SHA-256 hashes of the
+  source and the export, for contests and news desks. No signing.
+- **`--consistency timelapse`** (F43): evens out frame-to-frame brightness in a timelapse while
+  keeping the slow change of light and real steps. Off by default.
+
 ## [Unreleased] — Reveal check (F21)
 
 ### Added

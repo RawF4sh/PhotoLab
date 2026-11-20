@@ -6,6 +6,9 @@ Commands:
                                              re-render one photo
   autoedit curate INPUT_DIR OUT_DIR          copy a diverse subset for review/training
   autoedit pick FOLDER [-o DIR] [--copy]     rank the frames of each burst and pick the keepers
+  autoedit find FOLDER WORD [WORD ...]     list photos by what is in them
+  autoedit keywords FOLDER [--dry-run]     write XMP keywords beside the photos
+  autoedit declare FOLDER [-o DIR]         write the edit declaration of a run
   autoedit merge FOLDER [-o DIR] [--mode M]  merge brackets, stacks, focus series or star trails into TIFFs
   autoedit doctor                            report device + backend availability
   autoedit models status|download|remove     SAM 3 weights
@@ -37,7 +40,7 @@ def _flatten(d: dict) -> dict:
         if src in dec:
             kw[dst] = dec[src]
     for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
-              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "light_shaping", "reveal_check",
+              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "light_shaping", "snap_edges", "reveal_check",
               "translator", "grain", "grain_size", "lut", "lut_amount", "history", "genre", "straighten", "neutral", "wb", "backdrop",
               "consistency_wb", "colour_report"):
         if k in run:
@@ -161,6 +164,7 @@ def load_run_config(args) -> RunConfig:
         "history": getattr(args, "history", None),
         "highlight_hold": getattr(args, "highlight_hold", None),
         "light_shaping": getattr(args, "light_shaping", None),
+        "snap_edges": getattr(args, "snap_edges", None),
         "reveal_check": getattr(args, "reveal_check", None),
         "translator": getattr(args, "translator", None),
     }
@@ -275,6 +279,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="keep highlights that are blown in the source white instead of letting the edit grey them (opt-in)")
     p.add_argument("--light-shaping", dest="light_shaping", action="store_true", default=None,
                    help="add a soft warm glow where the sun is, when the photo has a clear light source (opt-in)")
+    p.add_argument("--snap-edges", dest="snap_edges", action="store_true", default=None,
+                   help="extend region masks that stop just short of the frame edge to it (opt-in)")
     p.add_argument("--reveal-check", dest="reveal_check", action="store_true", default=None,
                    help="report which photos show a plate, screen, document, person or file metadata "
                         "(opt-in; reveal.html and run.json, no picture changes)")
@@ -286,8 +292,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="do not keep raw masks under <out>/.autoedit-masks")
     p.add_argument("--no-consistent", dest="consistent", action="store_false", default=None,
                    help="disable shoot-consistency (the bounded per-group brightness normalization)")
-    p.add_argument("--consistency", choices=["brightness", "bursts"],
-                   help="shoot consistency: brightness (default) | bursts (even out frames of one framing)")
+    p.add_argument("--consistency", choices=["brightness", "bursts", "timelapse"],
+                   help="shoot consistency: brightness (default) | bursts (even out frames of one framing) | timelapse (even out flicker, keep the slow change)")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help="segment + decide + sidecar, no baked pixels")
@@ -330,12 +336,12 @@ def _cmd_run(args) -> int:
         print(f"input_dir not found: {args.input_dir}", file=sys.stderr)
         return 2
     try:
-        batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume,
-                  consistent=args.consistent is not False, workers=cfg.workers)
+        m = batch.run(cfg, args.input_dir, args.out_dir, do_apply=not args.dry_run, resume=args.resume,
+                      consistent=args.consistent is not False, workers=cfg.workers)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    return 0
+    return 1 if getattr(args, "strict", False) and (m or {}).get("failed") else 0
 
 
 def _cmd_check(args) -> int:
@@ -518,6 +524,44 @@ def _cmd_pick(args) -> int:
         print(os.path.abspath(os.path.join(args.out, f)))
     if args.copy:
         print(os.path.abspath(os.path.join(args.out, "picked")))
+    return 0
+
+
+def _min_coverage(args) -> float:
+    if args.min_coverage is not None:
+        return args.min_coverage
+    rules = paths.read_config(paths.config_paths(args.configs_dir, args.profile)["rules_path"])
+    return float((rules.get("search") or {}).get("min_coverage", 0.02))
+
+
+def _cmd_find(args) -> int:
+    from . import search
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    text, code = search.cmd_find(args.folder, args.words, _min_coverage(args), args.json)
+    print(text)
+    return code
+
+
+def _cmd_keywords(args) -> int:
+    from . import search
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    print(search.cmd_keywords(args.folder, _min_coverage(args), args.dry_run, args.configs_dir, args.profile))
+    return 0
+
+
+def _cmd_declare(args) -> int:
+    from . import declare
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    print(declare.cmd_declare(args.folder, args.out))
     return 0
 
 
@@ -1038,6 +1082,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run_p = sub.add_parser("run", help="batch-edit a folder")
     _add_run_flags(run_p)
+    run_p.add_argument("--strict", action="store_true", help="end with 1 when any photo failed (default: 0)")
     run_p.set_defaults(func=_cmd_run)
 
     chk_p = sub.add_parser("check", help="check a folder for what gives something away (reveal.html); changes no picture")
@@ -1116,6 +1161,25 @@ def main(argv: list[str] | None = None) -> int:
     merge_p.add_argument("--configs-dir", dest="configs_dir")
     merge_p.add_argument("--profile", help="profile folder with your own config differences")
     merge_p.set_defaults(func=_cmd_merge)
+
+    find_p = sub.add_parser("find", help="list the photos of a run that show every given word (scene, concept or reveal kind)")
+    find_p.add_argument("folder")
+    find_p.add_argument("words", nargs="+", metavar="WORD")
+    find_p.add_argument("--min-coverage", dest="min_coverage", type=float, help="smallest share of the frame (default: rules.toml [search])")
+    find_p.add_argument("--json", action="store_true")
+    kw_p = sub.add_parser("keywords", help="write each exported photo's scene and concepts as XMP keywords (.xmp beside it)")
+    kw_p.add_argument("folder")
+    kw_p.add_argument("--min-coverage", dest="min_coverage", type=float, help="smallest share of the frame (default: rules.toml [search])")
+    kw_p.add_argument("--dry-run", dest="dry_run", action="store_true", help="print the keywords, write nothing")
+    for q in (find_p, kw_p):
+        q.add_argument("--configs-dir", dest="configs_dir")
+        q.add_argument("--profile", help="profile folder with your own config differences")
+    find_p.set_defaults(func=_cmd_find)
+    kw_p.set_defaults(func=_cmd_keywords)
+    decl_p = sub.add_parser("declare", help="write a page and a JSON file stating what AutoEdit did to each photo of a run")
+    decl_p.add_argument("folder")
+    decl_p.add_argument("-o", "--out", help="where the two files go (default: the folder)")
+    decl_p.set_defaults(func=_cmd_declare)
 
     ds_p = sub.add_parser("dataset", help="build/validate a training dataset from originals + edited targets")
     ds_sub = ds_p.add_subparsers(dest="ds_cmd", required=True)

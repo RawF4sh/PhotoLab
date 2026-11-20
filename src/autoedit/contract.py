@@ -88,7 +88,7 @@ class RunConfig(BaseModel):
     workers: int = Field(default=1, ge=0, le=64)  # render processes for a batch; 0 = half the cores, at most 4
     threads: int = Field(default=0, ge=0, le=256)  # threads for per-pixel work inside one render; 0 = one per core
 
-    consistency: Literal["brightness", "bursts"] = "brightness"  # shoot consistency (F9); "bursts" evens out frames of one framing
+    consistency: Literal["brightness", "bursts", "timelapse"] = "brightness"  # shoot consistency (F9); "bursts" evens out frames of one framing
 
     # output
     out_format: Literal["jpeg", "jpg", "tiff", "webp", "png"] = "jpeg"
@@ -105,6 +105,7 @@ class RunConfig(BaseModel):
     highlight_hold: bool = False  # keep source-blown highlights white (F6); off → the edit may grey them
     levels: bool = False  # black and white point (F5); off → the rule-driven black_point is dropped after decide
     light_shaping: bool = False  # a soft warm glow where the sun is (F18); off → the sun glow move does not exist
+    snap_edges: bool = False  # region masks that stop just short of the frame edge are extended to it (F39); off → masks as segmented
     denoise: bool = False  # noise reduction (F7); off → the rule set is not loaded and the op is dropped after decide
     night_sky: bool = False  # night sky tools (F31): night frames take the night rules; off → the rule set is not loaded and the ops are dropped after decide
     grain: float | None = Field(default=None, ge=0.0, le=100.0)  # film grain on the written picture (F23); None = the look's own, 0 = none
