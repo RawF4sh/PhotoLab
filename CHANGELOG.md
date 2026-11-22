@@ -3,6 +3,28 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Highlight recovery, colour fringes, copy edits, watermark, gallery (F44–F48)
+
+### Added
+- **`--raw-recover`** (F44): RAW highlights that the default decode clips to flat white get their
+  brightness back from a second LibRaw decode, shaded under white by one shoulder. Off by default;
+  only with `raw_mode = "none"`. A new stat, `recovered_highlight` (the share recovery rebuilt), feeds
+  the global `highlights` and `whites` rules, so recovered highlights are held as clipped ones were;
+  it is 0 without recovery, so default output does not change.
+- **`--lens-ca`** (F46): lateral colour fringes are measured per photo and red and blue are scaled
+  onto green, at full resolution before analysis. Off by default. Vignette correction was measured
+  and left out (a fit on one frame is off by as much as the vignette).
+- **`autoedit sync PHOTO`** (F47): copies one photo's own changes to the photos of the same scene
+  taken within 10 minutes, and moves their exposure toward it (at most 1 EV). Marks, crop,
+  straighten and LLM decisions are never copied. `[sync]` in `rules.toml`.
+- **Watermark** (F48): a text line or a PNG logo in a corner of the export, set only in an export
+  preset of your own (`watermark`, `watermark_logo`, `watermark_corner`, `watermark_size`,
+  `watermark_opacity`). Drawn on the export only; `autoedit declare` lists it.
+- **`autoedit gallery FOLDER [-o DIR]`** (F48): a static `gallery.html` of the exports with
+  thumbnails, relative links and captions; tiles of photos with reveal findings carry a warning.
+- F45 (dehaze by distance) was measured and is already covered by the dark-channel dehaze and the
+  region rules; nothing was built.
+
 ## [Unreleased] — Edge masks, exit code, search, edit declaration, timelapse (F39–F43)
 
 ### Added

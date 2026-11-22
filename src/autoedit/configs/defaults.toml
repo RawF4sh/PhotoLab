@@ -50,6 +50,8 @@ max_ev = 2.5               # never lift more than this many stops at decode
 clip_budget = 0.005        # headroom cap: fraction of pixels allowed to reach white
 tone_target_p50 = 0.40     # tone_target mode: median luma target (gamma-encoded)
 fallback_ev = 0.0          # unavailable/incompatible preview: no camera-independent fixed lift
+lens_ca = false            # true: scale red and blue onto green to remove colour fringes toward the corners (F46, opt-in)
+recover = false            # true: rebuild clipped highlights from LibRaw's blend decode (F44, opt-in, RAW only)
 
 [output]
 format = "jpeg"            # "jpeg" | "tiff" | "webp" | "png"

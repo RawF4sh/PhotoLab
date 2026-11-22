@@ -36,6 +36,9 @@ def _repairs(*bundles: dict) -> list[str]:
 _NOTE_STEPS = ("reference match \u2192", "reference match (region)", "post-reference", "highlight hold:",
                "oversaturation gate:", "skin-safe guard:", "banding gate:", "banding watch:")
 
+WATERMARK_NOTE = ("Exports listed with a watermark carry a mark that the photographer set in an export preset: "
+                  "text or a logo laid over one corner, after every other step.")
+
 
 def _steps(r: Result) -> list[str]:
     """Pixel-changing steps beyond the plain settings, each read from a recorded field or note."""
@@ -57,6 +60,11 @@ def _steps(r: Result) -> list[str]:
     edge = (a.get("run_config") or {}).get("out_long_edge")
     if edge:
         out.append(f"export scaled down to at most {edge} px on the long edge")
+    wm = a.get("watermark")
+    if wm:
+        what = " and ".join(p for p in ((f"the text {wm['text']!r}" if wm.get("text") else ""),
+                                        (f"the logo {wm['logo']}" if wm.get("logo") else "")) if p)
+        out.append(f"watermark: {what} laid over the {str(wm.get('corner', '')).replace('_', ' ')} corner of the export")
     return out
 
 
@@ -116,6 +124,7 @@ def declaration(sidecar_path: str) -> dict:
         "grain": g.get("grain") or None,
         "black_and_white": g.get("bw") or None,
         "steps": _steps(r),
+        "watermark": r.audit.get("watermark"),
         "repairs": _repairs(g, *(m.ops for m in r.masks), *(m.ops for m in r.composition)),
         "notes": notes,
     }
@@ -160,10 +169,11 @@ def _page(decls: list[dict]) -> str:
         if d["notes"]:
             body += f"<ul>{li(d['notes'])}</ul>"
         out.append(f"<section><h2>{e(d['source'])}</h2>{body}</section>")
+    mark = f"<p>{e(WATERMARK_NOTE)}</p>" if any(d.get("watermark") for d in decls) else ""
     return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>Edit declaration</title>"
             "<style>body{font:15px sans-serif;max-width:46em;margin:2em auto;padding:0 1em}"
             "section{border-top:1px solid #999;margin-top:1.5em}code,p{overflow-wrap:anywhere}</style></head><body>"
-            f"<h1>Edit declaration</h1><p>{e(STATEMENT)}</p>{''.join(out)}</body></html>")
+            f"<h1>Edit declaration</h1><p>{e(STATEMENT)}</p>{mark}{''.join(out)}</body></html>")
 
 
 def _build(folder: str, out: str | None) -> tuple[str, str, int, int]:

@@ -14,6 +14,7 @@
 #   pro_stats_valid                                  (1 for freshly computed stats; 0 for legacy)
 #   lum_p10, lum_p50, lum_p90, lum_p99, fg_lum, fg_p50, detail_rms, veil, dark_p10
 #   headroom_ev  (stops before p99.5 of per-pixel max(R,G,B) clips — bounds exposure/contrast/whites)
+#   recovered_highlight  (F44: share of the frame clipped before RAW recovery rebuilt it; 0 otherwise)
 #   planned_exposure  (this block's baseline exposure in EV after intensity; evaluated first)
 #   dark_cov     (fraction of pixels with luma < 0.10: dark-but-unclipped, which shadow_clip can't see)
 #   band_top_p50, band_mid_p50, band_bottom_p50     (median luma of the top/middle/bottom thirds)
@@ -90,6 +91,14 @@ timelapse_step_ev = 0.75 # a jump of the light this big inside a window is real:
 [search]
 min_coverage = 0.02   # a concept counts for search and keywords from this share of the frame
 exclude = ["skin", "subject"]   # engine-internal guard concepts: never a keyword (reveal kinds are left out too)
+
+# ─────────────────────────── copy edits to similar photos (F47) ───────────────────────────
+# `autoedit sync PHOTO`: a photo of the same scene taken at most `minutes` before or after PHOTO
+# gets PHOTO's own changes. Its exposure moves toward PHOTO's by at most `max_ev` stops, never
+# below its own exposure and never into clipping (the bounds of the bursts mode, F9).
+[sync]
+minutes = 10
+max_ev = 1.0
 
 # ─────────────────────────── skin-safe guard ───────────────────────────
 # Global finishing ops that must NOT hit skin/face at full strength (pros reject over-clarified,
@@ -169,11 +178,11 @@ shadows_ev = "if(pro_stats_valid > 0, clamp(0.5 * (0.6 * 2.2 * log2(0.45 / max(f
 # dark-frame guard in tests/test_tone_stack.py pins that. The look's curve_add is added on top.
 curve      = "if(pro_stats_valid > 0, clamp(60 * (planned_exposure - 0.25) * clamp((lum_p10 - 0.07) / 0.05, 0, 1), 0, 30), 0)"
 contrast   = "if(pro_stats_valid > 0, 8 * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 8)"
-highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 85, -10, 0)" # recover blown/channel-clipped background
+highlights = "clamp(-max(highlight_clip, channel_highlight_clip, recovered_highlight) * 85, -10, 0)" # recover blown/channel-clipped background
 # open shadows for DARKNESS (foreground median, dark coverage), not only for clipped pixels
 shadows    = "clamp(shadow_clip * 65 + 5 + if(pro_stats_valid > 0, max(0, 0.35 - fg_p50) * 80 + dark_cov * 30, 0), 5, 40)"
 # Both white-point lifts share the headroom left after exposure; negative recovery stays.
-whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 40, 0, 8), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip, recovered_highlight) * 55, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip, recovered_highlight) * 55, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 40, 0, 8), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
 # Black anchor (loop iter-02): the shadows op adds its lift at full weight on pure black, which
 # raised the black floor (p10 0.035 -> 0.20 on a dark waterfall) and read as grey haze. Subtract
 # the same amount from blacks so the pair opens the shadows but pins black; the net change is
@@ -235,7 +244,7 @@ curve      = "if(pro_stats_valid > 0, clamp(60 * (planned_exposure - 0.25) * cla
 contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 5)"
 # recover highlights for real clipping AND hold them back on already-bright frames, so a clean
 # bright sky is never pushed INTO clipping. Never positive.
-highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -10, 0)"
+highlights = "clamp(-max(highlight_clip, channel_highlight_clip, recovered_highlight) * 90 - max(0, mean_lum - 0.62) * 28, -10, 0)"
 # open shadows so it never feels dark; a snow-dominant frame (snow_cov>0.2) gets a touch more lift
 # — alpine shadow detail (rock/texture under snow) reads flatter than a typical landscape shadow.
 # Sub-scene branching via a stat, not a new scene class — no rule-table duplication.
@@ -248,7 +257,7 @@ shadows    = "clamp(shadow_clip * 70 + 8 + if(pro_stats_valid > 0, if(snow_cov >
 # fades out as highlight headroom vanishes, including the positive base term. Negative recovery
 # remains intact. Deduct planned exposure: a modest p90 does not mean the near-white RGB tail
 # still has room after the earlier lift. Negative exposure is not credited as extra white lift.
-whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 60 - max(0, mean_lum - 0.62) * 42, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip, recovered_highlight) * 60 - max(0, mean_lum - 0.62) * 42, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip, recovered_highlight) * 60 - max(0, mean_lum - 0.62) * 42, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
 # black point: deepen washed files toward a true black (never lifts — shadows does the lifting).
 # The haze factor backs off when dehaze is already working (dehaze deepens blacks too).
 blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(1 - dark_cov / 0.01, 0, 1) - clamp(shadow_clip * 70 + 8 + (if(snow_cov > 0.2, 3, 0) + max(0, 0.35 - fg_p50) * 90 + dark_cov * 40), 8, 45), 0)"
@@ -363,9 +372,9 @@ shadows_ev = "if(pro_stats_valid > 0, clamp(0.5 * (0.6 * 2.2 * log2(0.45 / max(i
 # depth follows the lift: see [people.global]
 curve      = "if(pro_stats_valid > 0, clamp(60 * (planned_exposure - 0.25) * clamp((lum_p10 - 0.07) / 0.05, 0, 1), 0, 30), 0)"
 contrast   = "if(pro_stats_valid > 0, clamp(3 + (0.60 - (lum_p90 - lum_p10)) * 40, 3, 16) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(headroom_ev, 0, 1), 6)"
-highlights = "clamp(-max(highlight_clip, channel_highlight_clip) * 90 - max(0, mean_lum - 0.62) * 28, -10, 0)"
+highlights = "clamp(-max(highlight_clip, channel_highlight_clip, recovered_highlight) * 90 - max(0, mean_lum - 0.62) * 28, -10, 0)"
 shadows    = "clamp(shadow_clip * 65 + 8 + if(pro_stats_valid > 0, max(0, 0.35 - fg_p50) * 90 + dark_cov * 40, 0), 8, 45)"
-whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip) * 55, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
+whites     = "min(clamp(3 - max(highlight_clip, channel_highlight_clip, recovered_highlight) * 55, -4, 5), 0) + (max(clamp(3 - max(highlight_clip, channel_highlight_clip, recovered_highlight) * 55, -4, 5), 0) + if(pro_stats_valid > 0, clamp((0.82 - lum_p90) * 50, 0, 10), 0)) * if(pro_stats_valid > 0, clamp((headroom_ev - max(0, planned_exposure) - 0.15) / 0.30, 0, 1), 1)"
 blacks     = "if(pro_stats_valid > 0, clamp((0.055 - lum_p10) * 180, -18, 0) * (1 - 0.6 * clamp((haze - 0.32) * 2.8, 0, 1)) * clamp((if(band_bottom_p50 > 0, min(fg_p50, band_bottom_p50 + 0.12), fg_p50) - 0.20) / 0.15, 0, 1) * clamp(1 - dark_cov / 0.01, 0, 1) - clamp(shadow_clip * 65 + 8 + (max(0, 0.35 - fg_p50) * 90 + dark_cov * 40), 8, 45), 0)"
 vibrance   = "4"
 clarity    = "if(pro_stats_valid > 0, clamp(4 + (0.035 - detail_rms) * 250, 3, 12), 6)"

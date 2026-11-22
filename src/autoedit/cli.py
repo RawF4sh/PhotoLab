@@ -4,11 +4,13 @@ Commands:
   autoedit run INPUT_DIR [OUT_DIR] [flags]   batch-edit a folder
   autoedit adjust PHOTO [--set T.OP=V] [--edit TEXT] [--mark X0,Y0,X1,Y1 [--mark-kind K]] [--explain] [--reset]
                                              re-render one photo
+  autoedit sync PHOTO [FOLDER] [--dry-run]   copy one photo's own changes to the similar photos of its run
   autoedit curate INPUT_DIR OUT_DIR          copy a diverse subset for review/training
   autoedit pick FOLDER [-o DIR] [--copy]     rank the frames of each burst and pick the keepers
   autoedit find FOLDER WORD [WORD ...]     list photos by what is in them
   autoedit keywords FOLDER [--dry-run]     write XMP keywords beside the photos
   autoedit declare FOLDER [-o DIR]         write the edit declaration of a run
+  autoedit gallery FOLDER [-o DIR]         write a static page of a run's exports
   autoedit merge FOLDER [-o DIR] [--mode M]  merge brackets, stacks, focus series or star trails into TIFFs
   autoedit doctor                            report device + backend availability
   autoedit models status|download|remove     SAM 3 weights
@@ -35,7 +37,7 @@ def _flatten(d: dict) -> dict:
     run, seg, out, llm, dec, perf = (d.get(k, {}) for k in ("run", "segment", "output", "llm", "decode", "performance"))
     kw: dict = {}
     _dec_map = {"raw_mode": "raw_mode", "max_ev": "raw_max_ev", "clip_budget": "raw_clip_budget",
-                "tone_target_p50": "raw_tone_target_p50", "fallback_ev": "raw_fallback_ev"}
+                "tone_target_p50": "raw_tone_target_p50", "fallback_ev": "raw_fallback_ev", "recover": "raw_recover", "lens_ca": "lens_ca"}
     for src, dst in _dec_map.items():
         if src in dec:
             kw[dst] = dec[src]
@@ -133,6 +135,8 @@ def load_run_config(args) -> RunConfig:
         "backend": getattr(args, "backend", None),
         "device": getattr(args, "device", None),
         "raw_mode": getattr(args, "raw_mode", None),
+        "raw_recover": getattr(args, "raw_recover", None),
+        "lens_ca": getattr(args, "lens_ca", None),
         "out_format": getattr(args, "format", None),
         "quality": getattr(args, "quality", None),
         "metadata": getattr(args, "metadata", None),
@@ -223,6 +227,11 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    choices=["none", "linear_srgb", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target"],
                    help="RAW development: none (default libraw render) | libraw_auto | preview_ev | "
                         "preview_ev_headroom | tone_target | linear_srgb (see scripts/raw_benchmark.py)")
+    p.add_argument("--raw-recover", dest="raw_recover", action="store_true", default=None,
+                   help="rebuild snow and sky that the RAW decode clips to flat white, from the channels "
+                        "that did not clip (opt-in, RAW only)")
+    p.add_argument("--lens-ca", dest="lens_ca", action="store_true", default=None,
+                   help="line up red and blue with green to remove colour fringes toward the corners (opt-in)")
     p.add_argument("--format", choices=["jpeg", "tiff", "webp", "png"])
     p.add_argument("--quality", type=int)
     p.add_argument("--metadata", choices=["keep", "shareable", "none"],
@@ -367,6 +376,20 @@ def _cmd_check(args) -> int:
               "named things), so nothing was looked for in the pictures.", file=sys.stderr)
         return 2
     return 2 if m["reveal"]["with_findings"] else 0
+
+
+def _cmd_sync(args) -> int:
+    from . import sync
+
+    try:
+        r = sync.run(args.target, args.folder, dry_run=args.dry_run, minutes=args.minutes,
+                     configs_dir=args.configs_dir, profile=args.profile,
+                     reference=args.reference, recipe_model=args.recipe_model, lut=args.lut)
+    except (FileNotFoundError, ValueError, OSError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print("\n".join(sync.lines(r)))
+    return 1 if any(t["status"] == "failed" for t in r["targets"]) else 0
 
 
 def _cmd_adjust(args) -> int:
@@ -552,6 +575,24 @@ def _cmd_keywords(args) -> int:
         print(f"folder not found: {args.folder}", file=sys.stderr)
         return 2
     print(search.cmd_keywords(args.folder, _min_coverage(args), args.dry_run, args.configs_dir, args.profile))
+    return 0
+
+
+def _cmd_gallery(args) -> int:
+    from . import gallery, search
+
+    if not os.path.isdir(args.folder):
+        print(f"folder not found: {args.folder}", file=sys.stderr)
+        return 2
+    try:
+        r = gallery.write(args.folder, args.out, _min_coverage(args),
+                          search.skip_words(args.configs_dir, args.profile))
+    except (OSError, ValueError) as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(r["page"])
+    print(f"{r['photos']} photo{'s' * (r['photos'] != 1)}" +(f", {r['warned']} with a reveal warning on the tile" if r["warned"] else "")
+          + (f"; {r['skipped']} sidecars without an export skipped" if r["skipped"] else ""))
     return 0
 
 
@@ -1120,6 +1161,20 @@ def main(argv: list[str] | None = None) -> int:
     adj_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
     adj_p.set_defaults(func=_cmd_adjust)
 
+    sync_p = sub.add_parser("sync", help="copy one photo's own changes to the photos of the same scene taken "
+                                         "near it, and match their exposure to it")
+    sync_p.add_argument("target", help="the photo to copy from: an exported photo or its .autoedit.json")
+    sync_p.add_argument("folder", nargs="?", help="where the other exports are (default: that photo's folder)")
+    sync_p.add_argument("--minutes", type=float,
+                        help="how far apart in time a similar photo may be taken (default: rules.toml [sync])")
+    sync_p.add_argument("--dry-run", dest="dry_run", action="store_true", help="list the similar photos, change nothing")
+    sync_p.add_argument("--reference", help="the --reference photo of the run, if it used one")
+    sync_p.add_argument("--recipe-model", dest="recipe_model", help="recipe model, if the run used one")
+    sync_p.add_argument("--lut", help="the LUT file, if the run used one")
+    sync_p.add_argument("--configs-dir", dest="configs_dir")
+    sync_p.add_argument("--profile", help="profile folder with your own config differences")
+    sync_p.set_defaults(func=_cmd_sync)
+
     cur_p = sub.add_parser("curate", help="copy a photo subset for culling, style training, or review")
     cur_p.add_argument("input_dir")
     cur_p.add_argument("out_dir")
@@ -1180,6 +1235,12 @@ def main(argv: list[str] | None = None) -> int:
     decl_p.add_argument("folder")
     decl_p.add_argument("-o", "--out", help="where the two files go (default: the folder)")
     decl_p.set_defaults(func=_cmd_declare)
+    gal_p = sub.add_parser("gallery", help="write gallery.html: thumbnails of a run's exports that link to the full photos")
+    gal_p.add_argument("folder")
+    gal_p.add_argument("-o", "--out", help="where gallery.html and gallery/ go (default: the folder)")
+    gal_p.add_argument("--configs-dir", dest="configs_dir")
+    gal_p.add_argument("--profile", help="profile folder with your own config differences")
+    gal_p.set_defaults(func=_cmd_gallery, min_coverage=None)
 
     ds_p = sub.add_parser("dataset", help="build/validate a training dataset from originals + edited targets")
     ds_sub = ds_p.add_subparsers(dest="ds_cmd", required=True)

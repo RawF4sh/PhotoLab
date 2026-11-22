@@ -96,8 +96,19 @@ def register_reader(path: str) -> None:
 def load_image(path: str, decode: dict | None = None) -> Image:
     """Decode any supported image to the working representation, preserving bit depth.
 
-    `decode` holds the RAW development options (RunConfig `raw_*` fields, see `raw_opts_from`);
-    it is ignored for non-RAW input, whose bytes are unchanged by this parameter.
+    `decode` holds the RAW development options (RunConfig `raw_*` fields, see `raw_opts_from`)
+    and the lens correction (F46, `lens_ca`); the RAW options are ignored for non-RAW input,
+    the lens correction also applies to JPEG, TIFF and the other formats.
+    """
+    img = _load_image(path, decode)
+    if decode and decode.get("lens_ca"):
+        from . import lens   # here, not at the top: lens imports edit.filters, and edit imports this module
+        img.rgb, img.decode_info["lens"] = lens.correct_ca(img.rgb)
+    return img
+
+
+def _load_image(path: str, decode: dict | None = None) -> Image:
+    """The decode proper (see `load_image`).
 
     Order matters: read 16-bit data BEFORE any RGB conversion (Pillow's `convert("RGB")`
     collapses high-bit-depth data to 8-bit), and convert ICC → sRGB for 8-bit inputs so the
@@ -165,7 +176,8 @@ def load_image(path: str, decode: dict | None = None) -> Image:
 # default automatically.
 RAW_MODES = ("none", "linear_srgb", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target")
 _RAW_DEFAULTS = {"raw_mode": "none", "raw_max_ev": 2.5, "raw_clip_budget": 0.005,
-                 "raw_tone_target_p50": 0.40, "raw_fallback_ev": 0.0}
+                 "raw_tone_target_p50": 0.40, "raw_fallback_ev": 0.0, "raw_recover": False}
+_LENS_DEFAULTS = {"lens_ca": False}   # F46: scale red and blue onto green; off → decoded as it is
 # Headroom-capped modes stop this many stops short of the clip level, so the pipeline's own
 # whites/shadows/sharpen (which run AFTER decode) don't push the top percentile into white.
 # Mirrors the `headroom_ev - 0.15` margin the exposure rules use (configs/rules.toml).
@@ -175,7 +187,7 @@ _HEADROOM_MARGIN_EV = 0.15
 def raw_opts_from(cfg) -> dict:
     """The RAW development options a RunConfig carries (its raw_* fields), shaped for
     `load_image(decode=...)`. Works on any object exposing those attributes."""
-    return {k: getattr(cfg, k) for k in _RAW_DEFAULTS if hasattr(cfg, k)}
+    return {k: getattr(cfg, k) for k in (*_RAW_DEFAULTS, *_LENS_DEFAULTS) if hasattr(cfg, k)}
 
 
 def develop_ev(lin_rgb: np.ndarray, camera_rgb: np.ndarray | None, opts: dict | None) -> float:
@@ -296,6 +308,116 @@ def _compatible_preview(preview: np.ndarray | None, rgb: np.ndarray,
     return abs(pw - expected) <= 2.0
 
 
+# RAW highlight recovery (F44). Constants of the decode, like _HEADROOM_MARGIN_EV (the decode reads
+# no rules file).
+_RECOVER_KNEE = 0.75        # linear; a pixel whose largest channel is at or below it is never changed (221 of 255)
+_RECOVER_FADE = 0.25        # rebuilt colour fades to neutral over this much above the old white (linear)
+_RECOVER_EDGE = 0.02        # share of the long side: the colour fade reaches full strength this far inside a clipped area
+_RECOVER_MIN_SHARE = 0.002  # a frame with less of its area clipped is left as decoded
+_RECOVER_TOP_Q = 99.9       # percentile of the rebuilt pixels that the shoulder maps to white
+
+
+def _libraw_gamma(pwr: float = 1 / 2.222, ts: float = 4.5) -> tuple[float, float]:
+    """(g2, g4) of LibRaw's gamma_curve(pwr, ts), found by the same 48-step bisection LibRaw runs:
+    g2 is where the straight toe (slope ts) meets the power segment, on the encoded side; g4 is the
+    offset of the power segment."""
+    lo, hi = 0.0, 1.0
+    g2 = 0.0
+    for _ in range(48):
+        g2 = (lo + hi) / 2.0
+        if ((g2 / ts) ** (-pwr) - 1.0) / pwr - 1.0 / g2 > -1.0:
+            hi = g2
+        else:
+            lo = g2
+    return g2, g2 * (1.0 / pwr - 1.0)
+
+
+_BT709_PWR, _BT709_TS = 1 / 2.222, 4.5
+_BT709_G2, _BT709_G4 = _libraw_gamma(_BT709_PWR, _BT709_TS)   # 0.081226, 0.099258
+
+
+def libraw_curve(lin):
+    """LibRaw's output curve for gamma=(2.222, 4.5), the transfer of the default decode: lin * 4.5
+    below lin = g2 / 4.5, else lin ** (1/2.222) * (1 + g4) - g4. Float32, input clipped to [0, 1]."""
+    lin = np.clip(np.asarray(lin, dtype=np.float64), 0.0, 1.0)
+    return np.where(lin < _BT709_G2 / _BT709_TS, lin * _BT709_TS,
+                    lin ** _BT709_PWR * (1.0 + _BT709_G4) - _BT709_G4).astype(np.float32)
+
+
+def libraw_curve_inv(v):
+    """The inverse of libraw_curve."""
+    v = np.clip(np.asarray(v, dtype=np.float64), 0.0, 1.0)
+    return np.where(v < _BT709_G2, v / _BT709_TS,
+                    ((v + _BT709_G4) / (1.0 + _BT709_G4)) ** (1.0 / _BT709_PWR)).astype(np.float32)
+
+
+def shoulder(m, knee: float, top: float):
+    """F44's shoulder on linear values: m itself up to the knee; above it knee + d / (1 + d * c) with
+    d = m - knee and c = (top - 1) / ((1 - knee) * (top - knee)). Slope 1 at the knee, increasing,
+    exactly 1 at top. top <= 1 returns m itself."""
+    if top <= 1.0:
+        return m
+    c = (top - 1.0) / ((1.0 - knee) * (top - knee))
+    d = np.maximum(m - knee, 0.0)
+    return np.where(m > knee, knee + d / (1.0 + d * c), m)
+
+
+def recover_highlights(rgb, rebuilt, clipped, knee=_RECOVER_KNEE, fade=_RECOVER_FADE, top_q=_RECOVER_TOP_Q,
+                       edge=_RECOVER_EDGE):
+    """F44's rebuild, testable without a RAW file. rgb: the default decode (LibRaw's curve, [0, 1]);
+    clipped: HxW bool, its pixels with a channel at 1.0; rebuilt: (N, 3) linear values of those pixels,
+    in the same order, from LibRaw's blend decode with the exposure put back (they may exceed 1).
+    A clipped pixel takes the luminance of `rebuilt` and the colour of the default decode, faded towards
+    neutral (the camera renders blown highlights white) by w = (how far the largest rebuilt channel is
+    past 1.0, full at 1 + fade) x (how far the pixel is inside the clipped area, from a box blur of
+    `clipped`: 0 at its edge, full at edge x the long side in). So a clipped sky meets the unclipped
+    pixels around it in their own colour, with no rim and no blotch, and only the inside of a large
+    clipped area goes neutral. One shoulder on the largest channel then maps [knee, top] onto [knee, 1],
+    top = the top_q percentile of the rebuilt pixels; all three channels get the same factor, so hue and
+    saturation stay. A pixel whose largest channel is at or below the knee keeps its value bit for bit.
+    Returns (rgb, top); when nothing rebuilt passes the old white, (rgb itself, 1.0)."""
+    from .edit.filters import box_blur   # here, not at the top: edit imports this module
+    old = libraw_curve_inv(rgb[clipped])
+    y_new = rebuilt @ _LUMA
+    y_old = np.maximum(old @ _LUMA, 1e-6)
+    r = max(1, round(edge * max(clipped.shape)))
+    inside = np.clip(2.0 * box_blur(clipped.astype(np.float32), r)[clipped] - 1.0, 0.0, 1.0)
+    w = (np.clip((rebuilt.max(axis=-1) - 1.0) / fade, 0.0, 1.0) * inside)[:, None]
+    rec = y_new[:, None] * ((1.0 - w) * old / y_old[:, None] + w)
+    top = max(1.0, float(np.percentile(rec.max(axis=-1), top_q)))
+    if top <= 1.0:
+        return rgb, 1.0
+    hi = clipped | (rgb.max(axis=-1) > float(libraw_curve(knee)))
+    lin = libraw_curve_inv(rgb[hi])
+    lin[clipped[hi]] = rec               # boolean indexing keeps row-major order: the same pixels as rgb[clipped]
+    m = lin.max(axis=-1)
+    scale = shoulder(m, knee, top) / np.maximum(m, 1e-9)
+    out = rgb.copy()
+    out[hi] = np.where((m > knee)[:, None], libraw_curve(np.minimum(lin * scale[:, None], 1.0)), rgb[hi])
+    return out, top
+
+
+def _recover(raw, rgb, common: dict, info: dict):
+    """F44 on an open rawpy file and its default decode: asks LibRaw for the blend decode only when
+    enough of the frame is clipped, puts its exposure back, and rebuilds. Records what it did in `info`."""
+    clipped = rgb.max(axis=-1) >= 1.0
+    share = float(clipped.mean())
+    info.update(highlight="clip", recover_clipped=round(share, 4))
+    if share < _RECOVER_MIN_SHARE:
+        info["recover_skipped"] = f"{share * 100:.2f}% of the frame is clipped, less than {_RECOVER_MIN_SHARE * 100:g}%"
+        return rgb
+    wb = [float(v) for v in raw.camera_whitebalance[:3]]
+    if min(wb) <= 0.0:
+        info["recover_skipped"] = "the file has no camera white balance"
+        return rgb
+    blend = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), highlight_mode=2, **common)
+    rebuilt = blend[clipped].astype(np.float32) * np.float32(max(wb) / min(wb) / 65535.0)
+    out, top = recover_highlights(rgb, rebuilt, clipped)
+    if top > 1.0:
+        info.update(highlight="recover", recover_top=round(top, 3))
+    return out
+
+
 def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None):
     """Demosaic a camera RAW to 16-bit via rawpy/libraw. Returns (rgb[0,1], 16, decode_ev) or
     None when the path isn't a RAW. Camera white balance always. `opts` = RunConfig raw_* fields
@@ -319,6 +441,9 @@ def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None)
     info.update(decoder="rawpy/libraw", mode=mode, source_format=os.path.splitext(path)[1].lower(),
                 transfer="libraw-2.222-4.5" if mode in ("none", "libraw_auto") else "srgb",
                 preview_used=False, fallback_reason=None)
+    if o["raw_recover"] and mode != "none":
+        # ponytail: recovery for raw_mode none only; in the linear modes the shoulder would replace their final clip
+        info.update(highlight="clip", recover_skipped=f"raw_mode {mode} keeps its own highlights")
     common = dict(output_bps=16, use_camera_wb=True, half_size=bool(o.get("half_size", False)))
     with rawpy.imread(path) as raw:
         if mode in ("none", "libraw_auto"):
@@ -327,7 +452,10 @@ def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None)
                 gamma=(2.222, 4.5),                # sRGB-ish tone curve → our gamma working space
                 **common,
             )
-            return np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0), 16, 0.0
+            rgb = np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0)
+            if o["raw_recover"] and mode == "none":
+                rgb = _recover(raw, rgb, common, info)   # F44: a second decode of the open file
+            return rgb, 16, 0.0
         lin = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
         lin = lin.astype(np.float32) / 65535.0
         cam = _preview_rgb(raw) if mode.startswith("preview") else None

@@ -66,6 +66,11 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F41 | Search by what is in the photo, and keywords | M | done (`autoedit find`, `autoedit keywords`, keywords as `.xmp` beside the export); spec [F41](plans/F41-search-and-keywords.md) |
 | F42 | Edit declaration | M | done (`autoedit declare`); no signing (C2PA needs a certificate); merged frames not declared; spec [F42](plans/F42-edit-declaration.md) |
 | F43 | Timelapse flicker | M | done, off by default (`--consistency timelapse`); tested on made-up frames, a real timelapse is open; spec [F43](plans/F43-timelapse-flicker.md) |
+| F44 | RAW highlight recovery | M | done, off by default (`--raw-recover`); tone gate 0 and 0, and the highlight rules now hold recovered highlights (`recovered_highlight`), which fixed 0109 and 0028. The safety step still pulls back 3 of 110 photos it left alone before: 0033 narrowly on clipping, and 0066 and 0103, where the edit flattens recovered snow shading. To be fixed before a blind gallery; spec [F44](plans/F44-raw-highlight-recovery.md) |
+| F45 | Dehaze by distance | S | not built: measured as covered by the existing dehaze and region rules; spec [F45](plans/F45-distance-dehaze.md) |
+| F46 | Lens fixes: colour fringes | S | done, off by default (`--lens-ca`); vignette correction left out, a per-lens median over a shoot is an owner decision; spec [F46](plans/F46-lens-fixes.md) |
+| F47 | Copy edits to similar photos | M | done (`autoedit sync PHOTO`); spec [F47](plans/F47-copy-edits.md) |
+| F48 | Watermark and gallery | M | done (watermark keys in an export preset, off unless set; `autoedit gallery`); spec [F48](plans/F48-watermark-and-gallery.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the

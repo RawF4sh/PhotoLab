@@ -1054,6 +1054,18 @@ class Pipeline:
             notes.append(f"genre: {cfg.genre}")
         if img.decode_ev:
             notes.append(f"raw develop: {cfg.raw_mode} {img.decode_ev:+.2f} EV at decode")
+        lens_rep = (img.decode_info or {}).get("lens")
+        if lens_rep:
+            parts = [f"{c} {r['corner_px']:+.1f} px" + ("" if r["applied"] else " (left, below 0.3 px)")
+                     for c, r in lens_rep.items()]
+            notes.append("lens: colour fringe at the frame corner " + ", ".join(parts))
+        di = img.decode_info or {}
+        if di.get("highlight") == "recover":
+            notes.append(f"raw recover: {di['recover_clipped'] * 100:.1f}% of the frame had a clipped channel; "
+                         f"rebuilt from LibRaw's blend decode, {di['recover_top']:.2f} times the old white "
+                         "mapped to white")
+        elif di.get("recover_skipped"):
+            notes.append(f"raw recover: not applied, {di['recover_skipped']}")
         for name, pre_r in region_stats.items():  # where did the brightness actually move?
             post_r = post_regions.get(name)
             if post_r is not None:

@@ -196,6 +196,9 @@ def compute(
         iso=float(ex.get("iso", 0.0) or 0.0),
         exposure_ev=float(ex.get("exposure_ev", 0.0) or 0.0),
         lum_p10=p10, lum_p50=p50, lum_p90=p90, lum_p99=p99, headroom_ev=headroom_ev,
+        # Recovered pixels sit just under white, so the clip stats miss them; the highlight rules read this too.
+        recovered_highlight=(float(img.decode_info.get("recover_clipped", 0.0))
+                             if img.decode_info.get("highlight") == "recover" else 0.0),
         dark_cov=dark_cov, band_top_p50=band_top, band_mid_p50=band_mid, band_bottom_p50=band_bottom,
         mean_chroma=mean_chroma, warmth=warmth,
         **channel_stats,

@@ -9,6 +9,7 @@ import importlib.util
 import inspect
 import os
 import pathlib
+import re
 import sys
 import tempfile
 import traceback
@@ -36,8 +37,8 @@ def _install_pytest_shim():
     shim = types.ModuleType("pytest")
 
     class _Raises:
-        def __init__(self, exc):
-            self.exc = exc
+        def __init__(self, exc, match=None):
+            self.exc, self.match = exc, match
 
         def __enter__(self):
             return self
@@ -46,6 +47,8 @@ def _install_pytest_shim():
             if et is None:
                 raise AssertionError(f"did not raise {self.exc}")
             self.value = ev   # like pytest: `with pytest.raises(E) as e: ...; str(e.value)`
+            if self.match and issubclass(et, self.exc) and not re.search(self.match, str(ev)):
+                raise AssertionError(f"{ev!r} does not match {self.match!r}")
             return issubclass(et, self.exc)
 
     builtin_abs = abs
@@ -61,7 +64,7 @@ def _install_pytest_shim():
         def __repr__(self):
             return f"approx({self.want!r})"
 
-    shim.raises = lambda exc: _Raises(exc)
+    shim.raises = lambda exc, match=None: _Raises(exc, match)
     shim.approx = _Approx
     sys.modules["pytest"] = shim
 

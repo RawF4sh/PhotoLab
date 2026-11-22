@@ -55,9 +55,12 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
              reference: str | None = None, recipe_model: str | None = None,
              allow_cloud: bool = False, profile: str | None = None,
              mark=None, mark_kind: str = "auto", explain: bool = False, lut: str | None = None,
-             neutral=None) -> dict:
+             neutral=None, adjustments=(), exposure_bias: float | None = None,
+             batch_group: str | None = None, wb=None, apply: bool = True) -> dict:
     """Render the photo behind `target` (its exported image or its sidecar) again. Stored
-    per-photo adjustments are kept unless `reset`; `sets` and `edit` add new ones."""
+    per-photo adjustments are kept unless `reset`; `sets`, `edit` and `adjustments` (Adjustment
+    objects, F47) add new ones. `exposure_bias`, `batch_group` and `wb` replace what the sidecar
+    stored. `apply=False` decides without pixels, writes nothing and returns {"result", "problems"}."""
     if mark is not None and not (edit and edit.strip()):
         raise ValueError("--mark needs --edit: the sentence says what changes inside the mark")
     sidecar = target if target.endswith(_SIDECAR) else os.path.splitext(target)[0] + _SIDECAR
@@ -75,6 +78,8 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
         stored["neutral"] = None if neutral == "none" else list(neutral)
         if neutral == "none":   # also the numbers --neutral-from measured once for the whole run
             stored["wb"] = None
+    if wb is not None:      # F47: a white balance as numbers (the reference's pick); it replaces this photo's pick
+        stored["wb"], stored["neutral"] = [float(wb[0]), float(wb[1])], None
     if stored.get("decider") == "llm" and not allow_cloud:
         raise ValueError("the run used the LLM decider; a re-render calls it again (a thumbnail "
                          "leaves the machine and your key is billed). Pass --allow-cloud to allow it")
@@ -106,7 +111,8 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     pipe.use_mask_cache(out_dir)
     kept = [] if reset else [a.model_copy(update={"status": ""})
                              for a in old.adjustments if a.scope == "photo"]
-    new = [parse_set(s) for s in sets]
+    new = [parse_set(s) for s in sets] + [a.model_copy(update={"scope": "photo", "status": ""})
+                                          for a in adjustments]
     problems: list[str] = []
     if edit and edit.strip():
         if mark is not None:
@@ -121,9 +127,12 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     def _planned(*args):        # made here: later steps may still change the settings it reads
         walk.extend(lessons.walk(*args, pipe.vocab(), lessons.load(
             paths.config_path("lessons.toml", packaged_fallback=True))))
-    out_rgb, result = pipe.process_one(source, adjustments=kept + new,
-                                       exposure_bias=old.exposure_bias, batch_group=old.batch_group,
+    out_rgb, result = pipe.process_one(source, do_apply=apply, adjustments=kept + new,
+                                       exposure_bias=old.exposure_bias if exposure_bias is None else float(exposure_bias),
+                                       batch_group=old.batch_group if batch_group is None else batch_group,
                                        wb_bias=tuple(old.wb_bias), on_plan=_planned if explain else None)
+    if not apply:           # a plan only: nothing is written
+        return {"result": result, "problems": problems}
     if result.decider != old.decider:
         raise ValueError(f"the re-render used the {result.decider} decider, the run used "
                          f"{old.decider}; nothing was written")
@@ -141,7 +150,7 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
             cfg.out_format, ".jpg"))))
     emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, source)
     return {"image": image_out, "sidecar": sidecar, "problems": problems, "warnings": warnings,
-            "adjustments": [a.model_dump() for a in result.adjustments], "walkthrough": walk}
+            "adjustments": [a.model_dump() for a in result.adjustments], "walkthrough": walk, "result": result}
 
 
 def explain_lines(walkthrough) -> list[str]:

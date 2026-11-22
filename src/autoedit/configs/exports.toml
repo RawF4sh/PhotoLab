@@ -3,6 +3,19 @@
 # size), name (file name template: {stem}, {style}, {n}), subdir, metadata ("keep" | "shareable"
 # | "none"), aspect (a crop to a shape such as "4:5", F32; left out = the photo's own shape).
 # A flag on the command line wins over the preset.
+#
+# A watermark (F48), off unless a preset names it: watermark (one line of text), watermark_logo
+# (the file name of a PNG in your profile folder, no folder), watermark_corner ("bottom_right",
+# "bottom_left", "top_right" or "top_left"; default bottom_right), watermark_size (height in
+# percent of the export's short side, 1 to 20; default 3), watermark_opacity (0.1 to 1; default
+# 0.7). No preset here carries one. Put your own into the exports.toml of your profile, e.g.:
+# [marked]
+# format = "jpeg"
+# quality = 90
+# long_edge = 2048
+# name = "{stem}_marked"
+# subdir = "marked"
+# watermark = "© Your Name"
 
 [full]
 format = "jpeg"

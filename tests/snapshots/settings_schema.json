@@ -377,6 +377,15 @@
       "advanced": true
     },
     {
+      "key": "lens_ca",
+      "label": "Remove colour fringes",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Lines up the red and blue parts of the picture with the green to remove colour fringes toward the corners.",
+      "advanced": false
+    },
+    {
       "key": "consistency",
       "label": "Consistency",
       "group": "batch",
@@ -505,6 +514,63 @@
       "advanced": false
     },
     {
+      "key": "watermark",
+      "label": "Watermark text",
+      "group": "output",
+      "type": "string",
+      "default": null,
+      "max_length": 100,
+      "help": "One line of text laid over a corner of the export. Set in an export preset. Empty: no mark.",
+      "advanced": false
+    },
+    {
+      "key": "watermark_logo",
+      "label": "Watermark logo",
+      "group": "output",
+      "type": "string",
+      "default": null,
+      "max_length": 100,
+      "help": "The file name of a PNG in your profile folder, laid beside the watermark text. Empty: no logo.",
+      "advanced": false
+    },
+    {
+      "key": "watermark_corner",
+      "label": "Watermark corner",
+      "group": "output",
+      "type": "choice",
+      "default": "bottom_right",
+      "choices": [
+        "bottom_right",
+        "bottom_left",
+        "top_right",
+        "top_left"
+      ],
+      "help": "The corner of the export the watermark sits in.",
+      "advanced": false
+    },
+    {
+      "key": "watermark_size",
+      "label": "Watermark size",
+      "group": "output",
+      "type": "float",
+      "default": 3.0,
+      "min": 1.0,
+      "max": 20.0,
+      "help": "Height of the watermark in percent of the export's shorter side, 1 to 20.",
+      "advanced": false
+    },
+    {
+      "key": "watermark_opacity",
+      "label": "Watermark opacity",
+      "group": "output",
+      "type": "float",
+      "default": 0.7,
+      "min": 0.1,
+      "max": 1.0,
+      "help": "How solid the watermark is, from 0.1 (faint) to 1 (solid).",
+      "advanced": false
+    },
+    {
       "key": "reveal_check",
       "label": "Check before sharing",
       "group": "output",
@@ -581,6 +647,15 @@
       "min": 0.0,
       "max": 5.0,
       "help": "How much to brighten a RAW file that has no camera preview to compare with.",
+      "advanced": true
+    },
+    {
+      "key": "raw_recover",
+      "label": "Recover blown highlights",
+      "group": "raw",
+      "type": "bool",
+      "default": false,
+      "help": "Brings back the tones a RAW file holds in snow and sky that the normal decode turns flat white. RAW files only; a little slower.",
       "advanced": true
     },
     {

@@ -190,13 +190,19 @@ def find_bursts(paths: list[str], max_gap_s: float, min_similarity: float,
     return bursts
 
 
-def burst_biases(decided: list[dict], max_ev: float, max_wb: float) -> list[tuple[float, float, float]]:
-    """Per frame of one burst: (exposure, temp, tint) bias toward the burst's median. `decided`
-    holds, per frame: fg_p50, exposure, shadows_ev, temp, tint, headroom_ev."""
-    level = [2.2 * math.log2(max(d["fg_p50"], 1e-3)) + d["exposure"] + 0.5 * d["shadows_ev"] for d in decided]
-    mid, t_mid, n_mid = _median(level), _median([d["temp"] for d in decided]), _median([d["tint"] for d in decided])
+def burst_biases(decided: list[dict], max_ev: float, max_wb: float,
+                 anchor: int | None = None) -> list[tuple[float, float, float]]:
+    """Per frame of one burst: (exposure, temp, tint) bias toward the burst's median, or with `anchor`
+    toward that frame (F47: the reference of `autoedit sync`). `decided` holds, per frame: fg_p50,
+    exposure, shadows_ev, temp, tint, headroom_ev."""
+    levels = [level(d) for d in decided]
+    if anchor is None:
+        mid, t_mid, n_mid = (_median(levels), _median([d["temp"] for d in decided]),
+                             _median([d["tint"] for d in decided]))
+    else:
+        mid, t_mid, n_mid = levels[anchor], decided[anchor]["temp"], decided[anchor]["tint"]
     out = []
-    for d, lv in zip(decided, level):
+    for d, lv in zip(decided, levels):
         ev = max(-max_ev, min(max_ev, mid - lv))
         ev = max(ev, -max(d["exposure"], 0.0))                                   # cancel a lift, never cut
         ev = min(ev, max(0.0, d["headroom_ev"] - 0.15 - d["exposure"]))          # never into clipping
@@ -268,15 +274,24 @@ def _with_rules(pipeline, fn):
         pipeline.decider = decider
 
 
+def level(d: dict) -> float:
+    """The foreground median after the decided lift, in stops: what bursts and sync even out."""
+    return 2.2 * math.log2(max(d["fg_p50"], 1e-3)) + d["exposure"] + 0.5 * d["shadows_ev"]
+
+
+def decided_from(r) -> dict:
+    """The numbers the evening reads, from a Result (a planned decision or a written sidecar)."""
+    gs, st = r.global_settings, r.global_stats
+    return {"fg_p50": st.fg_p50, "headroom_ev": st.headroom_ev,
+            "exposure": gs.get("exposure", 0.0), "shadows_ev": gs.get("shadows_ev", 0.0),
+            "temp": gs.get("temp", 0.0), "tint": gs.get("tint", 0.0),
+            "wb_temp": st.wb_temp_correction, "wb_tint": st.wb_tint_correction, "wb_conf": st.wb_confidence}
+
+
 def _decided(pipeline, path: str) -> dict | None:
     """What the rules decided for one photo (one `process_one`, no pixels), or None when it cannot be measured."""
     try:
-        _rgb, r = pipeline.process_one(path, do_apply=False)
-        gs, st = r.global_settings, r.global_stats
-        return {"fg_p50": st.fg_p50, "headroom_ev": st.headroom_ev,
-                "exposure": gs.get("exposure", 0.0), "shadows_ev": gs.get("shadows_ev", 0.0),
-                "temp": gs.get("temp", 0.0), "tint": gs.get("tint", 0.0),
-                "wb_temp": st.wb_temp_correction, "wb_tint": st.wb_tint_correction, "wb_conf": st.wb_confidence}
+        return decided_from(pipeline.process_one(path, do_apply=False)[1])
     except Exception:
         return None
 

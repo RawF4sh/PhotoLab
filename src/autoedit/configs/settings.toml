@@ -214,6 +214,31 @@ label = "Crop to shape"
 group = "output"
 help = "Crops the export to a shape such as 4:5 or 1:1, placed on the subject. Empty keeps the photo's own shape."
 
+[setting.watermark]
+label = "Watermark text"
+group = "output"
+help = "One line of text laid over a corner of the export. Set in an export preset. Empty: no mark."
+
+[setting.watermark_logo]
+label = "Watermark logo"
+group = "output"
+help = "The file name of a PNG in your profile folder, laid beside the watermark text. Empty: no logo."
+
+[setting.watermark_corner]
+label = "Watermark corner"
+group = "output"
+help = "The corner of the export the watermark sits in."
+
+[setting.watermark_size]
+label = "Watermark size"
+group = "output"
+help = "Height of the watermark in percent of the export's shorter side, 1 to 20."
+
+[setting.watermark_opacity]
+label = "Watermark opacity"
+group = "output"
+help = "How solid the watermark is, from 0.1 (faint) to 1 (solid)."
+
 [setting.reveal_check]
 label = "Check before sharing"
 group = "output"
@@ -254,6 +279,17 @@ label = "Brightening without preview (stops)"
 group = "raw"
 help = "How much to brighten a RAW file that has no camera preview to compare with."
 advanced = true
+
+[setting.raw_recover]
+label = "Recover blown highlights"
+group = "raw"
+help = "Brings back the tones a RAW file holds in snow and sky that the normal decode turns flat white. RAW files only; a little slower."
+advanced = true
+
+[setting.lens_ca]
+label = "Remove colour fringes"
+group = "quality"
+help = "Lines up the red and blue parts of the picture with the green to remove colour fringes toward the corners."
 
 # ---- Regions ----
 [setting.backend]

@@ -79,6 +79,8 @@ class RunConfig(BaseModel):
     raw_clip_budget: float = Field(default=0.005, ge=0.0, le=0.1)   # fraction allowed to reach white
     raw_tone_target_p50: float = Field(default=0.40, gt=0.0, lt=1.0)  # tone_target: median (gamma)
     raw_fallback_ev: float = Field(default=0.0, ge=0.0, le=5.0)     # no universal lift without a preview
+    lens_ca: bool = False  # scale red and blue onto green about the centre (F46); off → decoded as it is
+    raw_recover: bool = False  # rebuild highlights the default decode clips, from LibRaw's blend decode (F44); off → decoded as before
 
     # segmentation
     backend: Literal["stub", "sam3", "auto"] = "stub"
@@ -119,6 +121,13 @@ class RunConfig(BaseModel):
     colour_report: bool = False  # measure the subject colour of every photo and report the spread per group (F34)
     straighten: bool = False  # turn the export so a clear waterline or horizon is level (F32); off → no turn
     out_aspect: str | None = Field(default=None, max_length=7)  # crop the export to this W:H shape (F32); None or "" = the photo's own
+    # A watermark (F48): set only by an export preset (exports.toml); drawn on the export alone,
+    # after the resize and the grain.
+    watermark: str | None = Field(default=None, max_length=100)  # one line of text laid over a corner; None = no text
+    watermark_logo: str | None = Field(default=None, max_length=100)  # file name of a PNG in the profile folder (else the configs folder); never a folder
+    watermark_corner: Literal["bottom_right", "bottom_left", "top_right", "top_left"] = "bottom_right"
+    watermark_size: float = Field(default=3.0, ge=1.0, le=20.0)  # height of the mark in percent of the export's short side
+    watermark_opacity: float = Field(default=0.7, ge=0.1, le=1.0)
     reveal_check: bool = False  # report which photos give something away: plates, screens, people, file metadata (F21); never changes a pixel
     history: bool = False  # one line per exported photo in the profile (F27)
     profile_dir: str | None = None  # the profile folder this config was built with; set by the code
@@ -194,6 +203,25 @@ class RunConfig(BaseModel):
         a, b = (int(n) for n in v.split(":"))
         if not 0.2 <= a / b <= 5:
             raise ValueError(f"out_aspect {v!r} is outside 1:5 to 5:1")
+        return v
+
+    @field_validator("watermark")
+    @classmethod
+    def _check_watermark(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        if any(ord(c) < 32 or ord(c) == 127 for c in v):
+            raise ValueError("watermark must be one line of text, without control characters")
+        return v
+
+    @field_validator("watermark_logo")
+    @classmethod
+    def _check_watermark_logo(cls, v: str | None) -> str | None:
+        if not v:
+            return None
+        if v.startswith(".") or not re.fullmatch(r"[^/\\:]{1,96}\.png", v, re.IGNORECASE):
+            raise ValueError(f"watermark_logo {v!r} must be the file name of a PNG in your profile folder, "
+                             "without a folder (for example logo.png)")
         return v
 
 
@@ -276,6 +304,7 @@ class GlobalStatsModel(BaseModel):
     # spatial bands so a sidecar shows WHERE brightness moved, not just the global mean.
     lum_p99: float = 0.0
     headroom_ev: float = 0.0        # stops before p99.5 of per-pixel max(R,G,B) reaches white
+    recovered_highlight: float = 0.0  # F44: share of the frame that was clipped before RAW recovery rebuilt it
     dark_cov: float = 0.0           # fraction of pixels with luma < 0.10 (dark, not clipped)
     band_top_p50: float = 0.0       # median luma of the top / middle / bottom thirds
     band_mid_p50: float = 0.0

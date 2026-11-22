@@ -7,7 +7,7 @@ import os
 
 import numpy as np
 
-from . import __version__, geometry as geometry_mod, history
+from . import __version__, geometry as geometry_mod, history, watermark as watermark_mod
 from .contract import DetectedConcept, GlobalStatsModel, MaskOps, RegionStatsModel, Result, Settings
 from .edit import ops
 from .imageio import export_exif, resize_long_edge, save_image, srgb_profile
@@ -92,7 +92,8 @@ def grain_args(result: Result, cfg) -> tuple[float, float, int] | None:
 
 def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92,
                 source: str | None = None, metadata: str = "none", long_edge: int | None = None,
-                grain: tuple[float, float, int] | None = None, geometry=None) -> str:
+                grain: tuple[float, float, int] | None = None, geometry=None,
+                watermark: dict | None = None) -> str:
     """Write the baked image and return a one-line note for the sidecar ("" when there is
     nothing to say).
 
@@ -102,13 +103,16 @@ def write_image(rgb: np.ndarray, path: str, fmt: str = "jpeg", quality: int = 92
 
     `long_edge` shrinks the export first (never enlarges); the EXIF pixel size is the size written.
     `grain` (see `grain_args`) is laid over the picture after that resize, directly before the encoder.
-    `geometry` (the result's `Geometry`, F32) turns and cuts the finished picture first, before the resize."""
+    `geometry` (the result's `Geometry`, F32) turns and cuts the finished picture first, before the resize.
+    `watermark` (see `watermark.args`, F48) is laid over the picture after the grain, right before the encoder."""
     if geometry is not None:
         rgb = geometry_mod.warp(rgb, geometry)
     if long_edge:
         rgb = resize_long_edge(rgb, long_edge)
     if grain:
         rgb = ops.grain(rgb, *grain)
+    if watermark:
+        rgb = watermark_mod.draw(rgb, **watermark)
     if source is None:
         save_image(rgb, path, fmt=fmt, quality=quality)
         return ""
@@ -128,14 +132,19 @@ def write_outputs(out_rgb, result: Result, image_out: str, sidecar: str, cfg, so
     """Write the baked image (when there are pixels) and the sidecar that explains it."""
     if out_rgb is not None:
         grain = grain_args(result, cfg)
+        mark = watermark_mod.args(cfg)      # a missing logo raises: the photo fails, never an export without its mark
         note = write_image(out_rgb, image_out, cfg.out_format, cfg.quality,
                            source=source, metadata=cfg.metadata, long_edge=cfg.out_long_edge, grain=grain,
-                           geometry=result.geometry)
+                           geometry=result.geometry, watermark=mark)
         if note:
             result.notes.append(note)
         if grain:
             result.notes.append(f"grain: {grain[0]:.3g} of 100, size {grain[1]:g}, "
                                 "added to the export after the checks and the resize")
+        if mark:
+            result.audit["watermark"] = watermark_mod.record(cfg)
+            result.notes.append(f"watermark: laid over the {cfg.watermark_corner.replace('_', ' ')} corner of "
+                                "the export after the checks, the resize and the grain; no measurement sees it")
         result.audit["output"] = os.path.basename(image_out)
     write_sidecar(result, sidecar)
     if out_rgb is not None:
