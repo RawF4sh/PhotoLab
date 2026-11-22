@@ -124,17 +124,12 @@ does not teach the editor how to transform an original into an edit; it acts as 
 for culling huge folders, filtering generated/reference edits, prioritizing human review, and
 choosing the best variants from a batch.
 
-**AutoEdit Lab** (`http://localhost:8765/lab` while `autoedit ui` runs) is a calm second page for
-trying the newer features: one box to say what to change, ovals, looks, Surprise me, How it was
-done, Try it yourself, straighten and crop, export and batch. Studio stays at `/`.
-
-Launch **Studio** with `pip install -e '.[ui]'` and `autoedit ui`. Open a folder, pick a style,
-add or toggle named concepts, generate a before/after preview, and run the checked photos.
-The Masks button shows the actual resolved region footprints, before edge feathering. The Mark
-button lets you drag an oval on the photo and type what should change there ("make this guy more
-purple"); "Show me how" then walks through the mask and each tool. Concept
-choices and Settings → RAW development apply to both preview and export. “None” selects zero
-photos and disables the batch. See [APP_GUIDE.md](APP_GUIDE.md) for the full workflow.
+Open the interface with `pip install -e '.[ui]'` and `autoedit ui` (a browser tab on
+`127.0.0.1:8765`), or as a desktop window with `pip install -e '.[app]'` and `autoedit app` (on
+Linux it needs a GTK or Qt web view). Open a folder, pick a look, say what to change, and edit all
+the photos; click a photo to mark an oval, see how it was done, or try the sliders yourself. Find,
+share checks, gallery and the other tools are on the same screens. Light or dark follows the system.
+See [APP_GUIDE.md](APP_GUIDE.md).
 
 Run without installing:
 ```bash
@@ -152,8 +147,8 @@ provider and bills **your** key per photo — full-resolution pixels never leave
 Without consent or a key it transparently falls back to the local rules. Run `autoedit doctor`
 to see your current status.
 
-Studio is a local application. Keep its default loopback address; the Photo Lab website
-links to this project and does not expose Studio or your filesystem. Generated images can
+The interface is a local application. Keep its default loopback address; the Photo Lab website
+links to this project and does not expose it or your filesystem. Generated images can
 retain source metadata, and sidecars can contain local paths. Review and strip private
 metadata before sharing exports. See [SECURITY.md](SECURITY.md) for reporting and publishing
 guidance.

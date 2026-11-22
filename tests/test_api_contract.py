@@ -54,13 +54,13 @@ def test_contract_snapshot():
         assert got == json.load(fh), "API surface changed; if intended, rerun with AUTOEDIT_UPDATE_SNAPSHOTS=1"
 
 
-def test_versioned_and_legacy_paths_share_handlers():
+def test_only_the_versioned_api_exists():
     client = _client()
     if client is None:
         return
     from autoedit import __version__
 
-    assert client.get("/api/v1/styles").json() == client.get("/api/styles").json()
+    assert client.get("/api/v1/styles").status_code == 200 and client.get("/api/styles").status_code == 404
     v = client.get("/api/v1/version").json()
     assert v["api"] == "v1" and v["engine"] == __version__
     assert not [p for p in client.app.openapi()["paths"] if p.startswith("/api/") and not p.startswith("/api/v1/")]

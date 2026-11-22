@@ -521,9 +521,40 @@ errors. Edit kept, default → before the fix → after:
 | 0066 (snow) | 100 % → 75 % → 75 % | 94.7 → 89.8 |
 | 0103 (snow) | 100 % → 75 % → 75 % | 157.8 → 154.8 |
 
-No other photo's edit kept changed. Still open:
-- **0033** fails narrowly: 0.52 % of the frame newly clipped against a 0.5 % budget. Only 0.27 %
-  was clipped, so the pull stays small (−0.2). The shoulder also darkens the unclipped pixels above
-  the knee, which raises `headroom_ev`, so exposure rises from +0.23 to +0.26 EV.
-- **Cause 2 (snow):** look at the snow crops first, since a gentler pull on recovered snow is a look
-  change.
+No other photo's edit kept changed.
+
+### 0033: recovery no longer adds headroom (2026-11-22)
+
+0033 still failed narrowly after the first fix: 0.52 % of the frame newly clipped against a 0.5 %
+budget. The shoulder also darkens the unclipped pixels above the knee, which raised `headroom_ev`,
+so exposure rose from +0.23 to +0.26 EV. Fix: when recovery ran, `stats.compute` undoes the
+shoulder on its own p99.5 (`imageio.unshoulder`, the inverse of `shoulder`, capped at 1, with
+`decode_info["recover_top"]`), so headroom is what the default decode had. It works on the picture's
+own percentile, so it holds at any proxy size. A first version took the default decode's p99.5 at
+full resolution; the Opus check found that a full-resolution value sits higher than a proxy's (small
+clipped spots average down on the proxy), which removed headroom the default had on frames with
+small clipped spots. 0033 now keeps 100 % of its edit (exposure +0.25); 0109 and 0028 stay at
+100 %. Test: `test_recovery_keeps_the_default_headroom`.
+
+### Cause 2: the two "snow" photos fail in the sky (2026-11-22)
+
+Crop sheets (1024 px proxy: default decode, default edit, recovered decode, recovered edit before the
+safety blend, the 75 % blend, and the edit with the global highlights and whites halved):
+- **0066:** one patch fails, in the top sky (retention 0.086; default edit 0.444). Halving the pull
+  passes (0.206).
+- **0103:** four patches fail, all sky and cloud by the summit (0.083 to 0.092; default edit
+  0.134). Halving the pull makes it worse (0.070).
+- What is lost is faint cloud near white. The default decode has no cloud there (flat white) and the
+  default edit turns that white into flat light grey. Recovery brings the cloud back and the edit's
+  pull (global highlights −8, whites −3.2, driven by the snow and sky that stay clipped) flattens it
+  into the same grey. Rock edges stay crisp; this is not noise.
+- So a smaller pull is not the fix. A pull that keeps local contrast in bright sky would be, and that
+  is op math (`edit/ops.py`), a protected area: it needs a Planner spec and the owner's look decision.
+
+### Tone gate after both fixes (2026-11-22)
+
+`raw_recover` on: 0 dark made darker, 0 pushed into clipping, no errors. Against the default run,
+the only photos whose edit kept changes are 0066 and 0103 (100 % → 75 %, cause 2); every other
+photo's render median moves by at most 2 levels. A blind gallery of the 48 photos whose decode
+recovery changes (stub backend, recovery off vs on, no safety blend) is built for the owner's vote
+with `scripts/blindtest.py --configs-a/--configs-b`.

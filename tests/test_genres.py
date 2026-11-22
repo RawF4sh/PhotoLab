@@ -280,7 +280,7 @@ def test_api_field_and_listing():
     except Exception:
         return
     cl = TestClient(webapp.create_app(paths.configs_dir(), local_only=True), base_url="http://localhost")
-    for url in ("/api/v1/genres", "/api/genres"):
+    for url in ("/api/v1/genres",):
         assert cl.get(url).json() == rows
 
 

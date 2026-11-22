@@ -230,9 +230,9 @@ def test_missing_required_field_returns_named_400():
 
     client = TestClient(webapp.create_app(paths.configs_dir(), local_only=True),
                         base_url="http://localhost")
-    r = client.post("/api/datasets/validate", json={})
+    r = client.post("/api/v1/datasets/validate", json={})
     assert r.status_code == 400 and "originals_dir" in r.json()["error"]
-    r2 = client.post("/api/run", json={})
+    r2 = client.post("/api/v1/run", json={})
     assert r2.status_code == 400 and "input_dir" in r2.json()["error"]
 
 

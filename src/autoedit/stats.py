@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from .contract import GlobalStatsModel, RegionStatsModel
-from .imageio import Image, luma, srgb_to_linear
+from .imageio import _RECOVER_KNEE, Image, libraw_curve, libraw_curve_inv, luma, srgb_to_linear, unshoulder
 
 _SHADOW = 0.02
 _HIGHLIGHT = 0.98
@@ -128,6 +128,11 @@ def compute(
     # so the 0.5% budget covers any-channel clipping across the frame, not 0.5% per channel.
     # Exposure, contrast and whites consume this same measured headroom in the rule baseline.
     p995 = float(np.percentile(rgb.max(axis=-1), 99.5))
+    if img.decode_info.get("highlight") == "recover":
+        # F44's shoulder darkened the top; undo it here so recovery leaves the headroom as the default decode had it.
+        # Done on this picture's own percentile, so it holds at any proxy size.
+        p995 = float(libraw_curve(unshoulder(float(libraw_curve_inv(p995)), _RECOVER_KNEE,
+                                             float(img.decode_info.get("recover_top", 1.0)))))
     headroom_ev = max(0.0, float(np.log2(
         float(srgb_to_linear(np.float32(_HIGHLIGHT))) / max(float(srgb_to_linear(np.float32(p995))), 1e-5))))
     dark_cov = float((lum < 0.10).mean())

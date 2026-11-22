@@ -88,7 +88,7 @@ def test_app_rejects_nonlocal_host_and_cross_origin():
 
     client = TestClient(webapp.create_app(paths.configs_dir(), local_only=True),
                         base_url="http://localhost")
-    assert client.get("/api/styles").status_code == 200                     # loopback Host ok
-    assert client.get("/api/styles", headers={"Host": "evil.com"}).status_code == 403  # rebinding blocked (GET too)
-    r = client.post("/api/preview", json={}, headers={"Origin": "http://evil.com"})
+    assert client.get("/api/v1/styles").status_code == 200                     # loopback Host ok
+    assert client.get("/api/v1/styles", headers={"Host": "evil.com"}).status_code == 403  # rebinding blocked (GET too)
+    r = client.post("/api/v1/preview", json={}, headers={"Origin": "http://evil.com"})
     assert r.status_code == 403                                             # cross-origin mutation blocked

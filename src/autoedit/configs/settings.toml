@@ -15,7 +15,7 @@ batch = "Batch"
 output = "Output"
 raw = "RAW development"
 segmentation = "Regions"
-llm = "AI assistant (optional, your own key)"
+llm = "Cloud refine (optional, your own key)"
 performance = "Performance"
 
 # ---- Look ----
@@ -307,37 +307,37 @@ label = "Region set"
 group = "segmentation"
 help = "A ready-made list of regions, such as landscape or wedding. It replaces the style's own list."
 
-# ---- AI assistant ----
+# ---- Cloud refine ----
 [setting.decider]
 label = "Edit method"
 group = "llm"
-help = "Rules is the built-in method. LLM asks your AI assistant. Learned uses a model you trained."
+help = "Rules is the built-in method. LLM sends a small thumbnail and numbers to a cloud model on your own key. Learned uses a model you trained."
 
 [setting.allow_cloud]
-label = "Allow cloud assistant"
+label = "Allow cloud refine"
 group = "llm"
-help = "Gives permission to send a small preview and numbers, never the full photo, to your AI provider."
+help = "Lets AutoEdit send a small thumbnail and numbers about the photo, never the full photo, to your cloud provider. It bills your own key."
 
 [setting.llm_mode]
-label = "Assistant role"
+label = "Cloud refine role"
 group = "llm"
-help = "Refine adjusts the built-in edit; propose lets the assistant suggest the edit itself."
+help = "Refine adjusts the built-in edit; propose lets the cloud model suggest the edit itself."
 
 [setting.llm_model]
-label = "Assistant model"
+label = "Cloud model name"
 group = "llm"
-help = "The name of the AI model to ask."
+help = "The name of the cloud model to ask. A small thumbnail and numbers are sent to it, and your own key is billed."
 
 [setting.llm_temperature]
-label = "Assistant variation"
+label = "Cloud variation"
 group = "llm"
 help = "0 gives the same answer each time; higher values vary more."
 advanced = true
 
 [setting.llm_translate_instructions]
-label = "Let the assistant read instructions"
+label = "Let cloud refine read instructions"
 group = "llm"
-help = "Lets the assistant turn your edit instructions into changes when the built-in reader cannot."
+help = "Lets the cloud model turn your edit instructions into changes when the built-in reader cannot. It bills your own key."
 
 [setting.translator]
 label = "Understand free text on this computer"
@@ -365,19 +365,19 @@ advanced = true
 [setting.llm_thumb_px]
 label = "Preview size (pixels)"
 group = "llm"
-help = "The longest side of the small preview sent to the assistant."
+help = "The longest side of the small thumbnail sent to the cloud model."
 advanced = true
 
 [setting.llm_max_calls]
-label = "Most assistant calls"
+label = "Most cloud calls"
 group = "llm"
-help = "Stops asking the assistant after this many photos. 0 means no limit."
+help = "Stops calling the cloud model after this many photos. 0 means no limit."
 advanced = true
 
 [setting.llm_budget_usd]
 label = "Spending limit (USD)"
 group = "llm"
-help = "Stops asking the assistant once a run has cost this much. 0 means no limit."
+help = "Stops calling the cloud model once a run has cost this much on your key. 0 means no limit."
 advanced = true
 
 [setting.llm_input_usd_per_mtok]

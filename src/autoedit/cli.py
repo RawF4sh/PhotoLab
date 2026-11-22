@@ -1117,6 +1117,18 @@ def _cmd_ui(args) -> int:
     return 0
 
 
+def _cmd_app(args) -> int:
+    from .web.desktop import run
+
+    try:
+        run(args.configs_dir or paths.configs_dir(), args.profile, debug=args.debug)
+    except ImportError as e:
+        print(e if "[app] extra" in str(e) else
+              f"autoedit app needs the [app] extra:  pip install 'autoedit[app]'   ({e})", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="autoedit", description="Open-vocabulary batch photo auto-editor")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1405,6 +1417,12 @@ def main(argv: list[str] | None = None) -> int:
     ui_p.add_argument("--configs-dir", dest="configs_dir")
     ui_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
     ui_p.set_defaults(func=_cmd_ui)
+
+    app_p = sub.add_parser("app", help="open the local UI in a native window (needs the [app] extra)")
+    app_p.add_argument("--configs-dir", dest="configs_dir")
+    app_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
+    app_p.add_argument("--debug", action="store_true", help="enable the webview dev tools")
+    app_p.set_defaults(func=_cmd_app)
 
     args = parser.parse_args(argv)
     if hasattr(args, "profile"):

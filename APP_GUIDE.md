@@ -6,7 +6,7 @@ your own look — all on your machine. The editing is **non-generative**: it onl
 explainable photographic sliders (exposure, tone, white balance, dehaze, region grades…). It never
 invents or replaces content.
 
-- **UI:** a local web app ("Studio") — `autoedit ui`, opens at `http://127.0.0.1:8765/`.
+- **UI:** one local interface — `autoedit ui` in the browser at `http://127.0.0.1:8765/`, or `autoedit app` in a desktop window.
 - **CLI:** `autoedit run/curate/dataset/rank-variants/train-recipe/train-aesthetic/…`.
 - **Core deps are tiny** (numpy, Pillow, pydantic + stdlib). torch/SAM, Anthropic, rawpy, tifffile
   are optional extras, imported lazily — the default "stub" pipeline runs anywhere with no GPU/network.
@@ -205,7 +205,7 @@ Copy a curated subset of a big shoot for review or training — **originals unto
   `contact-sheet.html`, `selected.csv`, `candidates.json` (including a `decode_failures` count so
   unreadable files aren't invisible), optional `.xmp` sidecars.
 - **UI:** the **Cull** button → pick folder, mode, count, scan-subfolders, XMP; runs a background job
-  (`web/curate_jobs.py`) and shows the picks. **API:** `POST /api/curate/jobs`, `GET /api/curate/jobs/{id}`.
+  (`web/curate_jobs.py`) and shows the picks. **API:** `POST /api/v1/curate/jobs`, `GET /api/v1/curate/jobs/{id}`.
   **CLI:** `autoedit curate <in> <out> --mode diverse --count 200`.
 
 ---
@@ -221,7 +221,7 @@ After a batch, label the results — the training signal for the critic and the 
   from the append-only CSV (labeling history can never silently restart). `review.summary()`
   collapses append-only records to the newest label per image for UI hydration.
 - **UI:** the post-batch **Review** modal — Keep/Reject + tag chips per card, **Save labels** in the
-  header. **API:** `POST /api/review/labels`.
+  header. **API:** `POST /api/v1/review/labels`.
 
 ---
 
@@ -239,7 +239,7 @@ Turn original↔edited pairs into a validated training set — the **non-generat
 - **`build_dataset`** — copy-only workspace: `originals/`, `targets/` (passing pairs), `rejected/`
   (failing targets), `labels.csv`, `manifest.json`.
 - **UI:** the **Dataset** button → pick originals + targets folders → **Validate** (preview verdicts)
-  or **Build**. **API:** `POST /api/datasets/validate`, `POST /api/datasets/build`.
+  or **Build**. **API:** `POST /api/v1/datasets/validate`, `POST /api/v1/datasets/build`.
   **CLI:** `autoedit dataset validate <o> <t>` · `autoedit dataset build <o> <t> <out>`.
 
 ---
@@ -255,8 +255,8 @@ Turn original↔edited pairs into a validated training set — the **non-generat
 - **`review_priority`** — peaks at the 0.5 decision boundary, so uncertain photos go to human review.
 
 Used for: ranking originals for culling, ranking/filtering variants, prioritizing review. **UI:** the
-Cull modal's **Aesthetic** mode — Load model / Score only / Train. **API:** `POST /api/aesthetic/train`
-(background job) + `GET /api/aesthetic/jobs/{id}`, `POST /api/aesthetic/score`.
+Cull modal's **Aesthetic** mode — Load model / Score only / Train. **API:** `POST /api/v1/aesthetic/train`
+(background job) + `GET /api/v1/aesthetic/jobs/{id}`, `POST /api/v1/aesthetic/score`.
 **CLI:** `autoedit train-aesthetic <labels.csv> <images> <model.json>`.
 
 ### 8b. Recipe predictor (M6) — the first learned *editor* (still non-generative)
@@ -280,7 +280,7 @@ Cull modal's **Aesthetic** mode — Load model / Score only / Train. **API:** `P
 - **Suggestions:** `autoedit style suggest` lists a change you made on at least 12 photos, on at least 3
   days, in the same direction on at least 70 % of the photos it could apply to ("You made the sky darker
   on 14 of 17 landscapes"). `--yes NAME` saves it into a new look as a `habit` table. Nothing changes
-  without it. API: `GET /api/style/suggestions`, `POST /api/style/accept`. Thresholds: `style.toml`.
+  without it. API: `GET /api/v1/style/suggestions`, `POST /api/v1/style/accept`. Thresholds: `style.toml`.
 
 ### 8b3. Look files (F28)
 
@@ -291,7 +291,7 @@ it on up to 12 photos as a before-and-after sheet (with no photos named: a drawn
 
 ### 8b4. Teaching mode (F29)
 
-Two keys on `POST /api/preview`. `"steps": true` (or `{"px": 256..2560, "lossless": bool}`) adds the edit
+Two keys on `POST /api/v1/preview`. `"steps": true` (or `{"px": 256..2560, "lossless": bool}`) adds the edit
 replayed one step at a time: source, regions, shapes, one step per tool group, palette, checks, finish,
 grain, each with its picture, values and three lesson lines from `lessons.toml`; the last step equals the
 preview. `"try": {"sliders": {...}, "compare": true}` renders the photo from your sliders and sentences
@@ -360,85 +360,84 @@ untested until 20 night photos have been through the tone gate and a blind sheet
   gate-flagged. **`is_uncertain`** sends the pick to review when the winner is flagged or the top two
   are within a hair.
 - **UI:** the **Variants** button on the stage → ranked recipes with best/review badges → **Apply**.
-  **API:** `POST /api/variants`. **CLI:** `autoedit rank-variants <image|folder>` → `variant-ranking.csv`.
-- **Surprise me (F26):** `"surprise": true` (and an optional `"seed"`) on `POST /api/variants` renders
+  **API:** `POST /api/v1/variants`. **CLI:** `autoedit rank-variants <image|folder>` → `variant-ranking.csv`.
+- **Surprise me (F26):** `"surprise": true` (and an optional `"seed"`) on `POST /api/v1/variants` renders
   six looks from the library, drawn by the seed (the same seed gives the same six; the photo's
-  current look is left out), and returns `seed` and `looks`. The **Surprise** button in Studio shows
+  current look is left out), and returns `seed` and `looks`. The **Surprise me** button (Look) shows
   them; a pick sets the look by name. `autoedit run ... --look surprise --seed N` prints the six and
   runs the batch with the first; the sidecar records that look's name.
 
 ---
 
-## 9. The Studio UI
+## 9. The interface (F49)
 
-### 9a. AutoEdit Lab (F38)
+### Start it
 
-`/lab` serves `web/static/lab.html`, a second, minimal page beside Studio for trying the newer
-features: open a folder, a filmstrip, the photo large on a neutral grey; one box to say what to
-change, and Mark to draw an oval for a sentence about one place; look (with black-and-white and
-film looks), Surprise me, kind of photo (only tested packs and your own), strength, straighten and
-crop; hold the photo or B for the original; "How it was done" (the walk-through and every step);
-"Try it yourself" (seven sliders, compared with AutoEdit's version); export one photo or edit the
-checked ones. Culling, review, datasets and training stay in Studio. Dark only; its own
-storage key; a strict content policy (same-origin requests and `data:` images only).
+- **Browser:** `pip install -e '.[ui]'`, then `autoedit ui`. It opens `http://127.0.0.1:8765/`.
+- **Desktop window:** `pip install -e '.[app]'`, then `autoedit app`. It is the same interface in a
+  native window, on a free loopback port. On Linux it needs a GTK or Qt web view installed.
 
-`autoedit ui` serves a single self-contained page (`web/static/studio.html`, vanilla HTML/CSS/JS,
-no build step) — a Lightroom/Capture One-shaped editor.
+Light or dark follows the system. The photo always sits on the same mid grey. Esc and the back
+arrow (top left) go back one screen.
 
-- **Top bar:** Folder / Photo open · Folder name · Before/After/Split/Side view · Masks · **Cull** ·
-  **Dataset** · Run batch · Settings.
-- **Filmstrip (left):** real thumbnails, RAW+JPEG **pairs collapsed** into one row (edit a single
-  chosen source, toggle RAW⇄JPEG), per-photo **checkboxes** to run a subset.
-- **Stage (center):** high-res before/after with a draggable split, **Variants** button, and a mask
-  overlay from the same segmentation/overlap arbitration used by the preview. Colors match the
-  Concepts list; footprints are shown before full-resolution edge feathering.
-  Previews are **full-resolution, lossless WebP** (pixel-exact — no banding, smaller than PNG), on a
-  manual "regenerate" flow.
-- **Develop panel (right):** Style · Intensity · **Look intent** (+ chips) · **Palette** (+ strength) ·
-  **Reference** (+ strength) · Concepts · Adjustments · Regions · Why. Add a named concept or toggle
-  its inclusion; these choices persist across photos and are sent to preview and batch. “Not found”
-  means the enabled concept was absent in that photo; “Off” excludes it. Turning every concept off
-  disables region edits while global edits still apply. Changes require a new preview.
-- **Settings:** output format (JPEG / 16-bit TIFF) · batch consistency · **Edit engine** (Rules /
-  Learned) + recipe model · **RAW development**. Preview, variants, and export use the selected RAW
-  mode; Standard remains the default. A development change invalidates cached segmentation for
-  the changed pixels.
-- **Batch selection:** newly opened photos start checked. **None** clears the selection and disables
-  Run; **All** selects every photo. An explicitly empty API `files` list never falls back to the folder.
-- **Modals:** Run drawer (live batch progress) · **Review** (keep/reject + labels) · **Cull** ·
-  **Dataset** · **Variants**.
+### Screens
 
-**Trust boundary:** every filesystem path the API touches must descend from a folder you chose via the
-native picker this session (set `AUTOEDIT_ALLOW_ANY_PATH=1` to opt out). Every request is
-Host-header-checked to loopback (DNS-rebinding defense) and mutating requests are additionally
-localhost-origin-checked; `serve` refuses non-loopback hosts without `--unsafe-network`.
+#### Start
+One button, **Open folder**, and the folders you opened recently. Your photos stay on this computer.
 
-### 9b. Point and tell: the Mark tool (F37)
+#### Folder (home)
+The grid of photos (RAW+JPEG pairs count as one) with a status dot on each tile: waiting, editing,
+done, look at this, failed. The side panel holds what applies to the whole folder:
 
-In Studio, **Mark** draws an oval on the photo (a drag, in the "after" view). The sentence for
-the mark goes in the edit box.
+- **Look**, **Surprise me** (six looks on the current photo), **Kind of photo**, **Strength**.
+- **What to change in every photo**: a sentence, for example "darken the sky".
+- **Export as**: a preset (format, size, name, subfolder).
+- **Edit N photos**: edits the checked photos. Progress, Pause and Cancel sit under the grid. A
+  stopped run resumes. Photos that failed or need a look are listed, and one bad photo never stops the rest.
+- **Find**: type words ("snow lake") to filter by what is in the photos.
+- **Share** and **Tools** in the top bar; the gear opens Settings.
 
-- A sentence that names a thing ("make this guy more purple") edits that thing inside the oval.
-  SAM 3 finds it by its name; only what has its centre in the oval counts.
-- Any other sentence ("brighten this a little") edits the oval itself, as an area, soft at the edge.
-- "Oval only" on the mark's chip switches a named mark to the area. Naming the thing switches back.
-- When a named thing is not found, nothing is applied. The chip says so and offers "Use the oval".
-- "Show me how" opens the walk-through for that mark: what SAM 3 looked for, what was inside, each
-  step, what was held back, and the photo with this mark off.
-- Skin and snow keep their limits inside a mark: skin keeps its own limit, and snow takes no colour.
-- Without SAM 3 every mark is an area.
-- Marks are stored per photo in the sidecar, so a batch from Studio and `autoedit adjust` replay them.
+#### Photo
+Click a tile. Arrow keys move between photos.
 
-Command line:
+- The photo is shown at full resolution. **Hold the photo or press B** to see the original.
+- **Say what to change** in the box under the photo ("warm the grass a little"). Each sentence
+  appears under **Your changes** and can be removed.
+- **Mark** (or M): drag an oval, then say what changes there ("make this guy more purple"). A
+  sentence that names a thing edits that thing inside the oval; any other sentence edits the oval as
+  an area. If the thing is not found, nothing is applied and the chip says so. Without SAM 3 every
+  mark is an area.
+- **Pick something grey**: click a neutral spot to set the white balance exactly.
+- **Copy to similar (N)**: copy these changes to similar photos.
+- **How it was done**: the mask and one line per tool, what was held back, and the photo with each step off.
+- **Try it yourself**: sliders, compared with AutoEdit's version.
+- **Masks**: shows the regions that were found.
+- **Save this photo**: writes this one photo again from its sidecar.
+- When "Collect review labels" is on (Settings), a Good / Not good pair appears.
 
-```
-autoedit adjust out/IMG_0042.jpg --mark 0.58,0.12,0.92,0.94 --edit "make this guy more purple" --explain
-```
+#### Tools
+One form per tool, then the result in place with "Open the result folder".
 
-`--mark X0,Y0,X1,Y1` is the oval as four shares of the frame and needs `--edit`;
-`--mark-kind auto|area` (default `auto`); `--explain` prints the mask and one line per tool.
+| Tool | What it does |
+|---|---|
+| Pick keepers | The sharpest well-exposed frame of each burst |
+| Merge frames | Brackets, repeats, focus series, trails |
+| Choose a subset | Copy a varied or best-scored set for review |
+| Looks | Save, delete, import, export, card, LUT |
+| Your style | Changes you keep making, offered as a look |
+| Calibrate | Find your look from pairs you vote on |
+| Training | Datasets, scorer, recipe model (advanced) |
 
----
+#### Settings
+A sheet over any screen, drawn from the settings schema (`autoedit settings --json`). Groups:
+Region finder and model, RAW, Quality, Look extras (grain, LUT), Output (format, metadata,
+workers, export presets and watermark), Privacy, Profile, Advanced, About. Appearance has a dark
+surround option. Defaults are the ones the command line uses.
+
+#### Share sheet
+After a run: **Check before sharing** (findings per photo, such as location or a serial number
+left in), **Edit declaration** (what was changed, with hashes), **Keywords** (writes `.xmp` files
+beside the exports), **Show in folder**, and **Make gallery**.
 
 ## 10. CLI reference
 
@@ -452,7 +451,8 @@ autoedit run <in> <out> [--style … --prompt … --palette … --intensity … 
                          --highlight-hold --denoise --levels
                          --no-consistent --no-compose --no-vignette --no-sharpen …]
 autoedit adjust <photo|sidecar> [--set sky.exposure=-0.3 --edit "…" --reset --source IMG --mark X0,Y0,X1,Y1 --mark-kind auto|area --explain]
-autoedit ui [--host --port --no-open]                 # launch Studio
+autoedit ui [--host --port --no-open]                 # the interface in the browser
+autoedit app                                          # the same interface in a desktop window ([app] extra)
 
 # workflow
 autoedit curate <in> <out> --mode diverse|best|aesthetic --count N [--aesthetic-model m.json]
@@ -477,7 +477,7 @@ autoedit doctor | presets | styles | exports | settings [--json]
 
 ## 11. Web API reference
 
-Every route below also lives under `/api/v1` (for example `/api/v1/preview`); the plain `/api/…`
+Every route below also lives under `/api/v1` (for example `/api/v1/preview`); the plain `/api/v1/…`
 paths still work. Every failure answers with one error shape, `{"error": "…", "code": "…"}`.
 Also available: `GET /api/v1/version`, `GET /api/v1/settings/schema` (the data behind
 `autoedit settings`) and `GET /api/v1/jobs/{id}/events`, a server-sent event stream for a job. The
@@ -485,16 +485,16 @@ route list is pinned by `tests/snapshots/api_v1.json`.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/styles`, `/api/presets` | List styles / concept presets. |
-| `GET /api/list?dir=`, `/api/groups?dir=` | Flat list / RAW+JPEG-paired groups. |
-| `GET /api/thumb?path=&px=` | Fast thumbnail (px clamped). `POST /api/pick?kind=` native picker. |
-| `POST /api/preview` | Full-res before/after (lossless WebP) + decision sidecar. |
-| `POST /api/jobs`, `GET /api/jobs/{id}`, `POST …/control` | Background edit batch + live progress. |
-| `POST /api/curate/jobs`, `GET …/{id}` | Culling job (M1). |
-| `POST /api/review/labels` | Save review labels (M2). |
-| `POST /api/datasets/validate`, `/api/datasets/build` | Dataset builder (M3). |
-| `POST /api/aesthetic/train`, `GET …/jobs/{id}`, `POST /api/aesthetic/score` | Critic (M4). |
-| `POST /api/variants` | Variant engine (M7). |
+| `GET /api/v1/styles`, `/api/v1/presets` | List styles / concept presets. |
+| `GET /api/v1/list?dir=`, `/api/v1/groups?dir=` | Flat list / RAW+JPEG-paired groups. |
+| `GET /api/v1/thumb?path=&px=` | Fast thumbnail (px clamped). `POST /api/v1/pick?kind=` native picker. |
+| `POST /api/v1/preview` | Full-res before/after (lossless WebP) + decision sidecar. |
+| `POST /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST …/control` | Background edit batch + live progress. |
+| `POST /api/v1/curate/jobs`, `GET …/{id}` | Culling job (M1). |
+| `POST /api/v1/review/labels` | Save review labels (M2). |
+| `POST /api/v1/datasets/validate`, `/api/v1/datasets/build` | Dataset builder (M3). |
+| `POST /api/v1/aesthetic/train`, `GET …/jobs/{id}`, `POST /api/v1/aesthetic/score` | Critic (M4). |
+| `POST /api/v1/variants` | Variant engine (M7). |
 
 ---
 
@@ -569,7 +569,7 @@ updated if behavior changed.
 
 ## 15. From the command line
 
-The Studio covers the everyday loop. These commands do the same work, and a few things more, from a
+The interface covers the everyday loop. These commands do the same work, and a few things more, from a
 terminal. `autoedit <command> --help` lists every option.
 
 - **Say what you want in words:** `autoedit run ./photos ./out --edit "brighten the jacket, darken the sky slightly"`.
@@ -627,7 +627,9 @@ src/autoedit/
     app.py               # FastAPI routes + trust boundary + origin guard
     service.py           # framework-agnostic logic (preview, curate, dataset, aesthetic, variants)
     jobs.py curate_jobs.py aesthetic_jobs.py   # background jobs
-    static/studio.html   # the single-file Studio UI
+    static/app/          # the interface: index.html, app.css, tools.css and seven ES modules
+    tools_jobs.py        # POST /api/v1/tools/{name}: the CLI-only tools as jobs
+    desktop.py           # autoedit app: the interface in a pywebview window
   configs/               # rules looks styles palettes intents concepts compose defaults
                          # instructions exports calibrate settings .toml
 ```

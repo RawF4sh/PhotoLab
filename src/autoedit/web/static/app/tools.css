@@ -1,0 +1,25 @@
+/* Tools screen, Share sheet and the Settings rows added with them. Tokens come from app.css. */
+.toolscreen { max-width: 720px; margin: 0 auto; padding: var(--sp-4); }
+.titem { border-bottom: 1px solid var(--line); }
+.trow { display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: 44px; text-align: left; }
+.trow .grow { flex: 1; min-width: 0; }
+.tbody { padding: var(--sp-2) var(--sp-3) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
+.tbody[hidden] { display: none; }
+.tform { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; padding-bottom: var(--sp-3); }
+.tform .primary { align-self: flex-start; }
+.tfield { display: flex; flex-direction: column; gap: var(--sp-1); width: 100%; }
+.tfield.check { flex-direction: row; align-items: center; gap: var(--sp-2); }
+.tfield label { font-size: var(--fs-s); font-weight: 500; color: var(--text-2); }
+.tin { display: flex; gap: var(--sp-2); align-items: center; width: 100%; }
+.tin input[type=text], .tin input[type=number] { flex: 1; min-width: 0; }
+.tstatus.bad { color: var(--bad); }
+.tout { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; max-width: 100%; }
+.tout pre, .about-text { max-width: 100%; overflow: auto; font-size: var(--fs-s); background: var(--raised); padding: var(--sp-2); border-radius: var(--r-s); }
+.tlist { display: flex; flex-direction: column; }
+.trow2 { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-height: var(--ctl); }
+.trow2 .grow { flex: 1; min-width: 0; }
+.shrow { display: flex; flex-direction: column; align-items: flex-start; width: 100%; text-align: left; padding: var(--sp-2) var(--sp-3); }
+.shrow small { color: var(--text-2); }
+.shres { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; min-height: var(--ctl); }
+.modelrow { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-2); }
+.findnote { color: var(--text-2); }

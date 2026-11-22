@@ -96,7 +96,7 @@ def test_cli_and_api():
 
     client = TestClient(webapp.create_app(paths._packaged(), local_only=True), base_url="http://localhost")
     assert client.get("/api/v1/settings/schema").json() == _packaged_schema()
-    assert client.get("/api/settings/schema").json() == _packaged_schema()
+    assert client.get("/api/v1/settings/schema").json() == _packaged_schema()
 
 
 def test_unknown_annotation_is_an_error():

@@ -4,7 +4,7 @@ A technical walkthrough of the current system: a **local-first, open-vocabulary 
 editor**. You point it at a folder of photos; it segments **arbitrary named regions** (SAM 3),
 decides **non-generative parametric edits** per region + globally (rules baseline, optional LLM
 refine), bakes the result at full resolution, and writes a **sidecar JSON** explaining every
-decision. There is also a local **Studio** web UI.
+decision. There is also a local web UI, in a browser or a desktop window.
 
 The product wedge is *open-vocabulary region editing* — you can say "dress", "glacier", "kayak"
 and it masks and edits that. The edits themselves are classic, explainable photo adjustments
@@ -25,7 +25,7 @@ and verification of decoded exports. Experimental B/C orchestration lives separa
 in `workflows.py`; the frozen benchmark runs the original control from a saved source
 snapshot. See [the workflow guide](docs/QUALITY_WORKFLOW.md) for locking, measurements,
 format controls, source selection, and blind evaluation. These experiments do not
-change the Studio or existing CLI defaults.
+change the interface or existing CLI defaults.
 
 Everything flows through one pipeline, defined in [`pipeline.py`](src/autoedit/pipeline.py)
 (`Pipeline.process_one`). The stages are swappable but never fused or reordered:
@@ -105,7 +105,7 @@ later. This isolates the SAM license + torch dependency to one file.
   `autoedit models status|download|remove` (`models.py`) manages those weights.
   The image encoder runs once per photo and every concept is one light pass on its output
   (F36). The last photo's encoder output stays in memory, so a concept asked later on the same
-  photo (a follow-up edit in Studio) skips the encoder.
+  photo (a follow-up edit in the UI) skips the encoder.
 
 ### Adding a segmenter
 
@@ -366,7 +366,7 @@ one linear TIFF that `autoedit run` then edits.
 `genres.py` (F30) reads `genres.toml` and turns a pack into run settings below the user's own (`--genre`);
 a pack selects data only: `rules.load(require=)` takes its opt-in rule sets.
 
-`lessons.py` turns the plan into the walk-through that Studio's "Show me how" and
+`lessons.py` turns the plan into the walk-through that the UI's "How it was done" and
 `autoedit adjust --explain` show; its texts are data in `configs/lessons.toml`.
 
 ---
@@ -597,7 +597,7 @@ masks (straighten, at most 5 degrees) and the subject mask (crop to `out_aspect`
 finished picture first, after every check, sharpening and a LUT, then resizes to `long_edge`, then adds
 grain. Previews warp every picture they answer with the same record. The safety workflow drops it.
 
-A product export (batch, Studio job, single edit) also carries the source photo's EXIF, filtered by
+A product export (batch, UI job, single edit) also carries the source photo's EXIF, filtered by
 the `metadata` run setting (`keep`, `shareable` — the default, which drops the GPS block and the
 camera and lens serial numbers — or `none`), and an embedded sRGB ICC profile. `imageio.export_exif` builds the block from the
 descriptive tags of the first directory (an allow-list) and the whole Exif sub-directory except the
@@ -645,34 +645,43 @@ cache). It warns when the digest of the config files differs from the batch's, a
 
 ---
 
-## 15. The Studio web app (`web/`)
+## 15. The web app (`web/`)
 
-A local FastAPI app (`web/app.py`) over framework-agnostic logic (`web/service.py`), plus a
-single self-contained `static/studio.html` (vanilla HTML/CSS/JS, no build step) — a Lightroom/
-Capture One-shaped editor: top bar · filmstrip · before/after stage · Develop panel · status bar ·
-run drawer · review/settings modals. A second page, `static/lab.html` at `/lab` (F38), uses the same
-`/api/v1` routes for a minimal test UI of the newer features; it changes no route.
+A local FastAPI app (`web/app.py`) over framework-agnostic logic (`web/service.py`), plus a small
+front end in `static/app/` served at `/`: `index.html`, two stylesheets and plain ES modules, no
+build step. Screens: Start, Folder (grid, look, strength, sentence, export, Find, Share, Tools),
+Photo (preview, hold to compare, marks, How it was done, Try it yourself, masks), Tools, Settings
+(drawn from the settings schema) and the Share sheet. Spec: [docs/plans/UI-minimal.md](docs/plans/UI-minimal.md).
+
+`autoedit ui` serves it for a browser. `autoedit app` (`web/desktop.py`, extra `[app]` = pywebview)
+starts the same server in a thread on a free loopback port and opens a native window on it; closing
+the window stops the server. Every page carries a strict policy: `default-src 'none'`,
+`script-src 'self'`, `style-src 'self'`, `img-src 'self' data:`, `connect-src 'self'` and
+`frame-ancestors 'none'`.
+
+A UI batch writes a minimal `run.json` (`input_dir`) into its output so `adjust`, `sync` and
+`declare` find the sources.
 
 ### Endpoints
 
-Every JSON route sits on one router mounted at `/api/v1` (documented) and at `/api` (the old
-paths, same handlers, kept for the Studio pages). Every failure has one shape, `{"error", "code"}`
-(`forbidden`, `not_found`, `bad_request`, `internal`), including validation errors. The route list
-is pinned by `tests/snapshots/api_v1.json`; a test fails on any change, and
-`AUTOEDIT_UPDATE_SNAPSHOTS=1` rewrites it on purpose.
+Every JSON route sits on one router mounted at `/api/v1`. There is no other mount. Every failure
+has one shape, `{"error", "code"}` (`forbidden`, `not_found`, `bad_request`, `internal`), including
+validation errors. The route list is pinned by `tests/snapshots/api_v1.json`; a test fails on any
+change, and `AUTOEDIT_UPDATE_SNAPSHOTS=1` rewrites it on purpose.
 
 | Route | Purpose |
 |---|---|
 | `GET /api/v1/version`, `/api/v1/settings/schema` | API and engine version; the run-setting schema (what `autoedit settings` prints; pinned by `tests/snapshots/settings_schema.json`). |
-| `GET /api/styles`, `/api/presets` | List styles / concept presets. |
-| `GET /api/list?dir=` | Flat supported-image list (classic UI). |
-| `GET /api/groups?dir=` | **RAW+JPEG pairs collapsed** into one logical photo (Studio UI). |
-| `GET /api/thumb?path=&px=` | Fast JPEG thumbnail (decode + downscale, no pipeline; `px` clamped ≤2048). |
-| `POST /api/pick?kind=` | Native folder/file picker (POST — it registers a trust-boundary root). |
-| `POST /api/preview` | Single-image before/after (lossless WebP data-URLs) + decision sidecar. With `photo_marks` (ovals with a sentence each, F37) the answer also carries `marks`, `mark_overlays` and `walkthrough`; `/run-one` and `/jobs` take `photo_marks` too. |
-| `POST /api/jobs`, `GET /api/jobs/{id}`, `POST .../control` | Background batch with live progress. |
-| `GET /api/jobs/{id}/events` | The same progress as a server-sent event stream: an `event: snapshot` whenever it changes, `event: done` at the end. |
-| `POST /api/run`, `/run-one`, `/curate`; `/curate/jobs`; `/review/labels`; `/datasets/…`; `/aesthetic/…`; `/variants` | Workflow routes (see APP_GUIDE.md). |
+| `GET /api/v1/styles`, `/api/v1/presets` | List styles / concept presets. |
+| `GET /api/v1/list?dir=` | Flat supported-image list. |
+| `GET /api/v1/groups?dir=` | **RAW+JPEG pairs collapsed** into one logical photo. |
+| `GET /api/v1/thumb?path=&px=` | Fast JPEG thumbnail (decode + downscale, no pipeline; `px` clamped ≤2048). |
+| `POST /api/v1/pick?kind=` | Native folder/file picker (POST — it registers a trust-boundary root). |
+| `POST /api/v1/preview` | Single-image before/after (lossless WebP data-URLs) + decision sidecar. With `photo_marks` (ovals with a sentence each, F37) the answer also carries `marks`, `mark_overlays` and `walkthrough`; `/run-one` and `/jobs` take `photo_marks` too. |
+| `POST /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST .../control` | Background batch with live progress. |
+| `GET /api/v1/jobs/{id}/events` | The same progress as a server-sent event stream: an `event: snapshot` whenever it changes, `event: done` at the end. |
+| `POST /api/v1/tools/{name}`, `GET /api/v1/tools/jobs/{id}` | One pattern for features the CLI had alone (find, keywords, declare, gallery, check, sync, merge, pick, exports, looks_*, history_*, calibrate_*, models_*, doctor, rank_variants, train_recipe, reveal). The POST starts a job and answers `{id, name, status}`; the GET answers `{status: running\|done\|error, result, error, log}`. Unknown name 404, bad body 400, path outside the approved folders 403. Slow tools share one lock. Code: `web/tools_jobs.py`. |
+| `POST /api/v1/run`, `/run-one`, `/curate`; `/curate/jobs`; `/review/labels`; `/datasets/…`; `/aesthetic/…`; `/variants` | Workflow routes (see APP_GUIDE.md). |
 
 ### Trust boundary & safety
 
@@ -737,7 +746,8 @@ autoedit curate | dataset | rank-variants | train-recipe | train-aesthetic   # w
 autoedit looks list | save NAME [--from BASE --set FIELD=VALUE] | delete NAME
 autoedit calibrate [photos] [--out DIR | --continue DIR [--finish]] [--count --rounds --seed --name …]
 autoedit models status | download | remove
-autoedit ui [--host --port --no-open]      # launch Studio
+autoedit ui [--host --port --no-open]      # the interface in a browser
+autoedit app                               # the same interface in a desktop window ([app] extra)
 autoedit doctor                            # device + backend availability
 autoedit styles | presets | exports | settings [--json]   # list profiles / presets / settings
 ```
@@ -842,7 +852,9 @@ src/autoedit/
     service.py           # framework-agnostic logic (preview, groups, pipeline)
     jobs.py              # background batch jobs + live progress (+ event stream source)
     curate_jobs.py aesthetic_jobs.py   # background jobs for culling and critic training
-    static/studio.html   # the single-file Studio UI
+    tools_jobs.py        # background jobs behind POST /api/v1/tools/{name}
+    desktop.py           # `autoedit app`: server on a free loopback port + pywebview window
+    static/app/          # the UI: index.html app.css tools.css main.js folder.js photo.js settings.js tools.js share.js
   configs/
     rules.toml looks.toml styles.toml concepts.toml compose.toml intents.toml defaults.toml
     palettes.toml quality.toml workflows.toml

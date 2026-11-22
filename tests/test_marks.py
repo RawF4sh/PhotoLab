@@ -787,6 +787,3 @@ def test_version_carries_the_mark_limits(tmp_path):
     text = open(f).read()
     open(f, "w").write(re.sub(r"min_side = 0\.01\b", "min_side = 0.05", text))
     assert limits(cfgs)["min_side"] == 0.05
-    html = open(os.path.join(os.path.dirname(service.__file__), "static", "studio.html")).read()
-    assert "FU_MARKS" not in html and html.count("max_chars:300") == 1 and html.count("max_marks:20") == 1
-    assert "<=300" not in html and "<0.01||" not in html and "maxlength=\"300\"" in html   # maxlength is only the fallback

@@ -39,23 +39,19 @@ def _bilinear(a: np.ndarray, ys: np.ndarray, xs: np.ndarray) -> np.ndarray:
     xs = np.clip(xs, 0.0, w - 1.001)
     y0, x0 = ys.astype(np.int64), xs.astype(np.int64)
     fy, fx = (ys - y0).astype(np.float32), (xs - x0).astype(np.float32)
-    p, q, r, t = a[y0, x0], a[y0, x0 + 1], a[y0 + 1, x0], a[y0 + 1, x0 + 1]
+    i = y0 * w + x0          # one flat index instead of four 2-D fancy lookups (same elements)
+    af = a.reshape(-1)
+    p, q, r, t = af[i], af[i + 1], af[i + w], af[i + w + 1]
     return p + (q - p) * fx + (r - p) * fy + (p - q - r + t) * fx * fy
 
 
-def ca_scale(green: np.ndarray, other: np.ndarray) -> tuple[float, float]:
-    """(s, R): the scale about the frame centre at which `other` lines up best with `green`, so that
-    other(c + s (p - c)) matches green(p); R is the half-diagonal in pixels, and (s - 1) * R the
-    fringe at the corner. Compared: the high-passes (minus a box blur) at the _CA_SAMPLES strongest
-    green edges beyond _CA_INNER of the half-diagonal, by correlation, for fringes from -_CA_MAX_PX
-    to +_CA_MAX_PX in steps of _CA_STEP_PX. Returns s = 1.0 when the best is at an end of the range
-    or there are fewer than 1000 candidate pixels."""
-    # ponytail: one scale per channel (the linear term of lateral CA); a radial polynomial if a lens shows wavy fringes
+def ca_prep(green: np.ndarray):
+    """What `ca_scale` shares between channels, from green alone: (R, hg-at-edges normalised, ys, xs),
+    or (R, None, None, None) when there are fewer than 1000 candidate pixels."""
     h, w = green.shape
     cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
     R = float(np.hypot(cy, cx))
     hg = green - box_blur(green, _CA_HP)
-    ho = (other - box_blur(other, _CA_HP)).astype(np.float32)
     gy, gx = np.gradient(green)
     mag = np.hypot(gy, gx)
     rho = np.hypot((np.arange(h, dtype=np.float32) - cy)[:, None],
@@ -63,13 +59,29 @@ def ca_scale(green: np.ndarray, other: np.ndarray) -> tuple[float, float]:
     cand = (rho > _CA_INNER) & (rho < 0.98)
     vals = mag[cand]
     if vals.size < 1000:
-        return 1.0, R
+        return R, None, None, None
     k = min(_CA_SAMPLES, vals.size)
     thr = np.partition(vals, vals.size - k)[vals.size - k]
     ys, xs = np.nonzero(cand & (mag >= thr))
     a = hg[ys, xs]
     a = (a - a.mean()) / (a.std() + 1e-9)
-    ys, xs = ys.astype(np.float32), xs.astype(np.float32)
+    return R, a, ys.astype(np.float32), xs.astype(np.float32)
+
+
+def ca_scale(green: np.ndarray, other: np.ndarray, prep=None) -> tuple[float, float]:
+    """(s, R): the scale about the frame centre at which `other` lines up best with `green`, so that
+    other(c + s (p - c)) matches green(p); R is the half-diagonal in pixels, and (s - 1) * R the
+    fringe at the corner. Compared: the high-passes (minus a box blur) at the _CA_SAMPLES strongest
+    green edges beyond _CA_INNER of the half-diagonal, by correlation, for fringes from -_CA_MAX_PX
+    to +_CA_MAX_PX in steps of _CA_STEP_PX. Returns s = 1.0 when the best is at an end of the range
+    or there are fewer than 1000 candidate pixels. `prep` = ca_prep(green), to share it between channels."""
+    # ponytail: one scale per channel (the linear term of lateral CA); a radial polynomial if a lens shows wavy fringes
+    h, w = green.shape
+    cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
+    R, a, ys, xs = prep if prep is not None else ca_prep(green)
+    if a is None:
+        return 1.0, R
+    ho = (other - box_blur(other, _CA_HP)).astype(np.float32)
     step = _CA_STEP_PX / R
     n = int(round(_CA_MAX_PX / _CA_STEP_PX))
     scales = 1.0 + step * np.arange(-n, n + 1)
@@ -92,9 +104,10 @@ def correct_ca(rgb: np.ndarray) -> tuple[np.ndarray, dict]:
     returned. Report: {"red": {"scale", "corner_px", "applied"}, "blue": {...}}."""
     green = np.ascontiguousarray(rgb[..., 1], dtype=np.float32)
     out, report = None, {}
+    prep = ca_prep(green)
     for name, c in (("red", 0), ("blue", 2)):
         ch = np.ascontiguousarray(rgb[..., c], dtype=np.float32)
-        s, R = ca_scale(green, ch)
+        s, R = ca_scale(green, ch, prep)
         px = (s - 1.0) * R
         applied = bool(abs(px) >= _CA_MIN_PX)
         report[name] = {"scale": round(s, 6), "corner_px": round(px, 2), "applied": applied}

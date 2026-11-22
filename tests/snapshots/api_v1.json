@@ -1,9 +1,4 @@
 {
-  "GET /": {
-    "path": [],
-    "query": [],
-    "body": false
-  },
   "GET /api/v1/aesthetic/jobs/{job_id}": {
     "path": [
       "job_id"
@@ -88,22 +83,19 @@
     ],
     "body": false
   },
+  "GET /api/v1/tools/jobs/{job_id}": {
+    "path": [
+      "job_id"
+    ],
+    "query": [],
+    "body": false
+  },
   "GET /api/v1/translator/status": {
     "path": [],
     "query": [],
     "body": false
   },
   "GET /api/v1/version": {
-    "path": [],
-    "query": [],
-    "body": false
-  },
-  "GET /classic": {
-    "path": [],
-    "query": [],
-    "body": false
-  },
-  "GET /lab": {
     "path": [],
     "query": [],
     "body": false
@@ -179,6 +171,13 @@
   },
   "POST /api/v1/style/accept": {
     "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/tools/{name}": {
+    "path": [
+      "name"
+    ],
     "query": [],
     "body": true
   },

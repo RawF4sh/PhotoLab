@@ -34,6 +34,7 @@ accel = ["opencv-python>=4.9", "tifffile>=2024.1", "rawpy>=0.19"]
 heif = ["pillow-heif>=0.16"]
 # Local web app (FastAPI + browser UI): `autoedit ui`.
 ui = ["fastapi>=0.110", "uvicorn>=0.27"]
+app = ["pywebview>=5", "fastapi>=0.110", "uvicorn>=0.27"]
 dev = ["pytest>=8"]
 
 [project.scripts]
@@ -44,7 +45,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "autoedit" = ["configs/*.toml"]
-"autoedit.web" = ["static/*"]
+"autoedit.web" = ["static/*", "static/app/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

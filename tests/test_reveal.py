@@ -365,17 +365,6 @@ def test_preview_returns_reveal(tmp_path):
     assert rv["picture"] == "checked" and rv["findings"][0]["kind"] == "plate" and rv["findings"][0]["box"][:2] == [0.25, 0.25]
 
 
-def test_studio_strings(tmp_path):
-    page = open(os.path.join(os.path.dirname(web_service.__file__), "static", "studio.html"), encoding="utf-8").read()
-    for s in ("Check before sharing", "What it found", "reveal_check", "may miss",
-              "the subject", "other people", "was not checked", "It looked for", "Nothing was done to the picture"):
-        assert s in page
-    mine = page[page.index("/* ---- \"Check before sharing\""):page.index("function applyPreview")]
-    mine += page[page.index('id="revealCk"') - 80:page.index('id="revealCk"') + 400]
-    for w in ("safe", "clean", "private", "OK to share"):
-        assert w not in mine
-
-
 # ---- review fixes -----------------------------------------------------------------------------
 
 def test_worker_path_checks_pictures(tmp_path):
@@ -418,13 +407,6 @@ def test_strict_check_fails_when_the_picture_part_did_not_run(tmp_path):
         assert cli.main(["check", src, "--out", str(tmp_path / "a"), "--backend", "stub", "--strict"]) == 2
     assert "did not run" in err.getvalue()
     assert cli.main(["check", src, "--out", str(tmp_path / "b"), "--backend", "stub"]) == 0
-
-
-def test_studio_clears_reveal_with_the_preview():
-    page = open(os.path.join(os.path.dirname(web_service.__file__), "static", "studio.html"), encoding="utf-8").read()
-    fn = page[page.index("function showSourceOnly"):page.index("function previewLoading")]
-    assert "STATE.preview=null" in fn and "renderReveal()" in fn
-    assert "REVEAL_LABELS" not in page and "Boxes not shown: the photo was straightened or cropped" in page
 
 
 def test_boxes_are_not_drawn_on_a_warped_photo(tmp_path):

@@ -70,6 +70,14 @@ def is_raw(path: str) -> bool:
     return path.lower().endswith(tuple(_RAW_EXT))
 
 
+def _to_unit(arr: np.ndarray, top: float) -> np.ndarray:
+    """An unsigned-integer array as float32 arr / top, `top` being its maximum: converted and divided
+    in place (no float64 or second full-size temporary), and already in [0, 1], so no clip."""
+    out = arr.astype(np.float32)
+    out /= np.float32(top)
+    return out
+
+
 def _ensure_heif() -> None:
     """Register the HEIC/HEIF reader of the optional `pillow-heif` package, once. Imported only
     when such a file is opened, so the core install does not need it."""
@@ -162,11 +170,9 @@ def _load_image(path: str, decode: dict | None = None) -> Image:
     if pil.mode != "RGB":
         pil = pil.convert("RGB")
     arr = np.asarray(pil)
-    if arr.dtype == np.uint16:          # 48-bit RGB Pillow kept as uint16
-        rgb, bits = arr.astype(np.float32) / 65535.0, 16
-    else:
-        rgb, bits = arr.astype(np.float32) / 255.0, 8
-    return Image(rgb=np.ascontiguousarray(np.clip(rgb, 0.0, 1.0)), source_bits=bits, path=path, exif=exif)
+    bits = 16 if arr.dtype == np.uint16 else 8      # 48-bit RGB Pillow kept as uint16
+    return Image(rgb=np.ascontiguousarray(_to_unit(arr, 65535.0 if bits == 16 else 255.0)),
+                 source_bits=bits, path=path, exif=exif)
 
 
 # RAW development modes (RunConfig.raw_mode). "none" is the historical libraw render — camera WB,
@@ -362,6 +368,15 @@ def shoulder(m, knee: float, top: float):
     return np.where(m > knee, knee + d / (1.0 + d * c), m)
 
 
+def unshoulder(y: float, knee: float, top: float) -> float:
+    """The inverse of `shoulder` for one linear value, capped at 1 (the default decode's white)."""
+    if top <= 1.0 or y <= knee:
+        return min(y, 1.0)
+    e = y - knee
+    den = 1.0 - e * (top - 1.0) / ((1.0 - knee) * (top - knee))
+    return 1.0 if den <= 0.0 else min(1.0, knee + e / den)
+
+
 def recover_highlights(rgb, rebuilt, clipped, knee=_RECOVER_KNEE, fade=_RECOVER_FADE, top_q=_RECOVER_TOP_Q,
                        edge=_RECOVER_EDGE):
     """F44's rebuild, testable without a RAW file. rgb: the default decode (LibRaw's curve, [0, 1]);
@@ -452,12 +467,12 @@ def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None)
                 gamma=(2.222, 4.5),                # sRGB-ish tone curve → our gamma working space
                 **common,
             )
-            rgb = np.clip(rgb16.astype(np.float32) / 65535.0, 0.0, 1.0)
+            rgb = _to_unit(rgb16, 65535.0)
             if o["raw_recover"] and mode == "none":
                 rgb = _recover(raw, rgb, common, info)   # F44: a second decode of the open file
             return rgb, 16, 0.0
-        lin = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
-        lin = lin.astype(np.float32) / 65535.0
+        lin16 = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
+        lin = _to_unit(lin16, 65535.0)
         cam = _preview_rgb(raw) if mode.startswith("preview") else None
         if mode.startswith("preview") and not _compatible_preview(cam, lin):
             cam = None
@@ -467,9 +482,12 @@ def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None)
     info["decode_ev"] = ev
     if mode.startswith("preview") and cam is None and ev:
         info["fallback_reason"] = "explicit configured fallback exposure (not inferred from another camera)"
+    # The lift and the sRGB encode as a table over the 65536 possible values: they are elementwise, so
+    # the result is bit for bit what running them on every pixel gives, at a fifth of the time.
+    lut = _to_unit(np.arange(65536, dtype=np.uint16), 65535.0)
     if ev:
-        lin = lin * np.float32(2.0 ** ev)
-    return linear_to_srgb(np.clip(lin, 0.0, 1.0)), 16, ev
+        lut = lut * np.float32(2.0 ** ev)
+    return linear_to_srgb(np.clip(lut, 0.0, 1.0))[lin16], 16, ev
 
 
 def _orientation_of(pil: PILImage.Image) -> int:
@@ -522,9 +540,9 @@ def _decode_tiff16(path: str):
     else:
         return None
     if arr.dtype == np.uint16:
-        return np.clip(arr.astype(np.float32) / 65535.0, 0.0, 1.0), 16
+        return _to_unit(arr, 65535.0), 16
     if arr.dtype == np.uint8:
-        return np.clip(arr.astype(np.float32) / 255.0, 0.0, 1.0), 8
+        return _to_unit(arr, 255.0), 8
     if np.issubdtype(arr.dtype, np.floating):
         return np.clip(arr.astype(np.float32), 0.0, 1.0), 16
     return None

@@ -31,7 +31,7 @@
     },
     {
       "key": "llm",
-      "label": "AI assistant (optional, your own key)"
+      "label": "Cloud refine (optional, your own key)"
     },
     {
       "key": "performance",
@@ -706,21 +706,21 @@
         "llm",
         "learned"
       ],
-      "help": "Rules is the built-in method. LLM asks your AI assistant. Learned uses a model you trained.",
+      "help": "Rules is the built-in method. LLM sends a small thumbnail and numbers to a cloud model on your own key. Learned uses a model you trained.",
       "advanced": false
     },
     {
       "key": "allow_cloud",
-      "label": "Allow cloud assistant",
+      "label": "Allow cloud refine",
       "group": "llm",
       "type": "bool",
       "default": false,
-      "help": "Gives permission to send a small preview and numbers, never the full photo, to your AI provider.",
+      "help": "Lets AutoEdit send a small thumbnail and numbers about the photo, never the full photo, to your cloud provider. It bills your own key.",
       "advanced": false
     },
     {
       "key": "llm_mode",
-      "label": "Assistant role",
+      "label": "Cloud refine role",
       "group": "llm",
       "type": "choice",
       "default": "refine",
@@ -728,21 +728,21 @@
         "refine",
         "propose"
       ],
-      "help": "Refine adjusts the built-in edit; propose lets the assistant suggest the edit itself.",
+      "help": "Refine adjusts the built-in edit; propose lets the cloud model suggest the edit itself.",
       "advanced": false
     },
     {
       "key": "llm_model",
-      "label": "Assistant model",
+      "label": "Cloud model name",
       "group": "llm",
       "type": "string",
       "default": "claude-haiku-5-5",
-      "help": "The name of the AI model to ask.",
+      "help": "The name of the cloud model to ask. A small thumbnail and numbers are sent to it, and your own key is billed.",
       "advanced": false
     },
     {
       "key": "llm_temperature",
-      "label": "Assistant variation",
+      "label": "Cloud variation",
       "group": "llm",
       "type": "float",
       "default": 0.0,
@@ -753,11 +753,11 @@
     },
     {
       "key": "llm_translate_instructions",
-      "label": "Let the assistant read instructions",
+      "label": "Let cloud refine read instructions",
       "group": "llm",
       "type": "bool",
       "default": true,
-      "help": "Lets the assistant turn your edit instructions into changes when the built-in reader cannot.",
+      "help": "Lets the cloud model turn your edit instructions into changes when the built-in reader cannot. It bills your own key.",
       "advanced": false
     },
     {
@@ -768,17 +768,17 @@
       "default": 512,
       "min": 64,
       "max": 1024,
-      "help": "The longest side of the small preview sent to the assistant.",
+      "help": "The longest side of the small thumbnail sent to the cloud model.",
       "advanced": true
     },
     {
       "key": "llm_max_calls",
-      "label": "Most assistant calls",
+      "label": "Most cloud calls",
       "group": "llm",
       "type": "int",
       "default": 0,
       "min": 0,
-      "help": "Stops asking the assistant after this many photos. 0 means no limit.",
+      "help": "Stops calling the cloud model after this many photos. 0 means no limit.",
       "advanced": true
     },
     {
@@ -788,7 +788,7 @@
       "type": "float",
       "default": 1.0,
       "min": 0.0,
-      "help": "Stops asking the assistant once a run has cost this much. 0 means no limit.",
+      "help": "Stops calling the cloud model once a run has cost this much on your key. 0 means no limit.",
       "advanced": true
     },
     {

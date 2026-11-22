@@ -3,6 +3,39 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — A minimal interface for the browser and the desktop (F49)
+
+### Added
+- **A new interface** at `/` (`web/static/app/`): Start, Folder, Photo, Tools, Settings and a Share
+  sheet, light or dark with the system, the photo on a mid grey. Spec: `docs/plans/UI-minimal.md`.
+- **`autoedit app`** opens the same interface in a native window (pywebview, extra `[app]`) on a free
+  loopback port. On Linux it needs a GTK or Qt web view.
+- **`POST /api/v1/tools/{name}`** and **`GET /api/v1/tools/jobs/{id}`** run find, keywords, declare,
+  gallery, check, sync, merge, pick, looks, calibrate, models, doctor and more as jobs
+  (`web/tools_jobs.py`).
+- A UI batch writes a minimal `run.json` (`input_dir`) so adjust, sync and declare find their sources.
+
+### Changed
+- Pages carry `script-src 'self'` and `frame-ancestors 'none'`.
+- README, ARCHITECTURE and APP_GUIDE describe the new interface; APP_GUIDE is shorter and organised by screen.
+
+### Removed
+- **Breaking:** Studio (`/`, `studio.html`), the classic page (`/classic`) and AutoEdit Lab (`/lab`).
+- **Breaking:** the pre-v1 `/api/...` mount. Only `/api/v1/...` remains; scripts must update their paths.
+
+## [Unreleased] — Highlight recovery follow-ups, a faster loader
+
+### Changed
+- **`--raw-recover`** (F44) no longer changes exposure headroom: `stats` undoes the recovery shoulder
+  on its p99.5 (`imageio.unshoulder`), so the edit brightens as it would without recovery. With the
+  `recovered_highlight` rules this keeps 0109, 0028 and 0033 at their full edit; 0066 and 0103 are
+  still pulled back (the edit flattens recovered cloud in a bright sky, see the F44 spec).
+- **Faster decoding, same pixels:** integer images convert to float in place with no clip pass; the
+  linear RAW modes encode through a 65536-entry table; the colour-fringe fix (`--lens-ca`) measures
+  the green channel once for red and blue. JPEG and TIFF load 30 to 55 % faster, the linear RAW modes
+  about 20 %, the default RAW decode about 6 % (LibRaw's demosaic is most of it), the colour-fringe
+  fix about 34 %. Output is byte-identical on every decode option.
+
 ## [Unreleased] — Highlight recovery, colour fringes, copy edits, watermark, gallery (F44–F48)
 
 ### Added

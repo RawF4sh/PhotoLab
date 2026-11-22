@@ -5,14 +5,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
-from . import aesthetic_jobs, curate_jobs, jobs, service
+from . import aesthetic_jobs, curate_jobs, jobs, service, tools_jobs
 
 
-# F38: the test UI page may load nothing but itself, data: pictures and same-origin requests.
-LAB_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-           "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'")
+# F49: the minimal interface loads its own module files, never inline code.
+APP_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+           "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
 def create_app(configs_dir: str = "configs", local_only: bool = True, profile: str | None = None):
@@ -89,17 +90,20 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         with open(os.path.join(static_dir, name), encoding="utf-8") as fh:
             return fh.read()
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return _page("studio.html")          # the premium Studio UI
+    # F49: the interface (docs/plans/UI-minimal.md). Its files live in static/app/ and are served at /app/NAME.
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index():
+        return HTMLResponse(_page(os.path.join("app", "index.html")),
+                            headers={"Content-Security-Policy": APP_CSP, "X-Frame-Options": "DENY"})
 
-    @app.get("/classic", response_class=HTMLResponse)
-    def classic() -> str:
-        return _page("index.html")           # the minimal functional UI
-
-    @app.get("/lab", response_class=HTMLResponse)
-    def lab():
-        return HTMLResponse(_page("lab.html"), headers={"Content-Security-Policy": LAB_CSP})   # the test UI (F38)
+    @app.get("/app/{name}", include_in_schema=False)
+    def app_file(name: str):
+        if (not re.fullmatch(r"[a-z][a-z0-9_]*\.(js|css)", name)
+                or not os.path.isfile(os.path.join(static_dir, "app", name))):
+            return _err(404, "not_found", name)
+        kind = "text/javascript" if name.endswith(".js") else "text/css"
+        return Response(_page(os.path.join("app", name)), media_type=kind + "; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
     @api.get("/styles")
     def styles():
@@ -253,6 +257,21 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     def curate_status(job_id: str):
         return guard(lambda: curate_jobs.snapshot(curate_jobs.get(job_id) or _unknown("unknown curate job")))
 
+    # ── tools (U6): CLI-only features as polled jobs; see tools_jobs.py ──
+    @api.post("/tools/{name}")
+    def start_tool(name: str, payload=Body(...)):
+        def go():
+            try:
+                job = tools_jobs.start(name, payload, configs_dir, profile)
+            except KeyError:
+                raise FileNotFoundError(f"unknown tool: {name}") from None
+            return {"id": job.id, "name": job.name, "status": job.status}
+        return guard(go)
+
+    @api.get("/tools/jobs/{job_id}")
+    def tool_status(job_id: str):
+        return guard(lambda: tools_jobs.snapshot(tools_jobs.get(job_id) or _unknown("unknown tool job")))
+
     # ── review labels (M2): persist human verdicts for training ──
     @api.post("/review/labels")
     def review_labels(payload: dict = Body(...)):
@@ -343,7 +362,6 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         return guard(go)
 
     app.include_router(api, prefix="/api/v1")
-    app.include_router(api, prefix="/api", include_in_schema=False)   # pre-v1 paths for the Studio page
     return app
 
 

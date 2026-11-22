@@ -1,3 +1,6 @@
+> **Superseded** by [plans/UI-minimal.md](plans/UI-minimal.md) (F49). The Studio this file describes was
+> removed; the rest is kept as history.
+
 # AutoEdit — Design System & GUI Spec
 
 A premium, photographer-focused UI for local-first, open-vocabulary **batch** photo editing.

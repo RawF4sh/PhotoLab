@@ -235,3 +235,22 @@ def test_recovered_share_drives_the_highlight_rules():
     g_plain, _ = rules.apply(rs, "landscape", plain, {}, {}, 1.0)
     g_rec, _ = rules.apply(rs, "landscape", rec, {}, {}, 1.0)
     assert g_rec["highlights"] < g_plain.get("highlights", 0.0) and g_rec["whites"] < g_plain.get("whites", 0.0)
+
+
+def test_recovery_keeps_the_default_headroom():
+    # The shoulder darkens the unclipped top; stats undoes it, so headroom is what the default decode had.
+    from autoedit import stats
+    from autoedit.imageio import Image, _RECOVER_KNEE as k, unshoulder
+    for x in (0.5, 0.8, 0.95, 1.0):
+        assert abs(unshoulder(float(shoulder(np.float64(x), k, 1.5)), k, 1.5) - x) < 1e-6
+    assert unshoulder(1.0, k, 1.5) == 1.0 and unshoulder(0.9, k, 1.0) == 0.9
+    default = np.full((40, 60, 3), 0.4, np.float32)
+    default[:, :12] = libraw_curve(0.85)                      # bright, unclipped sky
+    recovered = default.copy()
+    recovered[:, :12] = libraw_curve(shoulder(np.float64(0.85), k, 1.5))
+    def head(rgb, info):
+        return stats.compute(Image(rgb=rgb, decode_info=info), {})[0].headroom_ev
+    want = head(default, {})
+    assert head(recovered, {}) > want + 0.01                   # the shoulder alone would add headroom
+    assert abs(head(recovered, {"highlight": "recover", "recover_top": 1.5}) - want) < 1e-3
+    assert head(recovered, {"highlight": "clip", "recover_top": 1.5}) == head(recovered, {})

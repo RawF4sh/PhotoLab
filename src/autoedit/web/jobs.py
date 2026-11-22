@@ -8,6 +8,7 @@ isolated (one bad photo never aborts the job). Pause/resume/cancel are checked b
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -154,12 +155,25 @@ def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo
     return job
 
 
+def _note_input_dir(out_dir: str, srcs: list[str]) -> None:
+    """Write a minimal run.json (just `input_dir`) so `adjust`, `sync` and `declare` find the sources of a
+    UI batch, as they do for a CLI run. Never replaces a run.json that is there; skipped when the photos
+    come from more than one folder."""
+    path = os.path.join(out_dir, "run.json")
+    dirs = {os.path.dirname(os.path.abspath(s)) for s in srcs}
+    if len(dirs) != 1 or os.path.exists(path):
+        return
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"input_dir": dirs.pop(), "written_by": "autoedit ui"}, fh, indent=2)
+
+
 def _run(job: Job, configs_dir, profile=None) -> None:
     try:
         from .service import INFERENCE_LOCK, build_pipeline, make_cfg, mark_adjustments, photo_adjustments  # local import avoids a cycle
 
         cfg = make_cfg(job.opts, configs_dir, profile)
         os.makedirs(job.out_dir, exist_ok=True)
+        _note_input_dir(job.out_dir, [it.src for it in job.items])
         pipe = build_pipeline(cfg)       # resident model, shared with the preview endpoint
         pipe.use_mask_cache(job.out_dir)
 
