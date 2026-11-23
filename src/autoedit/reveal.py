@@ -33,6 +33,17 @@ class Kind:
 
 
 @dataclass(frozen=True)
+class Hide:
+    """[hide] of reveal.toml (F22): the default method and the numbers each method takes."""
+    method: str = "cover"
+    margin: float = 0.1
+    margin_min_px: float = 3.0
+    ring: float = 0.25
+    blocks: int = 5
+    sigma: float = 0.2
+
+
+@dataclass(frozen=True)
 class Config:
     kinds: tuple[Kind, ...]          # kinds with off = true are left out
     min_side: float
@@ -40,6 +51,7 @@ class Config:
     merge_iou: float
     subject_ratio: float
     tiles: int
+    hide: Hide = Hide()
 
 
 def load(path: str) -> Config:
@@ -58,10 +70,25 @@ def load(path: str) -> Config:
                           float(body.get("min_score", default)), bool(body.get("weak", False))))
     cfg = Config(tuple(kinds), float(chk.get("min_side", 0.006)), int(chk.get("max_findings", 30)),
                  float(chk.get("merge_iou", 0.5)), float(chk.get("subject_ratio", 0.6)),
-                 int(chk.get("tiles", 1)))
+                 int(chk.get("tiles", 1)), _hide(data.get("hide", {})))
     if len(words(cfg)) > 40:
         raise ValueError(f"{path}: more than 40 words in all (each word is a model call)")
     return cfg
+
+
+def _hide(h: dict) -> Hide:
+    d = Hide()
+    return Hide(h.get("method", d.method), float(h.get("margin", d.margin)), float(h.get("margin_min_px", d.margin_min_px)),
+                float(h.get("cover", {}).get("ring", d.ring)), int(h.get("mosaic", {}).get("blocks", d.blocks)),
+                float(h.get("blur", {}).get("sigma", d.sigma)))
+
+
+def check_hide(cfg: Config, kinds: list[str]) -> None:
+    """Refuse a kind that the check does not look for: a typo must not look like a photo that was hidden."""
+    have = [k.name for k in cfg.kinds]
+    bad = [k for k in kinds if k not in have]
+    if bad:
+        raise ValueError(f"hide: {', '.join(bad)} is not a kind the reveal check looks for; kinds: {', '.join(have)}")
 
 
 def words(cfg: Config) -> list[str]:
@@ -78,9 +105,11 @@ def _iou(a: list[float], b: list[float]) -> float:
     return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
 
 
-def findings(raw: list[RegionMask], cfg: Config, scene: str) -> tuple[list[RevealFinding], int]:
+def _find(raw: list[RegionMask], cfg: Config, scene: str,
+          keep: set[str] | None = None) -> list[tuple[RevealFinding, np.ndarray | None]]:
+    """Every finding, in kind order; with `keep` (kind names) the mask of each finding of those kinds goes with it."""
     by_name = {r.name: r for r in raw}
-    out: list[RevealFinding] = []
+    out: list[tuple[RevealFinding, np.ndarray | None]] = []
     for kind in cfg.kinds:
         cands: list[dict] = []
         for word in kind.words:
@@ -91,10 +120,11 @@ def findings(raw: list[RegionMask], cfg: Config, scene: str) -> tuple[list[Revea
             for area in blobs(rm.mask, _GRID):
                 ys, xs = np.nonzero(area)
                 x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
-                if min(x1 - x0, y1 - y0) < cfg.min_side * max(h, w):
-                    continue
+                if min(x1 - x0, y1 - y0) < cfg.min_side * max(h, w) and not (keep and kind.name in keep):
+                    continue     # a kind the user asked to hide keeps its small findings: a thin plate is still readable at full size
                 cands.append({"word": word, "score": float(rm.score), "share": float(area.sum()) / (h * w),
-                              "box": [round(float(v), 4) for v in (x0 / w, y0 / h, x1 / w, y1 / h)]})
+                              "box": [round(float(v), 4) for v in (x0 / w, y0 / h, x1 / w, y1 / h)],
+                              "mask": area if keep and kind.name in keep else None})
         merged: list[dict] = []
         for c in cands:
             for m in merged:
@@ -104,6 +134,8 @@ def findings(raw: list[RegionMask], cfg: Config, scene: str) -> tuple[list[Revea
                         m["box"], m["share"] = c["box"], c["share"]
                     if c["score"] > m["score"]:
                         m["score"], m["word"] = c["score"], c["word"]
+                    if m["mask"] is not None:
+                        m["mask"] = m["mask"] | c["mask"]     # both areas are hidden, not only the larger one
                     break
             else:
                 merged.append(dict(c))
@@ -111,10 +143,22 @@ def findings(raw: list[RegionMask], cfg: Config, scene: str) -> tuple[list[Revea
         subj = 0.0
         if scene == "people" and kind.name in ("people", "face") and merged:
             subj = merged[0]["share"] * cfg.subject_ratio
-        out += [RevealFinding(kind=kind.name, label=kind.label, word=c["word"], score=round(c["score"], 4), box=c["box"],
-                              share=round(c["share"], 6), weak=kind.weak,
-                              subject=bool(subj) and c["share"] >= subj) for c in merged]
+        out += [(RevealFinding(kind=kind.name, label=kind.label, word=c["word"], score=round(c["score"], 4), box=c["box"],
+                               share=round(c["share"], 6), weak=kind.weak,
+                               subject=bool(subj) and c["share"] >= subj), c["mask"]) for c in merged]
+    return out
+
+
+def findings(raw: list[RegionMask], cfg: Config, scene: str) -> tuple[list[RevealFinding], int]:
+    out = [f for f, _ in _find(raw, cfg, scene)]
     return out[:cfg.max_findings], max(0, len(out) - cfg.max_findings)
+
+
+def hide_candidates(raw: list[RegionMask], cfg: Config, scene: str,
+                    kinds: list[str]) -> list[tuple[RevealFinding, np.ndarray]]:
+    """Every finding of the named kinds with its mask (at the analysis size), beyond max_findings too:
+    a plate that the report left out as "and 12 more" is still hidden."""
+    return [(f, m) for f, m in _find(raw, cfg, scene, set(kinds)) if m is not None]
 
 
 def report(raw: list[RegionMask], cfg: Config, scene: str, can_find: bool, source: str | None,
@@ -139,9 +183,13 @@ def summary(reports: list[RevealReport]) -> dict:
             c = file.setdefault(group, {"source": 0, "export": 0})
             c["source"] += bool(where.get("source"))
             c["export"] += bool(where.get("export"))
-    return {"picture": "checked" if any(r.picture == "checked" for r in reports) else "not_run",
-            "photos": len(reports), "with_findings": sum(1 for r in reports if r.findings),
-            "by_kind": dict(by_kind), "file": file}
+    out = {"picture": "checked" if any(r.picture == "checked" for r in reports) else "not_run",
+           "photos": len(reports), "with_findings": sum(1 for r in reports if r.findings),
+           "by_kind": dict(by_kind), "file": file}
+    hid = Counter(h.kind for r in reports for h in r.hidden)
+    if hid:     # F22: only a run that hid something has the block
+        out["hidden"] = {"regions": sum(hid.values()), "photos": sum(1 for r in reports if r.hidden), "by_kind": dict(hid)}
+    return out
 
 
 _GROUPS = {"gps": "GPS position", "serial": "serial numbers", "names": "names", "time": "capture time",

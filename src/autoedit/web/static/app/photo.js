@@ -1,9 +1,12 @@
 // Photo screen: preview, hold to compare, marks, chips, Masks, How it was done, Try it yourself, Save this photo.
 // Ported from the Lab (lab.html, F38); request bodies are the Lab's. Text is never parsed as markup.
-import { el, api, state, store, nice, thumbUrl, go, toast, getSchema, setBar, backButton, gearButton } from './main.js';
+import { el, api, state, store, nice, thumbUrl, go, toast, getSchema, setBar, backButton, gearButton, openSheet } from './main.js';
 import { runOptions } from './settings.js';
 import { runTool } from './tools.js';
 import { exportsDir } from './share.js';
+import { getPhoto, updatePhoto, undoPhoto, redoPhoto, canUndo, canRedo, subscribeProject, persistProject } from './project.js';
+import { createPhotoTools } from './photo_tools.js';
+import { openPhotoPresets } from './presets.js';
 
 const MAX_TEXT = 2000, MAX_MARKS = 20, MIN_SIDE = 0.01;
 const DATA = /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/, PNG = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
@@ -11,8 +14,9 @@ const SAY = 'Say what to change, e.g. warm the grass a little';
 const SAY_OVAL = 'What should change in the oval? e.g. brighten this a little';
 const STATUS_WORD = { applied: 'applied', clamped: 'held back in part', blocked: 'held back' };
 
-const over = Object.create(null);   // per photo path: {look, strength}; kept while the page is open
 let v = null;                       // the open screen, null when away
+const previewSession = crypto.randomUUID();
+let previewRevision = 0;             // one tab's later photo invalidates queued earlier work
 
 /* ---- small helpers --------------------------------------------------------------------------- */
 const isMark = e => e !== null && typeof e === 'object';
@@ -46,7 +50,8 @@ const okMark = x => isMark(x) && Array.isArray(x.box) && x.box.length === 4
   && x.box[2] - x.box[0] >= MIN_SIDE && x.box[3] - x.box[1] >= MIN_SIDE && (x.kind === 'auto' || x.kind === 'area')
   && typeof x.edit === 'string' && x.edit.trim() !== '' && x.edit.length <= 300;
 export function loadEntries(path) {   // only what the server would accept: 20 marks, 2000 characters of text
-  const l = store.get('entries', {})[path]; if (!Array.isArray(l)) return [];
+  const photo = getPhoto(path), legacy = store.get('entries', {})[path];
+  const l = photo.entries === undefined ? legacy : photo.entries; if (!Array.isArray(l)) return [];
   const ok = []; let marks = 0;
   for (const e of l) {
     const s = typeof e === 'string' && e.trim() !== '' && e.length <= MAX_TEXT;
@@ -55,30 +60,45 @@ export function loadEntries(path) {   // only what the server would accept: 20 m
     if (s ? textOf([...ok, c]).length > MAX_TEXT : ++marks > MAX_MARKS) continue;
     ok.push(c);
   }
+  if (photo.entries === undefined && ok.length) updatePhoto(path, { entries: ok }, { history: false });
   return ok;
 }
-function saveEntries() {
-  const all = { ...store.get('entries', {}) };
-  if (v.list.length) all[v.file.path] = v.list; else delete all[v.file.path];
-  store.set('entries', all);
-}
+function saveEntries() { updatePhoto(v.file.path, { entries: v.list }); }
 
 /* ---- the request ----------------------------------------------------------------------------- */
 function options() {   // the Folder's merge, then this photo's own look and strength
-  const o = runOptions(), p = over[v.file.path] || {};
+  const o = runOptions(), p = getPhoto(v.file.path);
   if (p.look !== undefined) { if (p.look) o.look = p.look; else delete o.look; }
-  if (p.strength !== undefined) o.intensity = p.strength;
+  if (p.intensity !== undefined) o.intensity = p.intensity;
+  if (p.reference !== undefined) { if (p.reference) o.reference = p.reference; else delete o.reference; }
+  if (p.reference_strength !== undefined) o.reference_strength = p.reference_strength;
+  if (p.local_only) { o.local_only = true; o.decider = 'rules'; o.allow_cloud = false; }
   if (p.neutral) o.neutral = p.neutral;   // F34: X,Y as shares of the frame
+  Object.assign(o, hideRequest(v.file.path) || {});
   return o;
 }
+// F22: what the Hide control asked for on one photo: the whole list (the Settings kinds and this photo's) and the method.
+// null when nothing was asked on this photo, so the run's own options apply. The Folder's batch sends it too.
+export function hideRequest(path) {
+  const p = getPhoto(path); if (!(p.hide || []).length && !p.hideMethod) return null;
+  const r = {}, kinds = [...new Set([...settingKinds(runOptions()), ...(p.hide || [])])];
+  if (kinds.length) r.hide = kinds;
+  if (p.hideMethod) r.hide_method = p.hideMethod;
+  return r;
+}
+const settingKinds = o => String(Array.isArray(o.hide) ? o.hide.join(',') : o.hide || '').split(/[,\s]+/).filter(Boolean);
 function previewBody() {
   const b = { file: v.file.path, ...options() }, t = textOf(v.list), m = marksOf(v.list);
   if (t) b.photo_edit = t;
   if (m.length) b.photo_marks = m;
+  const own = getPhoto(v.file.path), sliders = v.draftSliders || (own.sliders === undefined ? state.folderSliders : own.sliders);
+  for (const key of ['region_settings', 'mask_refinements', 'photo_geometry']) if (own[key] !== undefined) b[key] = own[key];
+  if (own.base) b.photo_base = own.base;
+  if (sliders && Object.keys(sliders).length) b.photo_settings = { ...sliders };
   return b;
 }
 const BODIES = {
-  edit: () => previewBody(),
+  edit: () => ({ ...previewBody(), ...(v.unframed ? { preview_unframed: true } : {}) }),
   how: () => ({ ...previewBody(), steps: true }),
   try: () => ({ ...previewBody(), try: { sliders: { ...v.sliders }, compare: v.compare } }),
 };
@@ -87,20 +107,33 @@ const SHOW = {
   how: j => { v.how = j; v.step = 0; if (v.view === 'how') paintHow(); paintMasks(); },
   try: j => { v.tried = j; if (v.view === 'try') paintTry(); },
 };
-async function once(kind) {   // per view: one request in flight, the latest state wins
-  const me = v, f = me.flights[kind] ||= { busy: false, again: false, shown: '' }, key = JSON.stringify(BODIES[kind]());
-  if (key === f.shown) return;
-  if (f.busy) { f.again = true; return; }
-  f.busy = true; setBusy(1);
+async function once(kind) {   // cancel obsolete client work; never paint a response for an old edit/photo
+  if (!v) return;
+  const me = v, f = me.flights[kind] ||= {}, body = BODIES[kind](), key = JSON.stringify(body);
+  if ((key === f.shown && key === f.painted && !f.busy) || (f.busy && key === f.key)) return;
+  if (f.controller) f.controller.abort();
+  const controller = new AbortController();
+  f.controller = controller; f.key = key; f.busy = true; setBusy(1);
+  const current = () => v === me && f.controller === controller && !controller.signal.aborted && JSON.stringify(BODIES[kind]()) === key;
   try {
-    const j = await api('/preview', JSON.parse(key));
-    if (v === me && JSON.stringify(BODIES[kind]()) === key) { f.shown = key; SHOW[kind](j); }
-  } catch (e) { if (v === me && JSON.stringify(BODIES[kind]()) === key) say(e.message, 'bad'); }
-  if (v !== me) return;
-  f.busy = false; setBusy(-1);
-  if (f.again) { f.again = false; once(kind); }
+    // A cloud edit gets one render: the quick pass must not double its model calls or cost.
+    const edges = kind === 'edit' && body.decider !== 'llm' ? [640, 2560] : [2560];
+    for (const edge of edges) {
+      const j = await api('/preview', { ...body, preview_edge: edge, preview_session: previewSession + '_' + kind, preview_revision: ++previewRevision }, { signal: controller.signal });
+      if (!current()) return;
+      SHOW[kind](j); f.painted = key;
+      if (kind === 'edit') manualControls(j.editor && j.editor.sliders);
+      if (edge === 640 && v.view === kind) say('Quick preview ready · refining detail…');
+    }
+    f.shown = key;
+  } catch (e) { if (e.name !== 'AbortError' && current()) say(e.message, 'bad'); }
+  finally {
+    if (f.controller === controller) f.busy = false;
+    if (v === me) setBusy(-1);
+  }
 }
-function refresh() { once(v.view); if (v.masks && v.view !== 'how') once('how'); }
+function refresh() { if (!v) return; once(v.view); if (v.masks && v.view !== 'how') once('how'); }
+function schedulePreview() { clearTimeout(v.previewTimer); v.previewTimer = setTimeout(refresh, 160); }
 const curAnswer = () => v[{ edit: 'answer', how: 'how', try: 'tried' }[v.view]];
 
 /* ---- status and busy ------------------------------------------------------------------------- */
@@ -139,7 +172,8 @@ function title() {
 function fit() {
   if (!v) return;
   const { after, canvas, frame } = v.u, w = after.naturalWidth, h = after.naturalHeight; if (!w || !h) return;
-  const s = Math.min((canvas.clientWidth - 32) / w, (canvas.clientHeight - 32) / h);
+  const s = v.zoom ? 1 : Math.min((canvas.clientWidth - 32) / w, (canvas.clientHeight - 32) / h);
+  canvas.classList.toggle('zoomed', v.zoom);
   frame.style.width = Math.max(1, Math.floor(w * s)) + 'px'; frame.style.height = Math.max(1, Math.floor(h * s)) + 'px';
 }
 function setImg(img, s) { const p = pic(s); if (p) img.src = p; }
@@ -148,6 +182,9 @@ function showing() {
   const engine = v.view === 'try' && v.compare && v.which === 'engine' && v.tried && v.tried.compare;
   const s = v.hold ? 'before' : engine ? 'engine' : 'after', u = v.u;
   u.frame.dataset.showing = s;
+  u.frame.classList.toggle('split', v.split && !v.hold && !engine);
+  u.frame.style.setProperty('--split', v.splitAt + '%');
+  if (u.splitControl) u.splitControl.hidden = !v.split;
   u.tag.hidden = s === 'after';
   u.tag.textContent = s === 'before' ? (v.view === 'how' ? 'Before this step' : 'Original') : "AutoEdit's edit";
   u.orig.setAttribute('aria-pressed', String(v.hold));
@@ -161,7 +198,7 @@ function tint(list, color) {
     d.style.backgroundColor = color; d.style.maskImage = u; d.style.webkitMaskImage = u; t.append(d);
   });
 }
-function paintMasks() { if (v.masks && v.how) tint(v.how.mask_overlays, 'var(--accent)'); else tint([]); }
+function paintMasks() { const masks = v.unframed ? v.answer : v.how; if (v.masks && masks) tint(masks.mask_overlays, 'var(--accent)'); else tint([]); }
 function placeOval(n, box) {
   n.style.left = box[0] * 100 + '%'; n.style.top = box[1] * 100 + '%';
   n.style.width = (box[2] - box[0]) * 100 + '%'; n.style.height = (box[3] - box[1]) * 100 + '%';
@@ -185,6 +222,7 @@ function setPending(box, stay) {   // stay: the keyboard is still moving the ova
   v.u.say.placeholder = SAY_OVAL; if (!stay) v.u.say.focus();
 }
 function setMarking(on) {
+  if (v.tools && (on || v.tools.mode === 'mark')) v.tools.setMode(on ? 'mark' : 'none');
   v.marking = on; v.u.mark.setAttribute('aria-pressed', String(on));
   if (on && v.picking) setPicking(false);
   v.u.frame.classList.toggle('marking', v.marking || v.picking);
@@ -192,22 +230,22 @@ function setMarking(on) {
 }
 /* ---- the grey point (F34) -------------------------------------------------------------------- */
 function paintNeutral() {
-  const p = (over[v.file.path] || {}).neutral, u = v.u;
-  u.greyChip.hidden = u.greyDot.hidden = !p;
+  const p = getPhoto(v.file.path).neutral, u = v.u;
+  u.greyChip.hidden = !p; u.greyDot.hidden = !p || !v.unframed || (v.tools && !v.tools.ready);
   if (p) { u.greyDot.style.left = p[0] * 100 + '%'; u.greyDot.style.top = p[1] * 100 + '%'; }
 }
 function setNeutral(p) {
-  const o = over[v.file.path] ||= {};
-  if (p) o.neutral = p; else delete o.neutral;
-  paintNeutral(); refresh();
+  const base = getPhoto(v.file.path).base;
+  updatePhoto(v.file.path, { neutral: p || undefined, ...(p && base ? { base: { ...base, wb: null, wb_bias: [0, 0] } } : {}) });
 }
 function setPicking(on) {
+  if (v.tools && (on || v.tools.mode === 'neutral')) v.tools.setMode(on ? 'neutral' : 'none');
   v.picking = on; v.u.grey.setAttribute('aria-pressed', String(on));
   if (on && v.marking) setMarking(false);
   v.u.frame.classList.toggle('marking', v.marking || v.picking);
 }
 function wireFrame() {   // drag draws an oval while marking; otherwise holding the photo shows the original
-  const f = v.u.frame; let a = null;
+  const f = v.u.frame; let a = null, pan = null;
   const pt = e => {
     const r = f.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0)) return null;
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
@@ -215,28 +253,37 @@ function wireFrame() {   // drag draws an oval while marking; otherwise holding 
   const boxOf = (p, q) => [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
   f.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
+    if ((v.marking || v.picking) && v.tools && !v.tools.ready) { e.preventDefault(); say('Opening the uncropped photo. Place your mark when it is ready.'); return; }
     if (v.picking) {
       const p = pt(e); if (p) { e.preventDefault(); setNeutral(p.map(n => Math.round(n * 1e4) / 1e4)); setPicking(false); }
       return;
     }
-    if (!v.marking) { setHold(true); return; }
+    if (!v.marking) {
+      if (v.zoom) {
+        pan = { x: e.clientX, y: e.clientY, left: v.u.canvas.scrollLeft, top: v.u.canvas.scrollTop };
+        f.setPointerCapture(e.pointerId); e.preventDefault();
+      } else if (!v.split) setHold(true);
+      return;
+    }
     const p = pt(e); if (!p) return;
     e.preventDefault(); clearPending(); a = p;
     try { f.setPointerCapture(e.pointerId); } catch (_) { /* a synthetic pointer */ }
   });
   f.addEventListener('pointermove', e => {
+    if (pan) { v.u.canvas.scrollLeft = pan.left + pan.x - e.clientX; v.u.canvas.scrollTop = pan.top + pan.y - e.clientY; return; }
     if (!a) return; const q = pt(e); if (!q) return;
     placeOval(v.u.pend, boxOf(a, q)); v.u.pend.hidden = false;
   });
   f.addEventListener('pointerup', e => {
-    setHold(false); if (!a) return;
+    pan = null; setHold(false); if (!a) return;
     const q = pt(e) || a, box = boxOf(a, q).map(n => Math.round(n * 1e4) / 1e4); a = null;
     if (box[2] - box[0] < MIN_SIDE || box[3] - box[1] < MIN_SIDE) clearPending(); else setPending(box);
   });
-  f.addEventListener('pointercancel', () => { setHold(false); if (a) { a = null; clearPending(); } });
+  f.addEventListener('pointercancel', () => { pan = null; setHold(false); if (a) { a = null; clearPending(); } });
   f.addEventListener('pointerleave', () => { if (!a) setHold(false); });
   f.addEventListener('keydown', e => {   // with Mark on: Enter places an oval, arrows move it, Shift + arrows resize it, Enter confirms
     if (!v.marking || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (v.tools && !v.tools.ready) { e.preventDefault(); say('Opening the uncropped photo…'); return; }
     const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
     if (e.key !== 'Enter' && !(d && v.pending)) return;
     e.preventDefault(); e.stopPropagation();   // not the Photo's own arrow keys, which change photo
@@ -317,6 +364,7 @@ function drawChips() {
 
 /* ---- views ----------------------------------------------------------------------------------- */
 function setView(name) {
+  if (name !== 'edit' && v.tools) v.tools.setMode('none');
   const prev = v.view; v.view = name; setHold(false);
   const u = v.u;
   u.which.hidden = name !== 'try' || !(v.tried && v.tried.compare);
@@ -328,7 +376,46 @@ function paintEdit() {
   const j = v.answer, u = v.u;
   if (!j) setThumbs(); else { setImg(u.before, j.before); setImg(u.after, j.after); metaLine(j); }
   u.before.alt = 'Original'; u.after.alt = 'Edited photo'; u.engine.removeAttribute('src');
-  paintMasks(); drawChips(); showing();
+  paintMasks(); drawChips(); paintCheck(); showing(); if (j && v.tools) { v.tools.acceptPreview(j); paintNeutral(); }
+}
+
+/* ---- before you share: what the check found, and Hide (F21, F22) ------------------------------ */
+const TRACE_NOTE = 'Mosaic and blur keep a trace of what was there: a plate or text can sometimes be read back. Cover copies nothing from under the region.';
+function setHide(kind, on) {
+  const o = getPhoto(v.file.path), l = new Set(o.hide || []);
+  if (on) l.add(kind); else l.delete(kind);
+  updatePhoto(v.file.path, { hide: [...l] });
+}
+function paintCheck() {
+  const r = (v.answer || {}).reveal, box = v.u.check; box.replaceChildren(); box.hidden = !r;
+  if (!r) return;
+  box.append(el('h3', null, 'Before you share'));
+  if (r.picture !== 'checked') {
+    box.append(el('p', { class: 'fine' }, 'The picture was not checked: it needs SAM 3. File information was.'));
+    if ((r.hide_note || '').length) box.append(el('p', { class: 'warn' }, r.hide_note));
+    return;
+  }
+  const o = getPhoto(v.file.path), fromSettings = new Set(settingKinds(runOptions())), mine = new Set(o.hide || []);
+  const kinds = [...new Set(r.findings.map(f => f.kind))];
+  if (!kinds.length) box.append(el('p', { class: 'fine' }, 'Nothing on the list was found. That is not a statement that the photo is safe to share.'));
+  const ul = el('ul', { class: 'pchips' });
+  kinds.forEach(k => {
+    const fs = r.findings.filter(f => f.kind === k), label = fs[0].label || k, on = fromSettings.has(k) || mine.has(k);
+    const b = button(on ? 'Show again' : 'Hide', () => setHide(k, !on), { class: 'line', 'aria-pressed': String(on), disabled: fromSettings.has(k),
+      title: fromSettings.has(k) ? 'Hidden by your Settings' : '' });
+    ul.append(el('li', { class: 'pchip' }, el('div', { class: 'row' },
+      el('span', { class: 'txt' }, label + (fs.length > 1 ? ' (' + fs.length + ')' : '') + (fs[0].weak ? ' · may miss' : '')), b)));
+  });
+  if (kinds.length) box.append(ul);
+  if (r.more) box.append(el('p', { class: 'fine' }, 'and ' + r.more + ' more not listed; Hide covers them too.'));
+  (r.hidden || []).forEach(h => box.append(el('p', { class: 'fine' }, 'Hidden in the saved picture: ' + (h.label || h.kind) + ' · ' + h.method + (h.trace ? ' · keeps a trace' : ''))));
+  if (r.hide_note) box.append(el('p', { class: 'warn' }, r.hide_note));
+  if (kinds.length) {
+    const sel = el('select', { id: 'hidemethod', on: { change: e => { updatePhoto(v.file.path, { hideMethod: e.target.value }); } } },
+      ...['cover', 'mosaic', 'blur'].map(m => el('option', { value: m }, nice(m))));
+    sel.value = o.hideMethod || state.settings.hide_method || 'cover';
+    box.append(el('div', { class: 'field' }, el('label', { htmlFor: 'hidemethod' }, 'How to hide'), sel), el('p', { class: 'fine' }, TRACE_NOTE));
+  }
 }
 
 /* ---- how it was done ------------------------------------------------------------------------- */
@@ -429,13 +516,16 @@ function paintCompare(c) {
 
 /* ---- save ------------------------------------------------------------------------------------ */
 async function save() {
-  const me = v, b = previewBody(), u = me.u; if (u.save.disabled) return;
+  if (v.draftSliders) { const sliders = Object.fromEntries(Object.entries(v.draftSliders).filter(([, value]) => value)); v.draftSliders = null; updatePhoto(v.file.path, { sliders }); }
+  const me = v, b = previewBody(), u = me.u, savedState = JSON.stringify({ photo: getPhoto(v.file.path), run: runOptions() }); if (u.save.disabled) return;
   u.save.disabled = true; u.saved.className = 'fine'; u.saved.textContent = 'Saving…'; u.saved.removeAttribute('title');
   try {
     const j = await api('/run-one', b), out = String(j.image_out || ''), name = out.split(/[\\/]/).pop() || 'the photo';
     toast('Saved ' + name + ' in AutoEdit Exports');
-    me.file.exported = out; if (v === me) copyState();
-    if (v === me) { u.saved.textContent = 'Saved to ' + (out || 'AutoEdit Exports'); u.saved.title = out; }
+    me.file.exported = out; me.file.status = (j.result || {}).needs_review ? 'review' : 'finished';
+    me.file.dirty = savedState !== JSON.stringify({ photo: getPhoto(me.file.path), run: runOptions() });
+    await persistProject(); if (v === me) copyState();
+    if (v === me) { u.saved.textContent = me.file.dirty ? 'Saved the earlier version. New changes still need saving.' : 'Saved to ' + (out || 'AutoEdit Exports'); u.saved.title = out; }
   } catch (e) { if (v === me) { u.saved.className = 'bad'; u.saved.textContent = e.message; } else toast(e.message); }
   if (v === me) u.save.disabled = false;
 }
@@ -443,57 +533,231 @@ async function save() {
 /* ---- copy to similar ------------------------------------------------------------------------- */
 // The sync tool reads the exported file's sidecar, so it needs this photo saved first. It holds the server's slow-job lock,
 // so nothing runs until the button is pressed: the first press counts the similar photos, the Copy it offers does the copy.
-function copyState() { const c = v.u.copy, ok = !!v.file.exported; c.disabled = !ok; c.title = ok ? '' : 'Save this photo first'; }
+function copyState() { const c = v.u.copy, ok = !!v.file.exported && !v.file.dirty; c.disabled = !ok; c.title = ok ? '' : 'Save this photo’s current changes first'; }
 async function copyAsk() {
-  const me = v, u = me.u, target = me.file.exported; if (!target) return;
+  const me = v, u = me.u, target = me.file.exported; if (!target || me.file.dirty) return;
   u.copy.disabled = true; u.copyRes.textContent = 'Looking for similar photos…';
   try {
-    const n = ((await runTool('sync', { target, dry_run: true })).targets || []).length;
+    const report = await runTool('sync', { target, dry_run: true }), candidates = report.targets || [];
     if (v !== me) return;
-    u.copyRes.replaceChildren(...(n ? [el('div', null, 'Copy to ' + n + ' similar ' + (n === 1 ? 'photo' : 'photos') + '?'),
-      el('div', { class: 'btnrow' }, button('Copy', () => copyNow(target), { class: 'line' }), button('Not now', () => u.copyRes.replaceChildren(), { class: 'link' }))]
-      : [el('div', null, 'No similar photos found.')]));
+    u.copyRes.textContent = candidates.length ? '' : 'No similar photos found.';
+    if (candidates.length) openSheet('Copy to similar photos', (body, close) => {
+      const selected = new Set(candidates.map(t => t.sidecar)), categories = new Set(['tone', 'color', 'white_balance', 'detail']);
+      const list = el('div', { class: 'editor-copy-list' }), count = el('p', { class: 'fine', role: 'status' });
+      const match = el('input', { type: 'checkbox', checked: true });
+      const apply = button('Copy changes', () => {
+        const opts = { targets: [...selected], categories: [...categories], match_exposure: match.checked };
+        close(); copyNow(target, opts);
+      }, { class: 'primary' });
+      const paint = () => { count.textContent = selected.size + ' of ' + candidates.length + ' photos selected'; apply.disabled = !selected.size || (!categories.size && !match.checked); };
+      const checks = [];
+      for (const t of candidates) {
+        const input = el('input', { type: 'checkbox', checked: true, on: { change: e => { if (e.target.checked) selected.add(t.sidecar); else selected.delete(t.sidecar); paint(); } } });
+        checks.push([input, t.sidecar]); list.append(el('label', null, input, ' ' + (t.image || t.sidecar).split(/[\\/]/).pop()));
+      }
+      const types = el('fieldset', { class: 'editor-copy-types' }, el('legend', null, 'What to copy'));
+      for (const [key, label] of [['tone', 'Light and tone'], ['color', 'Color'], ['white_balance', 'White balance'], ['detail', 'Detail']]) {
+        types.append(el('label', null, el('input', { type: 'checkbox', checked: true, on: { change: e => { if (e.target.checked) categories.add(key); else categories.delete(key); paint(); } } }), ' ' + label));
+      }
+      match.addEventListener('change', paint);
+      body.append(el('p', { class: 'fine' }, 'Copy selected adjustments from the saved photo. Each photo keeps its own automatic edit. Marks stay on their original photo.'),
+        types, el('label', { class: 'editor-copy-match' }, match, ' Match exposure to this photo'),
+        el('div', { class: 'editor-history' }, button('Select all', () => { checks.forEach(([c, p]) => { c.checked = true; selected.add(p); }); paint(); }, { class: 'link' }),
+          button('Clear selection', () => { selected.clear(); checks.forEach(([c]) => { c.checked = false; }); paint(); }, { class: 'link' })),
+        count, list, apply); paint();
+    });
   } catch (e) { if (v === me) u.copyRes.textContent = e.message; }
-  if (v === me) u.copy.disabled = false;
+  if (v === me) copyState();
 }
-async function copyNow(target) {
-  const me = v, u = me.u;
+const photoValues = value => Object.fromEntries(Object.entries(value || {}).filter(([key]) => !['history', 'future'].includes(key)));
+const photoSignature = value => JSON.stringify(photoValues(value));
+const exportSidecar = path => String(path || '').replace(/\.[^./\\]+$/, '.autoedit.json');
+function copiedPatch(result, previous) {
+  return { base: { adjustments: (result.adjustments || []).filter(a => a.scope === 'photo' && !String(a.target).startsWith('mark:')),
+    selected_regions: result.selected_regions || [], exposure_bias: result.exposure_bias || 0, wb: result.wb || null, wb_bias: result.wb_bias || [0, 0] }, sliders: {}, region_settings: {},
+    entries: (previous.entries || []).filter(okMark), neutral: undefined };
+}
+const copiedFile = result => ({ dirty: false, status: result.needs_review ? 'review' : 'finished', ...(result.image ? { out: result.image } : {}) });
+async function rememberCopied(results, dir, recipients) {
+  const changes = [], summary = { kept: 0, changed: 0, outside: 0 };
+  for (const result of results || []) {
+    if (result.status !== 'synced') continue;
+    const known = recipients.find(({ file }) => file.exported && (file.exported === result.image || exportSidecar(file.exported) === result.sidecar));
+    if (!known) { summary.outside++; continue; }
+    changes.push({ ...known, result, patch: copiedPatch(result, known.photo) });
+  }
+  if (!changes.length) return summary;
+  const applyOpen = async () => {
+    for (const item of changes) {
+      const file = state.files.find(f => f.path === item.file.path); if (!file) { summary.outside++; continue; }
+      if (photoSignature(getPhoto(file.path)) !== photoSignature(item.photo)) { file.dirty = true; summary.changed++; continue; }
+      updatePhoto(file.path, item.patch);
+      const saved = copiedFile(item.result); file.dirty = false; file.status = saved.status; if (saved.out) file.exported = saved.out;
+      summary.kept++;
+    }
+    await persistProject();
+  };
+  if (state.dir === dir) { await applyOpen(); return summary; }
+  // A copy can outlive its screen. Update the original saved project without touching a
+  // different folder's in-memory work, then reflect it if that folder reopened meanwhile.
+  const saved = (await api('/project?dir=' + encodeURIComponent(dir))).project;
+  if (state.dir === dir) { await applyOpen(); return summary; }
+  if (!saved) throw new Error('Copied files were saved, but their project could not be reopened.');
+  saved.photos ||= {}; saved.files ||= {};
+  for (const item of changes) {
+    const previous = saved.photos[item.file.path] || {};
+    if (photoSignature(previous) !== photoSignature(item.photo)) { summary.changed++; continue; }
+    const after = { ...photoValues(previous), ...item.patch };
+    for (const key of Object.keys(after)) if (after[key] === undefined) delete after[key];
+    saved.photos[item.file.path] = { ...after, history: [...(previous.history || []), photoValues(previous)].slice(-30), future: [] };
+    saved.files[item.file.path] = { ...(saved.files[item.file.path] || {}), ...copiedFile(item.result) };
+    summary.kept++;
+  }
+  await api('/project', { dir, project: saved });
+  if (state.dir === dir) { summary.kept = 0; summary.changed = 0; await applyOpen(); }
+  return summary;
+}
+async function copyNow(target, selection = {}) {
+  const me = v, u = me.u, dir = state.dir;
+  const recipients = state.files.map(file => { loadEntries(file.path); return { file: { path: file.path, exported: file.exported }, photo: getPhoto(file.path) }; });
   u.copy.disabled = true; u.copyRes.textContent = 'Working…';
   try {
-    const r = await runTool('sync', { target, dry_run: false }, m => { if (v === me) u.copyRes.textContent = m; });
-    if (v === me) u.copyRes.replaceChildren(...(r.lines || ['Done.']).map(l => el('div', null, String(l))));
-  } catch (e) { if (v === me) u.copyRes.textContent = e.message; }
-  if (v === me) u.copy.disabled = false;
+    await persistProject();
+    const r = await runTool('sync', { target, dry_run: false, ...selection }, m => { if (v === me) u.copyRes.textContent = m; });
+    const imported = await rememberCopied(r.targets, dir, recipients), lines = r.lines || ['Done.'];
+    if (imported.kept) lines.push('Copied adjustments kept in the project for ' + imported.kept + ' photos.');
+    if (imported.changed) lines.push(imported.changed + ' newer photo drafts were kept. Their copied exports are saved separately.');
+    if (imported.outside) lines.push(imported.outside + ' copied files are outside this open project.');
+    if (v === me) u.copyRes.replaceChildren(...lines.map(l => el('div', null, String(l))));
+    else toast(lines[lines.length - 1]);
+  } catch (e) { if (v === me) u.copyRes.textContent = e.message; else toast(e.message); }
+  if (v === me) copyState();
+}
+
+/* ---- editable controls and project history ------------------------------------------------- */
+function syncEditControls() {
+  if (!v) return;
+  const p = getPhoto(v.file.path), u = v.u;
+  if (u.look) u.look.value = p.look === undefined ? state.look : p.look;
+  if (u.strength) { u.strength.value = p.intensity === undefined ? (state.strength === null ? u.defaultStrength : state.strength) : p.intensity; u.paintStrength(); }
+  for (const [op, c] of Object.entries(u.manualInputs || {})) { c.input.value = (p.sliders === undefined ? state.folderSliders || {} : p.sliders)[op] || 0; c.paint(); }
+  if (u.copiedChip) u.copiedChip.hidden = !p.base;
+  if (u.manualNote) u.manualNote.textContent = p.base ? 'Additional adjustments to the copied edit. These are included when you save or edit the batch.' : 'Adjustments to AutoEdit’s result. These are included when you save or edit the batch.';
+  if (u.undo) u.undo.disabled = !canUndo(v.file.path);
+  if (u.redo) u.redo.disabled = !canRedo(v.file.path);
+  const ref = options().reference;
+  if (u.referenceCaption) u.referenceCaption.textContent = ref ? String(ref).split(/[\\/]/).pop() : 'No reference selected';
+  if (u.referenceThumb) { u.referenceThumb.hidden = !ref; if (ref) u.referenceThumb.src = thumbUrl(ref, 320); }
+  if (u.referenceRemove) u.referenceRemove.disabled = !ref;
+  if (u.referenceStrength) { u.referenceStrength.hidden = !ref; u.referenceStrength.value = p.reference_strength === undefined ? (state.settings.reference_strength === undefined ? u.defaultReferenceStrength : state.settings.reference_strength) : p.reference_strength; }
+}
+function manualControls(defs) {
+  if (!v || !Array.isArray(defs) || !defs.length || v.u.manualInputs) return;
+  const me = v, u = me.u; u.manualInputs = {}; u.manual.replaceChildren();
+  for (const s of defs) {
+    const id = 'edit_' + s.op, val = el('output', { class: 'num', htmlFor: id });
+    const input = el('input', { type: 'range', id, min: s.min, max: s.max, step: s.step, title: s.does || '' });
+    const paint = () => { const t = +input.value ? fmtVal(s.op, +input.value) : getPhoto(v.file.path).base ? 'No added change' : 'Auto'; val.textContent = t; input.setAttribute('aria-valuetext', t); };
+    input.addEventListener('input', () => {
+      paint(); v.draftSliders = { ...(getPhoto(v.file.path).sliders === undefined ? state.folderSliders || {} : getPhoto(v.file.path).sliders), [s.op]: +input.value }; schedulePreview();
+    });
+    input.addEventListener('change', () => {
+      const sliders = { ...(getPhoto(v.file.path).sliders === undefined ? state.folderSliders || {} : getPhoto(v.file.path).sliders) }, amount = +input.value;
+      if (amount) sliders[s.op] = amount; else delete sliders[s.op];
+      v.draftSliders = null; updatePhoto(v.file.path, { sliders });
+    });
+    u.manualInputs[s.op] = { input, paint };
+    u.manual.append(el('div', { class: 'sl' }, el('div', { class: 'row' },
+      el('label', { htmlFor: id }, s.op === 'saturation' ? 'Color' : s.name || nice(s.op)), val), input));
+  }
+  syncEditControls();
+}
+function historyMove(redo = false) { if (redo ? redoPhoto(v.file.path) : undoPhoto(v.file.path)) v.u.saved.textContent = 'Changes ready. Save to update the exported photo.'; }
+function resetPhoto() {
+  updatePhoto(v.file.path, { look: undefined, intensity: undefined, neutral: undefined, reference: undefined,
+    reference_strength: undefined, base: undefined, sliders: undefined, entries: [], hide: undefined, hideMethod: undefined,
+    region_settings: undefined, mask_refinements: undefined, photo_geometry: undefined, local_only: undefined });
+}
+function chooseLooks() {
+  const me = v, names = [...me.u.look.options].map(o => o.value).filter(Boolean); if (!names.length) return;
+  let page = 0, controller;
+  openSheet('Choose a look', (body, close) => {
+    const note = el('p', { class: 'fine', role: 'status' }), grid = el('div', { class: 'editor-looks' });
+    const prev = button('Previous looks', () => { page--; render(); }, { class: 'line' });
+    const next = button('More looks', () => { page++; render(); }, { class: 'line' });
+    const render = async () => {
+      if (controller) controller.abort(); controller = new AbortController(); me.lookController = controller;
+      const current = controller, picks = names.slice(page * 6, page * 6 + 6);
+      prev.disabled = page === 0; next.disabled = (page + 1) * 6 >= names.length;
+      note.textContent = 'Rendering these looks on your photo…'; grid.replaceChildren();
+      const tiles = new Map();
+      for (const name of picks) {
+        const img = el('img', { alt: '', src: thumbUrl(me.file.thumb, 320) });
+        const tile = button('', () => { controller.abort(); updatePhoto(me.file.path, { look: name }); close(); },
+          { 'aria-label': 'Use ' + nice(name), 'aria-pressed': String((getPhoto(me.file.path).look === undefined ? state.look : getPhoto(me.file.path).look) === name) });
+        tile.append(img, el('span', null, nice(name))); grid.append(tile); tiles.set(name, img);
+      }
+      try {
+        const request = previewBody(); delete request.export;
+        const result = await api('/variants', { ...request, variants: picks.map(name => ({ name, look: name })) }, { signal: current.signal });
+        if (v !== me || current !== controller || !grid.isConnected) return;
+        for (const item of result.variants || []) { const img = tiles.get(item.name); if (img && pic(item.after)) img.src = item.after; }
+        note.textContent = 'Looks on this photo with your adjustments. Choose one to see the full preview.';
+      } catch (e) { if (e.name !== 'AbortError' && v === me && current === controller) note.textContent = e.message; }
+    };
+    body.append(note, grid, el('div', { class: 'editor-history' }, prev, next));
+    document.getElementById('sheet').addEventListener('close', () => { if (controller) controller.abort(); }, { once: true }); render();
+  });
+}
+function referencePanel() {
+  const me = v, u = me.u;
+  u.referenceCaption = el('span', { class: 'fine' }); u.referenceThumb = el('img', { class: 'editor-reference', alt: 'Reference photo', hidden: true });
+  const choose = button('Choose reference…', async () => {
+    choose.disabled = true;
+    try { const r = await api('/pick?kind=file', {}); if (r.path && v === me) updatePhoto(me.file.path, { reference: r.path }); }
+    catch (e) { toast(e.message); }
+    finally { choose.disabled = false; }
+  }, { class: 'line' });
+  u.referenceRemove = button('Remove', () => updatePhoto(v.file.path, { reference: '' }), { class: 'link' });
+  u.defaultReferenceStrength = 0.5;
+  u.referenceStrength = el('input', { type: 'range', min: 0, max: 1, step: 0.05, 'aria-label': 'Reference strength', hidden: true,
+    on: { change: e => updatePhoto(v.file.path, { reference_strength: +e.target.value }) } });
+  getSchema().then(sc => { if (v !== me) return; const s = (sc.settings || []).find(s => s.key === 'reference_strength');
+    if (s) { u.defaultReferenceStrength = s.default; u.referenceStrength.min = s.min; u.referenceStrength.max = s.max; } syncEditControls(); }).catch(() => {});
+  return el('details', { class: 'field editor-reference-box' }, el('summary', null, 'Match a reference'),
+    u.referenceThumb, u.referenceCaption, el('div', { class: 'editor-history' }, choose, u.referenceRemove), u.referenceStrength);
 }
 
 /* ---- the panel ------------------------------------------------------------------------------- */
 function editPanel() {
   const path = v.file.path, u = v.u;
-  const setOver = patch => { over[path] = { ...over[path], ...patch }; };
-  const lookSel = el('select', { id: 'look', on: { change: e => { setOver({ look: e.target.value }); refresh(); } } }, el('option', { value: '' }, 'Default'));
-  const range = el('input', { type: 'range', id: 'strength', min: 0, max: 2, step: 0.05 });
-  const out = el('span', { class: 'value num' }), reset = button('Reset', () => {
-    delete over[path].strength; range.value = state.strength === null ? dflt : state.strength; paint(); refresh();
-  }, { class: 'link', hidden: true });
-  let dflt = 0.8;
-  const cur = () => (over[path] && over[path].strength !== undefined ? over[path].strength : state.strength === null ? dflt : state.strength);
-  const paint = () => { out.textContent = Number(range.value).toFixed(2); reset.hidden = !(over[path] && over[path].strength !== undefined); };
-  range.addEventListener('input', paint);
-  range.addEventListener('change', () => { setOver({ strength: Number(range.value) }); paint(); refresh(); });
-  range.value = cur(); paint();
+  const lookSel = u.look = el('select', { id: 'look', on: { change: e => updatePhoto(path, { look: e.target.value }) } }, el('option', { value: '' }, 'Default'));
+  const range = u.strength = el('input', { type: 'range', id: 'strength', min: 0, max: 2, step: 0.05 });
+  const out = el('span', { class: 'value num' }), reset = button('Use folder strength', () => updatePhoto(path, { intensity: undefined }), { class: 'link', hidden: true });
+  u.defaultStrength = 0.8;
+  u.paintStrength = () => { out.textContent = Number(range.value).toFixed(2); reset.hidden = getPhoto(path).intensity === undefined; };
+  range.addEventListener('input', u.paintStrength);
+  range.addEventListener('change', () => updatePhoto(path, { intensity: +range.value }));
   getSchema().then(sc => {
     if (v !== u.owner) return;
     const by = Object.fromEntries((sc.settings || []).map(s => [s.key, s]));
     (by.look && by.look.choices || []).forEach(n => lookSel.add(new Option(nice(n), n)));
-    const want = over[path] && over[path].look !== undefined ? over[path].look : state.look;
+    const want = getPhoto(path).look === undefined ? state.look : getPhoto(path).look;
     if (want && ![...lookSel.options].some(o => o.value === want)) lookSel.add(new Option(nice(want), want));
-    lookSel.value = want;
-    if (by.intensity) { range.min = by.intensity.min; range.max = by.intensity.max; dflt = by.intensity.default; }
-    range.value = cur(); paint();
+    if (by.intensity) { range.min = by.intensity.min; range.max = by.intensity.max; u.defaultStrength = by.intensity.default; }
+    syncEditControls();
   }).catch(e => toast('Settings could not be read: ' + e.message));
+  u.copiedChip = el('div', { class: 'pchip', hidden: true }, el('div', { class: 'row' }, el('span', { class: 'txt' }, 'Copied adjustments'),
+    button('Reset copied', () => updatePhoto(path, { base: undefined }), { class: 'link', title: 'Remove the copied adjustments. Undo restores them.' })));
+  u.manualNote = el('p', { class: 'fine' });
+  u.manual = el('div', { class: 'sliders' }, el('p', { class: 'fine' }, 'Adjustments appear when the preview is ready.'));
+  u.undo = button('Undo', () => historyMove(), { class: 'line', disabled: true, title: 'Undo photo change (Ctrl/Cmd + Z)' });
+  u.redo = button('Redo', () => historyMove(true), { class: 'line', disabled: true, title: 'Redo photo change (Ctrl/Cmd + Shift + Z)' });
+  const history = el('div', { class: 'editor-history' }, u.undo, u.redo, button('Reset photo', resetPhoto, { class: 'link', title: 'Use folder settings and remove this photo’s adjustments. Undo restores them.' }));
 
   u.chips = el('ul', { class: 'pchips' }); u.probs = el('div', { class: 'probs' });
   u.changes = el('div', { class: 'field' }, el('h3', null, 'Your changes'), u.chips);
+  u.check = el('div', { class: 'field', hidden: true });
   u.masksBox = el('input', { type: 'checkbox', id: 'masks', on: { change: e => {
     v.masks = e.target.checked; paintMasks(); if (v.masks) once('how'); } } });
   u.save = el('button', { type: 'button', class: 'primary', on: { click: save } }, 'Save this photo');
@@ -517,10 +781,18 @@ function editPanel() {
   const both = [rate('Good', 'keep'), rate('Not good', 'reject')];
   u.review = el('div', { class: 'field', hidden: !store.get('labels', false) }, el('h3', null, 'Is this edit good?'), el('div', { class: 'btnrow' }, ...both));
   return el('div', { class: 'panel' },
-    el('div', { class: 'field' }, el('label', { htmlFor: 'look' }, 'Look'), lookSel),
+    history,
+    button('My presets', () => openPhotoPresets({
+      getOptions: () => ({ look: options().look || '', intensity: options().intensity === undefined ? u.defaultStrength : options().intensity,
+        sliders: getPhoto(path).sliders === undefined ? state.folderSliders || {} : getPhoto(path).sliders }),
+      onApply: settings => { if (v === u.owner) updatePhoto(path, settings); },
+    }), { class: 'line' }),
+    el('div', { class: 'field' }, el('label', { htmlFor: 'look' }, 'Look'), lookSel, button('Compare looks…', chooseLooks, { class: 'line' })),
     el('div', { class: 'field' }, el('div', { class: 'row' }, el('label', { htmlFor: 'strength' }, 'Strength'), out, reset), range),
-    el('div', { class: 'field' }, u.grey, u.greyChip),
-    u.changes, u.probs,
+    el('div', { class: 'field' }, el('h3', null, 'Adjust this photo'), u.copiedChip, u.manualNote, u.manual),
+    el('div', { class: 'field' }, u.grey, u.greyChip), referencePanel(),
+    ...v.tools.panels,
+    u.changes, u.probs, u.check,
     u.copy, u.copyRes,
     el('div', { class: 'field' }, nav('How it was done', 'how'), nav('Try it yourself', 'try'),
       el('label', { class: 'check' }, u.masksBox, ' Masks')),
@@ -553,8 +825,36 @@ function tryPanel() {
     el('p', { class: 'fine' }, "Saving keeps AutoEdit's edit with your sentences and marks, not these sliders."));
 }
 
+/* ---- browsing and comparison ---------------------------------------------------------------- */
+function filmstrip() {
+  const strip = el('nav', { class: 'editor-filmstrip', 'aria-label': 'Photos in this folder' });
+  const start = Math.max(0, v.index - 12), end = Math.min(state.files.length, v.index + 13);
+  for (let i = start; i < end; i++) {
+    const f = state.files[i], active = i === v.index;
+    strip.append(button('', () => { state.reviewQueue = false; go('photo', { index: i }); }, { title: f.name + (f.status === 'review' ? ' · needs review' : ''),
+      'aria-label': 'Open ' + f.name, 'aria-current': active ? 'true' : undefined, data: { status: f.status || '' } }));
+    strip.lastChild.append(el('img', { src: thumbUrl(f.thumb, 160), alt: '', loading: 'lazy' }), el('span', null, f.name));
+  }
+  return strip;
+}
+function compareTools() {
+  const u = v.u;
+  u.split = button('Split comparison', () => { v.split = !v.split; u.split.setAttribute('aria-pressed', String(v.split)); showing(); }, { class: 'line', 'aria-pressed': 'false' });
+  u.splitControl = el('input', { type: 'range', min: 0, max: 100, step: 1, value: 50, hidden: true, 'aria-label': 'Before and after split position',
+    on: { input: e => { v.splitAt = +e.target.value; showing(); } } });
+  u.zoom = button('100% preview', () => {
+    v.zoom = !v.zoom; u.zoom.textContent = v.zoom ? 'Fit photo' : '100% preview'; u.zoom.setAttribute('aria-pressed', String(v.zoom)); fit();
+    if (v.zoom) { u.canvas.scrollLeft = (u.canvas.scrollWidth - u.canvas.clientWidth) / 2; u.canvas.scrollTop = (u.canvas.scrollHeight - u.canvas.clientHeight) / 2; }
+  }, { class: 'line', 'aria-pressed': 'false', title: 'Inspect preview pixels. Drag to pan, or use the scrollbars.' });
+  return el('div', { class: 'editor-compare' }, u.split, u.splitControl, u.zoom, v.tools.detailButton());
+}
+
 /* ---- the screen ------------------------------------------------------------------------------ */
-const neighbour = d => { const i = v.index + d; if (i >= 0 && i < state.files.length) go('photo', { index: i }); };
+const neighbourIndex = d => {
+  for (let i = v.index + d; i >= 0 && i < state.files.length; i += d) if (!state.reviewQueue || ['review', 'failed'].includes(state.files[i].status)) return i;
+  return -1;
+};
+const neighbour = d => { const i = neighbourIndex(d); if (i >= 0) go('photo', { index: i }); };
 
 export const screen = {
   mount(root, { index }) {
@@ -565,15 +865,14 @@ export const screen = {
     }
     const u = {}, me = v = { index, file, u, view: 'edit', list: loadEntries(file.path), flights: {}, answer: null, how: null, tried: null,
       step: 0, sliders: {}, compare: false, which: 'yours', hold: false, marking: false, picking: false, pending: null, masks: false,
-      busy: 0, scene: '', busyTimer: 0, busyFrom: 0, timer: 0 };
+      busy: 0, scene: '', busyTimer: 0, busyFrom: 0, timer: 0, previewTimer: 0, draftSliders: null, unframed: false, split: false, splitAt: 50, zoom: false };
     u.owner = me;
     u.title = el('span', { class: 'title' });
     u.orig = el('button', { type: 'button', 'aria-pressed': 'false', title: 'Hold B to see the original', on: { click: () => setHold(!v.hold) } }, 'Original');
-    const n = state.files.length;
     setBar(backButton('Folder', 'folder'), u.title, el('span', { class: 'grow' }),
-      el('button', { type: 'button', 'aria-label': 'Previous photo', disabled: index === 0, on: { click: () => neighbour(-1) } }, '‹'),
-      el('button', { type: 'button', 'aria-label': 'Next photo', disabled: index >= n - 1, on: { click: () => neighbour(1) } }, '›'),
-      u.orig, gearButton());
+      el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Previous photo to review' : 'Previous photo', disabled: neighbourIndex(-1) < 0, on: { click: () => neighbour(-1) } }, '‹'),
+      el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Next photo to review' : 'Next photo', disabled: neighbourIndex(1) < 0, on: { click: () => neighbour(1) } }, '›'),
+      state.reviewQueue ? button('Review queue', () => { state.reviewQueue = false; go('photo', { index }); }, { class: 'line', title: 'Leave the review queue and browse every photo' }) : null, u.orig, gearButton());
     title();
 
     u.busy = el('div', { class: 'pv-busy', hidden: true });
@@ -583,7 +882,8 @@ export const screen = {
     u.greyDot = el('div', { class: 'pv-grey', hidden: true }); u.secs = el('span', { 'aria-hidden': 'true' });
     u.tag = el('div', { class: 'pv-tag', hidden: true });
     u.frame = el('div', { class: 'pv-frame', role: 'img', tabIndex: 0, 'aria-label': 'Photo. Hold B to see the original. With Mark on, Enter places an oval.', data: { showing: 'after' } },
-      u.before, u.after, u.engine, u.tint, el('div', { class: 'pv-ovals' }, u.ghost, u.pend, u.greyDot), u.tag);
+      u.before, u.after, u.engine, u.tint, el('div', { class: 'pv-ovals' }, u.ghost, u.pend, u.greyDot), u.tag,
+      el('div', { class: 'editor-split-line', 'aria-hidden': 'true' }), el('div', { class: 'editor-split-labels', 'aria-hidden': 'true' }, el('span', null, 'Original'), el('span', null, 'Edited')));
     u.canvas = el('div', { class: 'pv-canvas' }, u.frame);
     u.status = el('div', { class: 'pv-status', role: 'status' });
     u.mark = el('button', { type: 'button', class: 'line', 'aria-pressed': 'false', title: 'Draw an oval, then say what changes in it (M)',
@@ -594,15 +894,37 @@ export const screen = {
       u.whichYours = button('Yours', () => { v.which = 'yours'; syncWhich(); showing(); }, { 'aria-pressed': 'true' }),
       u.whichEngine = button("AutoEdit's", () => { v.which = 'engine'; syncWhich(); showing(); }, { 'aria-pressed': 'false' }));
     const form = el('form', { class: 'pv-say', on: { submit: submitSay } }, u.mark, u.markTag, u.say);
+    me.tools = createPhotoTools({ path: file.path, frame: u.frame, displayImage: u.after, request: previewBody, alive: () => v === me, refresh: schedulePreview,
+      onMode: (mode, unframed) => {
+        me.marking = mode === 'mark'; me.picking = mode === 'neutral';
+        u.mark.setAttribute('aria-pressed', String(me.marking)); if (u.grey) u.grey.setAttribute('aria-pressed', String(me.picking));
+        u.frame.classList.toggle('marking', me.marking || me.picking);
+        if (!me.marking) clearPending();
+        if (me.unframed !== unframed) { me.unframed = unframed; schedulePreview(); }
+      },
+    });
     u.panels = { edit: editPanel(), how: howPanel(), try: tryPanel() };
     root.append(el('div', { class: 'pv' },
-      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas),
-        el('div', { class: 'pv-under' }, el('div', { class: 'pv-line' }, u.status, u.which), form)),
+      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas), compareTools(),
+        el('div', { class: 'pv-under' }, me.tools.sourceNote, el('div', { class: 'pv-line' }, u.status, u.which), form), u.strip = filmstrip()),
       el('aside', { class: 'side pv-side', 'aria-label': 'Edit this photo' }, u.panels.edit, u.panels.how, u.panels.try)));
 
-    wireFrame(); setThumbs(); drawChips(); showing(); paintNeutral(); copyState();
-    u.after.addEventListener('load', fit);
+    wireFrame(); setThumbs(); drawChips(); showing(); paintNeutral(); copyState(); syncEditControls(); me.tools.sync();
+    const active = u.strip.querySelector('[aria-current=true]'); if (active) u.strip.scrollLeft = active.offsetLeft - u.strip.offsetLeft - u.strip.clientWidth / 2 + active.clientWidth / 2;
+    me.unsubscribe = subscribeProject(event => {
+      if (v !== me || !['change', 'undo', 'redo', 'load'].includes(event.type) || (event.path && event.path !== me.file.path)) return;
+      me.draftSliders = null; me.list = loadEntries(me.file.path); if (event.type !== 'load') me.file.dirty = true;
+      syncEditControls(); drawChips(); paintNeutral(); copyState(); me.tools.sync();
+      u.saved.textContent = 'Changes ready. Save to update the exported photo.'; schedulePreview();
+    });
+    u.after.addEventListener('load', () => { if (v === me) { fit(); me.tools.imageReady(); paintNeutral(); } });
     me.ro = new ResizeObserver(fit); me.ro.observe(u.canvas);
+    me.settingsKey = JSON.stringify(runOptions());
+    me.sheetClose = () => {
+      if (v !== me) return; me.tools.sync(); const key = JSON.stringify(runOptions());
+      if (key !== me.settingsKey) { me.settingsKey = key; syncEditControls(); paintNeutral(); copyState(); schedulePreview(); }
+    };
+    document.getElementById('sheet').addEventListener('close', me.sheetClose);
     me.up = e => { if (e.key.toLowerCase() === 'b') setHold(false); };
     me.blur = () => setHold(false);
     document.addEventListener('keyup', me.up); window.addEventListener('blur', me.blur);
@@ -611,7 +933,12 @@ export const screen = {
   focus() { if (v) v.u.say.focus(); },
   unmount() {
     if (!v) return;
-    clearTimeout(v.timer); clearInterval(v.busyTimer);
+    clearTimeout(v.timer); clearTimeout(v.previewTimer); clearInterval(v.busyTimer);
+    for (const f of Object.values(v.flights)) if (f.controller) f.controller.abort();
+    if (v.lookController) v.lookController.abort();
+    if (v.unsubscribe) v.unsubscribe();
+    if (v.tools) v.tools.dispose();
+    document.getElementById('sheet').removeEventListener('close', v.sheetClose);
     if (v.ro) v.ro.disconnect();
     document.removeEventListener('keyup', v.up); window.removeEventListener('blur', v.blur);
     v = null;
@@ -619,11 +946,13 @@ export const screen = {
   key(e) {
     if (!v || !v.u.say) return false;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return true; }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !(e.target.matches('textarea, input[type=text], input[type=search], [contenteditable]'))) { e.preventDefault(); historyMove(e.shiftKey); return true; }
     if (e.metaKey || e.ctrlKey || e.altKey) return false;
     if (e.key === 'Escape') {
       if (v.pending) { clearPending(); v.u.ghost.hidden = true; }
       else if (v.marking) setMarking(false);
       else if (v.picking) setPicking(false);
+      else if (v.tools && v.tools.mode !== 'none') v.tools.setMode('none');
       else if (v.view !== 'edit') setView('edit');
       else return false;
       return true;

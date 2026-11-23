@@ -10,25 +10,27 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from . import (backdrop as backdrop_mod, reveal as reveal_mod, compose, consistency, emit, geometry, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
+from . import (backdrop as backdrop_mod, hide as hide_mod, reveal as reveal_mod, compose, consistency, emit, geometry, instructions, intent as intent_mod, light as light_mod, looks as looks_mod,
                lut as lut_mod, neutral as neutral_mod, night, palette as palette_mod, policies, rules as rules_mod, scene as scene_mod, stats as stats_mod)
 from .concepts import load_concepts, meta_for
-from .contract import Adjustment, Result, RunConfig
+from .contract import Adjustment, HiddenRegion, Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
 from .edit.mask import snap_to_edges
 from .edit import apply_image, banding, build_alpha, gates, ops, par, reference as ref_match, linear_alpha
-from .imageio import Image, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
+from .imageio import Image, analysis_opts, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
 from .notes import build_notes
 from .segment import ResolvedRegions, make_segmenter, resolve
 from . import segment as segment_mod
 from .segment import MASK_CACHE_DIR, DiskMaskCache
 from .segment.base import Segmenter, parse_mark
+from .segment import refine as refine_masks
 from .styles import Style, combine_brief, load_styles, style_for
 
 def _config_digest(cfg: RunConfig) -> str:
@@ -44,7 +46,7 @@ def _config_digest(cfg: RunConfig) -> str:
 
 
 # Run settings that switch on an opt-in rule set of the same name in rules.toml.
-_OPT_IN_RULES = ("levels", "denoise", "night_sky")
+_OPT_IN_RULES = ("levels", "denoise", "night_sky", "highlight_detail")
 _TRANSLATIONS = instructions._TRANSLATIONS   # the process cache of translated clauses lives next to its helper
 
 # Never written into a sidecar: local paths and the secret. `adjust` takes the config paths from
@@ -151,6 +153,9 @@ class Pipeline:
         habit = looks_mod.load_habits(cfg.looks_path).get(look_name)
         habits = instructions.habit_adjustments(
             habit, look_name, vocab or instructions.load_vocab(cfg.instructions_path)) if habit else {}
+        pipe_reveal = reveal_mod.load(cfg.reveal_path) if (cfg.reveal_check or cfg.hide) else None   # asking to hide runs the check
+        if cfg.hide:
+            reveal_mod.check_hide(pipe_reveal, cfg.hide)
         return cls(
             cfg=cfg,
             rules=rules,
@@ -183,7 +188,7 @@ class Pipeline:
             backdrop_cfg=(rules_mod.block(rules, "backdrop", backdrop_mod.DEFAULTS, backdrop_mod.RANGES)
                           if cfg.backdrop else None),
             night_cfg=rules_mod.block(rules, "night_sky", night.DEFAULTS, night.RANGES),
-            reveal=reveal_mod.load(cfg.reveal_path) if cfg.reveal_check else None,
+            reveal=pipe_reveal,
         )
 
     def vocab(self) -> instructions.Vocab:
@@ -206,11 +211,13 @@ class Pipeline:
 
     def presegment(self, path: str) -> None:
         """Decode and segment one photo, nothing else: fills the mask cache for a render worker."""
-        concepts = self.concepts_for(style_for(self.cfg.style, self.styles))
+        concepts = list(dict.fromkeys([*self.concepts_for(style_for(self.cfg.style, self.styles)),
+                                      *self.cfg.selected_regions, *self.cfg.mask_refinements,
+                                      *(a.target for a in self.adjustments if a.resolved_only)]))
         words = self._segment_words(concepts, self.adjustments + self._all_habits(),
                                     self._wants_guard(self.adjustments))
         if words:
-            img = load_image(path, decode=raw_opts_from(self.cfg))
+            img = load_image(path, decode=analysis_opts(self.cfg, path) or raw_opts_from(self.cfg))
             self.segmenter.segment(downscale_long_edge(img, self.cfg.analysis_long_edge), words)
         if self.cfg.reference:
             # the reference's masks too, once per run: a render worker reads them from the cache
@@ -299,16 +306,26 @@ class Pipeline:
 
         # `image` lets callers (e.g. the UI preview) pass a pre-downscaled proxy so the full-res
         # apply stays fast; the batch/export path passes nothing → full resolution.
-        img: Image = image if image is not None else load_image(path, decode=raw_opts_from(cfg))
+        # F51: a RAW file's analysis picture is its half-size development. With nothing to apply that is
+        # the whole decode; otherwise the full development is decoded as well, and the edit applied to it.
+        fast = analysis_opts(cfg, path) if image is None and proxy is None else None
+        fast_img = load_image(path, decode=fast) if fast is not None else None
+        if fast_img is not None and not fast_img.decode_info.get("half_size"):
+            fast = None   # LibRaw returned the full size (a linear DNG): that already is the full development
+        img: Image = image if image is not None else (
+            fast_img if fast_img is not None and (fast is None or not do_apply) else load_image(path, decode=raw_opts_from(cfg)))
         if on_stage is not None:
             on_stage("candidate_decode", img.rgb)
         # `proxy`: the analysis picture, when the caller made it from a larger original than `image`
         # (a preview applies on a smaller copy).
         given_proxy = proxy is not None
+        if fast is not None and do_apply:
+            proxy, given_proxy = downscale_long_edge(fast_img, cfg.analysis_long_edge), True
         if proxy is None:
             proxy = downscale_long_edge(img, cfg.analysis_long_edge)
-        concepts = self.concepts_for(style)
         adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
+        concepts = list(dict.fromkeys([*self.concepts_for(style), *cfg.selected_regions, *cfg.mask_refinements,
+                                      *(a.target for a in adjs if a.resolved_only)]))
         words = self._segment_words(concepts, adjs + self._all_habits(), self._wants_guard(adjs))
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
@@ -318,6 +335,7 @@ class Pipeline:
         if px:   # once, at the root: regions, instruction cells and marks all see the same masks. New arrays: cached masks are shared and never written into.
             snap = set(concepts) | set(instructions.extra_concepts(adjs + self._all_habits(), concepts))
             raw = [replace(rm, mask=snap_to_edges(rm.mask, px)) if rm.name in snap else rm for rm in raw]
+        raw, refinement_notes = refine_masks.apply(raw, cfg.mask_refinements, self.meta, proxy.rgb.shape[:2])
         stage_timings["segment"] = (time.perf_counter() - stage_started) * 1000
         stage_started = time.perf_counter()
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
@@ -339,11 +357,20 @@ class Pipeline:
         sc = scene_mod.classify(gstats, present, region_stats, override="night" if night_frame else None)
         stage_timings["scene"] = (time.perf_counter() - stage_started) * 1000
         reveal_rep = None
+        to_hide: list = []
         if self.reveal is not None:   # beside stats and scene: a reveal mask is never a region, so nothing is edited by it (F21)
             stage_started = time.perf_counter()
             reveal_rep = reveal_mod.report(raw, self.reveal, sc.name, getattr(self.segmenter, "open_vocabulary", False),
                                     path, cfg.metadata, cfg.out_format)
             stage_timings["reveal"] = (time.perf_counter() - stage_started) * 1000
+            if cfg.hide:
+                if reveal_rep.picture == "checked":
+                    to_hide = reveal_mod.hide_candidates(raw, self.reveal, sc.name, cfg.hide)
+                    if not to_hide:
+                        reveal_rep.hide_note = f"hide asked for {', '.join(cfg.hide)}: none was found, nothing was hidden"
+                else:
+                    reveal_rep.hide_note = (f"hide asked for {', '.join(cfg.hide)}: nothing was hidden, "
+                                            "the picture part of the check did not run (it needs SAM 3)")
         region_rule = {name: meta_for(name, self.meta).region() for name in present}
         adjs = [a.model_copy() for a in self.habits.get(sc.name, [])] + adjs   # the look first, typed changes add to it
 
@@ -381,6 +408,9 @@ class Pipeline:
             for s in (global_settings, *region_settings.values()):
                 s.pop("denoise", None)
                 s.pop("denoise_stars", None)
+        if not cfg.highlight_detail:  # the detail-keeping knee is opt-in (F50): no rule set, look or genre turns it on alone
+            for s in (global_settings, *region_settings.values()):
+                s.pop("highlight_detail", None)
         if not night_frame:  # the night tools are opt-in (F31), and only a night frame takes them, whoever proposed them
             for s in (global_settings, *region_settings.values()):
                 for k in night.OPS:
@@ -496,7 +526,7 @@ class Pipeline:
             adj_plan = instructions.plan(adjs, self.vocab(), raw, concepts, resolved,
                                          region_settings, global_settings, self.meta, light=light)
             apply_regions, region_settings, owners = adj_plan.cells, adj_plan.settings, adj_plan.owners
-        policy_notes = policies.enforce(region_settings, self.meta, owners=owners)
+        policy_notes = refinement_notes + policies.enforce(region_settings, self.meta, owners=owners)
         if adj_plan is not None:
             policy_notes += self._hold_layers(adj_plan, resolved, light)
             policy_notes += instructions.report(adjs, adj_plan, region_settings, local_model=cfg.local_model)
@@ -544,7 +574,12 @@ class Pipeline:
         # from the masks; no pixel moves in this function. emit.py and the preview do it, after
         # every check below, so the gates and the stats compare two pictures of the source's shape.
         geo = None
-        if self.geometry_cfg:
+        if cfg.photo_geometry is not None:
+            geo, geo_notes = geometry.manual(cfg.photo_geometry, (img.height, img.width))
+            policy_notes += geo_notes
+            if on_geometry is not None:
+                on_geometry(geo)
+        elif self.geometry_cfg:
             stub = cfg.backend == "stub"
             wanted = set(geometry.LEVEL) | set(self.geometry_cfg["subject"])
             geo_masks = {} if stub else {r.name: r.mask for r in raw if r.name in wanted and r.mask.any()
@@ -791,6 +826,9 @@ class Pipeline:
             )
             if guard_mask is not None:
                 guard_note = f"skin-safe guard: held {'/'.join(held)} off {guard_pct * 100:.0f}% of frame"
+            if global_settings.get("highlight_detail", 0.0) and global_settings.get("highlight_rolloff", 0.0):
+                notes_extra.append("highlight detail: the roll-off held the brightest tones by the level around them, "
+                                   "so faint cloud and snow texture keep their contrast")
             held_white = gate_report.get("highlight_held", 0.0)
             if held_white > 0.005:
                 # Two numbers: what was blown, and how much of the frame the soft shoulder below
@@ -982,6 +1020,22 @@ class Pipeline:
             if final_action != "pass":
                 residual_banding = (final_score, final_action, band_remediated)
 
+        # Hide on request (F22): the last pixel step of apply, on the full-size picture, only for the kinds the user
+        # named. Every hidden region goes into the sidecar. Nothing here generates content.
+        if do_apply and out_rgb is not None and to_hide:
+            method = cfg.hide_method or self.reveal.hide.method
+            out_rgb, boxes = hide_mod.apply(out_rgb, [m for _f, m in to_hide], self.reveal.hide, method)
+            reveal_rep.hidden = [HiddenRegion(kind=f.kind, label=f.label, box=list(b), method=method, trace=hide_mod.TRACE[method])
+                                 for (f, _m), b in zip(to_hide, boxes)]
+            what = ", ".join(f"{n} {k}" for k, n in Counter((f.label or f.kind) for f, _m in to_hide).items())
+            notes_extra.append(f"hidden on request: {what}, by {method}"
+                               + ("; it keeps a trace of what was there" if hide_mod.TRACE[method] else "; nothing under it is copied into the fill")
+                               + ". The area is the finding grown by a margin; nothing is generated, and the source is unchanged")
+        if reveal_rep is not None and cfg.hide and not do_apply and to_hide:   # a dry run has no picture to hide in
+            reveal_rep.hide_note = (f"hide asked for {', '.join(cfg.hide)}: {len(to_hide)} found, nothing was hidden "
+                                    "because this was a dry run (no picture was made)")
+        if reveal_rep is not None and reveal_rep.hide_note:
+            notes_extra.append(reveal_rep.hide_note)
         stage_timings["apply_finish"] = (time.perf_counter() - stage_started) * 1000
         if on_stage is not None and out_rgb is not None:
             on_stage("final_float", out_rgb)
@@ -1054,12 +1108,22 @@ class Pipeline:
             notes.append(f"genre: {cfg.genre}")
         if img.decode_ev:
             notes.append(f"raw develop: {cfg.raw_mode} {img.decode_ev:+.2f} EV at decode")
+        if proxy.decode_info.get("half_size"):
+            notes.append("fast analysis: the edit was decided on the half-size development of the RAW file")
         lens_rep = (img.decode_info or {}).get("lens")
         if lens_rep:
             parts = [f"{c} {r['corner_px']:+.1f} px" + ("" if r["applied"] else " (left, below 0.3 px)")
                      for c, r in lens_rep.items()]
             notes.append("lens: colour fringe at the frame corner " + ", ".join(parts))
         di = img.decode_info or {}
+        vg = di.get("vignette")
+        if vg:
+            if vg["applied"]:
+                b = vg["bucket"]
+                notes.append(f"lens: corners brightened +{vg['corner_ev']:.2f} EV (profile of {vg['frames']} photos, "
+                             f"{b[0]:.0f}-{b[1]:.0f} mm f/{b[2]:.1f}-{b[3]:.0f})")
+            else:
+                notes.append(f"lens: vignette left as decoded ({vg['reason']})")
         if di.get("highlight") == "recover":
             notes.append(f"raw recover: {di['recover_clipped'] * 100:.1f}% of the frame had a clipped channel; "
                          f"rebuilt from LibRaw's blend decode, {di['recover_top']:.2f} times the old white "

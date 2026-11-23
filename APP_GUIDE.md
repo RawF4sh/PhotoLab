@@ -383,7 +383,12 @@ arrow (top left) go back one screen.
 ### Screens
 
 #### Start
-One button, **Open folder**, and the folders you opened recently. Your photos stay on this computer.
+**Open photo**, **Open folder**, **Try a sample set**, and recent folders. The samples are generated
+landscapes made locally without a download. Your photos stay on this computer. Reopening a folder
+restores its editing project, including selection, individual changes and undo/redo history.
+Browser drag-and-drop uses a file picker when the browser cannot provide a local file path.
+The Open → Improve → Adjust → Export guide explains the next step. Readiness distinguishes
+local editing from precise object selection, which requires the optional SAM 3 model.
 
 #### Folder (home)
 The grid of photos (RAW+JPEG pairs count as one) with a status dot on each tile: waiting, editing,
@@ -396,11 +401,38 @@ done, look at this, failed. The side panel holds what applies to the whole folde
   stopped run resumes. Photos that failed or need a look are listed, and one bad photo never stops the rest.
 - **Find**: type words ("snow lake") to filter by what is in the photos.
 - **Share** and **Tools** in the top bar; the gear opens Settings.
+- The grid shows 100 photos per page. Shift-click checkboxes for a range; selections survive page
+  changes. Capture-time groups appear when timestamps are available; these are time groups,
+  not a claim that every frame has the same composition. **Review** steps through flagged/failed photos.
+- Per-photo looks, intensity, reference choices and adjustments also apply to **Edit N photos**.
+- **My presets** saves a look, strength and whole-photo sliders for reuse. Applying one to a
+  folder keeps individual photo overrides. Presets exclude masks, crops, paths and credentials.
 
 #### Photo
 Click a tile. Arrow keys move between photos.
 
-- The photo is shown at full resolution. **Hold the photo or press B** to see the original.
+- A quick preview arrives first, followed by a sharp preview (up to 2560 pixels). **Hold the photo
+  or press B** to see the original. **Split comparison** exposes a draggable before/after division.
+  **100% preview** shows one preview pixel per screen pixel; drag to pan. Exports use full resolution.
+- **Adjust this photo** has saved exposure, contrast, highlights, shadows, temperature, tint and
+  color controls. Zero means AutoEdit's automatic baseline; values add an adjustment to it.
+  Limits and safety checks still apply. **Undo**, **Redo** and **Reset photo** cover all photo changes.
+- **Objects** lets you select a found region and adjust it with the same seven controls. **Find
+  an object** requests a named concept such as "jacket". A missing object stays missing; no mask
+  is invented. **Add** and **Subtract** brushes correct the selection on the uncropped source
+  frame, with each stroke undoable. Stub selections are approximate demonstrations.
+- **Crop & straighten** offers aspect ratios, a movable crop and manual angle. Rotation trims
+  unsupported edges instead of filling them. Preview, save and batch use the same framing.
+- **Native detail** renders matching original/edited native-resolution crops. One image pixel
+  is one displayed pixel. It includes framing and finishing; export resizing and lossy encoding
+  are excluded. The ordinary **100% preview** remains limited to preview resolution.
+- **Gemini assistant** offers a reviewed proposal for global and found-object sliders. Nothing
+  changes until **Apply**; that is one undoable action. Applied suggestions become local saved
+  adjustments, so preview/export does not request Gemini again. **Dismiss** leaves edits alone.
+- **My presets** saves or applies portable look, strength and whole-photo adjustments.
+- **Compare looks** previews looks on the current photo. **Match a reference** brings the reference
+  choice and matching strength into this panel. References outside the opened folder may need
+  choosing again after restarting the app.
 - **Say what to change** in the box under the photo ("warm the grass a little"). Each sentence
   appears under **Your changes** and can be removed.
 - **Mark** (or M): drag an oval, then say what changes there ("make this guy more purple"). A
@@ -408,11 +440,15 @@ Click a tile. Arrow keys move between photos.
   an area. If the thing is not found, nothing is applied and the chip says so. Without SAM 3 every
   mark is an area.
 - **Pick something grey**: click a neutral spot to set the white balance exactly.
-- **Copy to similar (N)**: copy these changes to similar photos.
+- **Copy to similar**: after saving, choose recipient photos and the tone, color, white-balance or
+  detail adjustments to copy. Exposure matching is optional. Other categories and the recipients'
+  marks are kept. The source must be saved again after further changes before it can be copied.
 - **How it was done**: the mask and one line per tool, what was held back, and the photo with each step off.
-- **Try it yourself**: sliders, compared with AutoEdit's version.
+- **Try it yourself**: practice sliders compared with AutoEdit's version. Practice changes remain
+  separate from the saved controls in **Adjust this photo**.
 - **Masks**: shows the regions that were found.
-- **Save this photo**: writes this one photo again from its sidecar.
+- **Save this photo**: renders this photo's current choices at full resolution into AutoEdit Exports.
+- The filmstrip and arrow keys move through nearby photos; in the review queue they follow the queue.
 - When "Collect review labels" is on (Settings), a Good / Not good pair appears.
 
 #### Tools
@@ -433,6 +469,11 @@ A sheet over any screen, drawn from the settings schema (`autoedit settings --js
 Region finder and model, RAW, Quality, Look extras (grain, LUT), Output (format, metadata,
 workers, export presets and watermark), Privacy, Profile, Advanced, About. Appearance has a dark
 surround option. Defaults are the ones the command line uses.
+Advanced groups are collapsed until needed. The Gemini key and cloud consent are held only
+for the current page session, or the server can read `GEMINI_API_KEY`. Each explicit request
+sends a stripped thumbnail no larger than 512 pixels and numeric editing context. Full-resolution
+photos, local paths, project data and source metadata are excluded. Missing keys, invalid
+responses, timeouts and session budget limits leave the current local edit intact.
 
 #### Share sheet
 After a run: **Check before sharing** (findings per photo, such as location or a serial number
@@ -488,7 +529,10 @@ route list is pinned by `tests/snapshots/api_v1.json`.
 | `GET /api/v1/styles`, `/api/v1/presets` | List styles / concept presets. |
 | `GET /api/v1/list?dir=`, `/api/v1/groups?dir=` | Flat list / RAW+JPEG-paired groups. |
 | `GET /api/v1/thumb?path=&px=` | Fast thumbnail (px clamped). `POST /api/v1/pick?kind=` native picker. |
-| `POST /api/v1/preview` | Full-res before/after (lossless WebP) + decision sidecar. |
+| `POST /api/v1/preview` | Proxy before/after (lossless WebP), actual object masks + decision sidecar. |
+| `POST /api/v1/detail` | Local full-resolution render, matched native crops and true dimensions. |
+| `POST /api/v1/assist` | Explicit opt-in Gemini proposal; does not apply or save adjustments. |
+| `GET /api/v1/edit-presets`, `POST /api/v1/edit-presets`, `DELETE …/{id}` | Local portable creative presets; separate from concept presets. |
 | `POST /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST …/control` | Background edit batch + live progress. |
 | `POST /api/v1/curate/jobs`, `GET …/{id}` | Culling job (M1). |
 | `POST /api/v1/review/labels` | Save review labels (M2). |

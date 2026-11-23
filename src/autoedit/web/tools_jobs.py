@@ -146,7 +146,9 @@ def sync(p, configs_dir, profile, log):
 
     inputs = {k: _text(p, k) for k in ("reference", "recipe_model", "lut")}
     r = sync_mod.run(_text(p, "target", True), _text(p, "folder"), dry_run=_flag(p, "dry_run"),
-                     minutes=_num(p, "minutes"), configs_dir=configs_dir, profile=profile, **inputs)
+                     minutes=_num(p, "minutes"), configs_dir=configs_dir, profile=profile,
+                     targets=p.get("targets"), categories=p.get("categories"),
+                     match_exposure=_flag(p, "match_exposure", True), **inputs)
     return {**r, "lines": sync_mod.lines(r)}
 
 
@@ -392,7 +394,7 @@ REQUIRED = {"find": ("folder", "words"), "keywords": ("folder",), "declare": ("f
 _STR = PATH_KEYS[:5] + PATH_KEYS[6:] + ("name", "backend", "style", "look", "palette", "new_name", "mode",
                                          "licence", "base", "author")
 _NUM = ("seed", "rounds", "ridge", "minutes", "count")
-_BOOL = ("dry_run", "force", "finish", "copy")
+_BOOL = ("dry_run", "force", "finish", "copy", "match_exposure")
 
 
 def _check_types(payload: dict) -> None:
@@ -407,6 +409,8 @@ def _check_types(payload: dict) -> None:
             raise ValueError(f"{k} must be true or false")
         if k == "words" and not (isinstance(v, list) and all(isinstance(x, str) for x in v)):
             raise ValueError("words must be a list of strings")
+        if k in ("targets", "categories") and not (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+            raise ValueError(f"{k} must be a list of strings")
         if k == "photos" and not (isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v))):
             raise ValueError("photos must be a string or a list of strings")
 
@@ -423,6 +427,7 @@ def start(name: str, payload, configs_dir: str, profile: str | None) -> ToolJob:
         raise ValueError("missing required field(s): " + ", ".join(missing))
     ps = [payload[k] for k in PATH_KEYS if isinstance(payload.get(k), str) and payload[k]]
     ps += [x for x in (payload.get("photos") or []) if isinstance(x, str)] if isinstance(payload.get("photos"), list) else []
+    ps += payload.get("targets") or []
     service.ensure_allowed(*ps)
     job = ToolJob(id=uuid.uuid4().hex[:12], name=name, created=time.time())
     with _LOCK:

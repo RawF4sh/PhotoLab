@@ -105,6 +105,17 @@ def reveal_line(block: dict) -> str:
         kinds = ", ".join(f"{k} {n}" for k, n in sorted(block["by_kind"].items(), key=lambda t: -t[1]))
         line = (f"Reveal check: {block['with_findings']} of {block['photos']} photos have findings"
                 + (f" ({kinds})" if kinds else "") + ". See reveal.html.")
+    if block.get("hide_asked"):      # F22: a hide request always says what it did
+        h = block.get("hidden")
+        asked = ", ".join(block["hide_asked"])
+        if h:
+            kinds = ", ".join(f"{k} {n}" for k, n in sorted(h["by_kind"].items(), key=lambda t: -t[1]))
+            line += f" Hidden on request: {h['regions']} regions on {h['photos']} photos ({kinds})."
+        else:
+            line += f" Hide asked for {asked}: nothing was hidden."
+        if block.get("not_hidden"):
+            line += (f" {block['not_hidden']} photos were skipped as already made with another hide setting; "
+                     "run again without --resume to hide them.")
     n = block.get("unchecked", 0)
     return line + (f" {n} photos not checked (made before the check was on)." if n else "")
 
@@ -291,6 +302,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
                 "wb_min_confidence", consistency.BURST_DEFAULTS["wb_min_confidence"]))
     items: list = []
     unchecked: list[str] = []          # sidecars made with the check off (a resumed run keeps them)
+    not_hidden = 0                     # F22: photos a resume skipped that were made without, or with another kind or method of, the hide that is asked for now
     warped: set[str] = set()           # photos whose export is straightened or cropped: boxes would not fit
     if pipeline.reveal is not None:    # read back from the sidecars, so a resumed run counts the earlier photos too
         for src, img_out, sc in made:
@@ -298,6 +310,10 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
                 with open(sc) as fh:
                     doc = json.load(fh)
                 name = os.path.basename(src)
+                if cfg.hide and (sorted(((doc.get("audit") or {}).get("run_config") or {}).get("hide") or []) != sorted(cfg.hide)
+                                 or any(h.get("method") != (cfg.hide_method or pipeline.reveal.hide.method)
+                                        for h in (doc.get("reveal") or {}).get("hidden") or [])):
+                    not_hidden += 1
                 if doc.get("reveal"):
                     items.append((name, img_out if os.path.exists(img_out) else src,
                                   RevealReport.model_validate(doc["reveal"])))
@@ -308,6 +324,8 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
             except (OSError, ValueError):
                 pass
         manifest["reveal"] = {**reveal.summary([r for _, _, r in items]), "unchecked": len(unchecked)}
+        if cfg.hide:
+            manifest["reveal"].update(hide_asked=list(cfg.hide), not_hidden=not_hidden)
     with open(os.path.join(out_dir, "run.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
 

@@ -1,4 +1,11 @@
 {
+  "DELETE /api/v1/edit-presets/{preset_id}": {
+    "path": [
+      "preset_id"
+    ],
+    "query": [],
+    "body": false
+  },
   "GET /api/v1/aesthetic/jobs/{job_id}": {
     "path": [
       "job_id"
@@ -10,6 +17,11 @@
     "path": [
       "job_id"
     ],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/edit-presets": {
+    "path": [],
     "query": [],
     "body": false
   },
@@ -49,6 +61,13 @@
   "GET /api/v1/presets": {
     "path": [],
     "query": [],
+    "body": false
+  },
+  "GET /api/v1/project": {
+    "path": [],
+    "query": [
+      "dir"
+    ],
     "body": false
   },
   "GET /api/v1/review/labels": {
@@ -110,6 +129,11 @@
     "query": [],
     "body": true
   },
+  "POST /api/v1/assist": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
   "POST /api/v1/curate": {
     "path": [],
     "query": [],
@@ -126,6 +150,16 @@
     "body": true
   },
   "POST /api/v1/datasets/validate": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/detail": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/edit-presets": {
     "path": [],
     "query": [],
     "body": true
@@ -154,6 +188,11 @@
     "query": [],
     "body": true
   },
+  "POST /api/v1/project": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
   "POST /api/v1/review/labels": {
     "path": [],
     "query": [],
@@ -168,6 +207,11 @@
     "path": [],
     "query": [],
     "body": true
+  },
+  "POST /api/v1/sample": {
+    "path": [],
+    "query": [],
+    "body": false
   },
   "POST /api/v1/style/accept": {
     "path": [],

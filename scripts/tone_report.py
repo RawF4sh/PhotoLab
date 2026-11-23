@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from autoedit import batch, tonemetrics as tm  # noqa: E402
 from autoedit.contract import GlobalStatsModel, RegionStatsModel, RunConfig  # noqa: E402
-from autoedit.imageio import RAW_MODES, camera_preview, downscale_long_edge, load_image, raw_opts_from  # noqa: E402
+from autoedit.imageio import RAW_MODES, camera_preview, downscale_long_edge, load_image, raw_opts_from, analysis_opts, resize_to  # noqa: E402
 from autoedit.quality import assess_pixels, load_quality_config  # noqa: E402
 
 
@@ -330,10 +330,12 @@ def rows_by_render(src_dir: str, cfg: RunConfig, limit: int | None = None, max_p
         try:
             started = time.perf_counter()
             before_hash = _hash(p)
-            img = load_image(p, decode=raw_opts_from(cfg))
+            img = load_image(p, decode=analysis_opts(cfg, p) or raw_opts_from(cfg))
             work = downscale_long_edge(img, max_px)
             common = (work if cfg.raw_mode == "none" else
                       downscale_long_edge(load_image(p, decode={"raw_mode": "none"}), max_px))
+            if common.rgb.shape != work.rgb.shape:   # fast analysis: work is the half-size development
+                common = resize_to(common, *work.rgb.shape[:2])
             if unsafe_control:
                 rgb, res = pipe.process_one(p, do_apply=True, image=work)
             else:

@@ -558,3 +558,12 @@ the only photos whose edit kept changes are 0066 and 0103 (100 % → 75 %, cause
 photo's render median moves by at most 2 levels. A blind gallery of the 48 photos whose decode
 recovery changes (stub backend, recovery off vs on, no safety blend) is built for the owner's vote
 with `scripts/blindtest.py --configs-a/--configs-b`.
+
+### F54 follow-up: retain recovered detail (2026-11-22)
+
+[F54](F54-editing-workspace.md) adds a bounded, configurable restoration of existing source
+luminance detail only after actual RAW recovery. Independent crop checks improve encoded
+texture retention on both 0066 and 0103. The final integrated 110-photo recovery report keeps
+0066 at 100%; 0103 still uses the existing 75% safety blend. Default and recovery-enabled runs
+both finish with zero dark photos made darker, zero pushed into clipping and no errors.
+RAW recovery stays off by default, and quality thresholds are unchanged.

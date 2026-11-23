@@ -7,6 +7,23 @@ merge_iou = 0.5       # two findings of one kind that overlap this much are one
 subject_ratio = 0.6   # in a photo of people, a person at least this large next to the largest is also "the subject"
 tiles = 1             # 1 = the proxy only; 2 = also 2 x 2 tiles
 
+# Hiding a finding, only when the user asks for its kind (--hide plate,face; the Hide control in the app). F22.
+# Nothing is generated: a region is covered, made into blocks or blurred, never filled with picture content.
+[hide]
+method = "cover"      # cover: one flat fill in the average colour of the surroundings, nothing under the region is copied
+                      # mosaic and blur look softer and keep a trace of what was there
+margin = 0.1          # the hidden area is the finding grown by this share of its shorter side ...
+margin_min_px = 3     # ... and by at least this many pixels of the analysis picture (a mask is a little rough)
+
+[hide.cover]
+ring = 0.25           # the surroundings are a band this wide outside the margin, as a share of the shorter side
+
+[hide.mosaic]
+blocks = 5            # blocks across the shorter side: bigger regions get bigger blocks
+
+[hide.blur]
+sigma = 0.2           # blur radius as a share of the shorter side: bigger regions get a stronger blur
+
 [kind.plate]
 label = "number plate"
 words = ["license plate"]

@@ -74,6 +74,7 @@
       "default": null,
       "choices": [
         "natural",
+        "natural_clean",
         "punchy",
         "soft_portrait",
         "dramatic",
@@ -294,6 +295,15 @@
       "advanced": false
     },
     {
+      "key": "highlight_detail",
+      "label": "Keep detail in bright skies",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Keeps faint cloud and snow texture where the edit holds back the brightest tones. Off: those tones are held back evenly, as before.",
+      "advanced": false
+    },
+    {
       "key": "light_shaping",
       "label": "Glow where the sun is",
       "group": "quality",
@@ -384,6 +394,15 @@
       "default": false,
       "help": "Lines up the red and blue parts of the picture with the green to remove colour fringes toward the corners.",
       "advanced": false
+    },
+    {
+      "key": "lens_vignette",
+      "label": "Brighten dark corners",
+      "group": "quality",
+      "type": "bool",
+      "default": false,
+      "help": "Brightens the corners of RAW photos as much as your camera does in its own JPEGs. Needs a profile: autoedit lens-profile FOLDER.",
+      "advanced": true
     },
     {
       "key": "consistency",
@@ -580,6 +599,29 @@
       "advanced": false
     },
     {
+      "key": "hide",
+      "label": "Hide on request",
+      "group": "output",
+      "type": "list",
+      "default": [],
+      "help": "Kinds the check finds that are hidden in the saved photo, e.g. plate, face. Nothing is hidden unless listed. Turns the check on.",
+      "advanced": false
+    },
+    {
+      "key": "hide_method",
+      "label": "How to hide",
+      "group": "output",
+      "type": "choice",
+      "default": null,
+      "choices": [
+        "cover",
+        "mosaic",
+        "blur"
+      ],
+      "help": "Cover copies nothing from the region. Mosaic and blur keep a trace: a plate or text can sometimes be read back.",
+      "advanced": false
+    },
+    {
       "key": "history",
       "label": "Keep a history of your edits",
       "group": "output",
@@ -656,6 +698,15 @@
       "type": "bool",
       "default": false,
       "help": "Brings back the tones a RAW file holds in snow and sky that the normal decode turns flat white. RAW files only; a little slower.",
+      "advanced": true
+    },
+    {
+      "key": "fast_analysis",
+      "label": "Faster RAW previews",
+      "group": "raw",
+      "type": "bool",
+      "default": false,
+      "help": "Decides the edit on a half-size RAW development, so previews come faster. The saved photo is still full size; its edit can differ slightly.",
       "advanced": true
     },
     {

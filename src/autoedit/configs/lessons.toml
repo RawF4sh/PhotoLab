@@ -63,6 +63,12 @@ does = "Bends the brightest tones over gently, so a lift in exposure runs out be
 when = "Whenever exposure goes up on a photo with bright parts: clouds, snow, a white shirt."
 watch = "Too much leaves the brightest parts flat and grey-white. Below its knee nothing changes."
 
+[op.highlight_detail]
+name = "Highlight detail"
+does = "Holds the brightest tones back by the level of the bright area around them, so faint cloud and snow texture keep their contrast."
+when = "With the highlight roll-off, on textured bright skies and snow, above all recovered RAW highlights."
+watch = "Acts only with the roll-off. A pixel far brighter or darker than its surroundings is held by its own level, as before."
+
 [op.shadows_ev]
 name = "Shadow lift"
 does = "Brightens the dark tones, counted in stops, and keeps black at black."

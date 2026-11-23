@@ -109,7 +109,13 @@ def load_image(path: str, decode: dict | None = None) -> Image:
     the lens correction also applies to JPEG, TIFF and the other formats.
     """
     img = _load_image(path, decode)
-    if decode and decode.get("lens_ca"):
+    half = bool(decode and decode.get("half_size") and is_raw(path) and img.decode_info.get("half_size"))
+    if half and decode.get("lens_ca"):   # F51: the fringe is measured in pixels of the full development; the vignette is not
+        img.decode_info["lens_skipped"] = "half-size development"
+    if decode and decode.get("lens_vignette") and is_raw(path):   # F52: before the fringe fix
+        from . import lens
+        img.rgb, img.decode_info["vignette"] = lens.correct_vignette(img, decode.get("lens_profiles"))
+    if decode and decode.get("lens_ca") and not half:
         from . import lens   # here, not at the top: lens imports edit.filters, and edit imports this module
         img.rgb, img.decode_info["lens"] = lens.correct_ca(img.rgb)
     return img
@@ -183,7 +189,7 @@ def _load_image(path: str, decode: dict | None = None) -> Image:
 RAW_MODES = ("none", "linear_srgb", "libraw_auto", "preview_ev", "preview_ev_headroom", "tone_target")
 _RAW_DEFAULTS = {"raw_mode": "none", "raw_max_ev": 2.5, "raw_clip_budget": 0.005,
                  "raw_tone_target_p50": 0.40, "raw_fallback_ev": 0.0, "raw_recover": False}
-_LENS_DEFAULTS = {"lens_ca": False}   # F46: scale red and blue onto green; off → decoded as it is
+_LENS_DEFAULTS = {"lens_ca": False, "lens_vignette": False}   # F52: corners brightened from a lens profile. F46: scale red and blue onto green; off → decoded as it is
 # Headroom-capped modes stop this many stops short of the clip level, so the pipeline's own
 # whites/shadows/sharpen (which run AFTER decode) don't push the top percentile into white.
 # Mirrors the `headroom_ev - 0.15` margin the exposure rules use (configs/rules.toml).
@@ -193,7 +199,19 @@ _HEADROOM_MARGIN_EV = 0.15
 def raw_opts_from(cfg) -> dict:
     """The RAW development options a RunConfig carries (its raw_* fields), shaped for
     `load_image(decode=...)`. Works on any object exposing those attributes."""
-    return {k: getattr(cfg, k) for k in (*_RAW_DEFAULTS, *_LENS_DEFAULTS) if hasattr(cfg, k)}
+    o = {k: getattr(cfg, k) for k in (*_RAW_DEFAULTS, *_LENS_DEFAULTS) if hasattr(cfg, k)}
+    if o.get("lens_vignette"):
+        from .lens import _VIG_FILE
+        pd = getattr(cfg, "profile_dir", None)
+        o["lens_profiles"] = os.path.join(pd, _VIG_FILE) if pd else None
+    return o
+
+
+def analysis_opts(cfg, path: str) -> dict | None:
+    """F51: the decode options of a RAW file's half-size analysis picture, or None (mode off, not a RAW)."""
+    if getattr(cfg, "fast_analysis", False) and is_raw(path):
+        return {**raw_opts_from(cfg), "half_size": True}
+    return None
 
 
 def develop_ev(lin_rgb: np.ndarray, camera_rgb: np.ndarray | None, opts: dict | None) -> float:
@@ -433,6 +451,12 @@ def _recover(raw, rgb, common: dict, info: dict):
     return out
 
 
+def _mark_half(info: dict, common: dict, raw, rgb) -> None:
+    """info["half_size"] only when LibRaw really returned a smaller picture (a linear DNG comes back full size)."""
+    if common["half_size"] and rgb.shape[1] < raw.sizes.width:
+        info["half_size"] = True
+
+
 def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None):
     """Demosaic a camera RAW to 16-bit via rawpy/libraw. Returns (rgb[0,1], 16, decode_ev) or
     None when the path isn't a RAW. Camera white balance always. `opts` = RunConfig raw_* fields
@@ -468,11 +492,13 @@ def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None)
                 **common,
             )
             rgb = _to_unit(rgb16, 65535.0)
+            _mark_half(info, common, raw, rgb)
             if o["raw_recover"] and mode == "none":
                 rgb = _recover(raw, rgb, common, info)   # F44: a second decode of the open file
             return rgb, 16, 0.0
         lin16 = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
         lin = _to_unit(lin16, 65535.0)
+        _mark_half(info, common, raw, lin)
         cam = _preview_rgb(raw) if mode.startswith("preview") else None
         if mode.startswith("preview") and not _compatible_preview(cam, lin):
             cam = None

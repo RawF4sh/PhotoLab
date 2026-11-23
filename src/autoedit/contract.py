@@ -80,6 +80,8 @@ class RunConfig(BaseModel):
     raw_tone_target_p50: float = Field(default=0.40, gt=0.0, lt=1.0)  # tone_target: median (gamma)
     raw_fallback_ev: float = Field(default=0.0, ge=0.0, le=5.0)     # no universal lift without a preview
     lens_ca: bool = False  # scale red and blue onto green about the centre (F46); off → decoded as it is
+    lens_vignette: bool = False  # brighten RAW corners from a lens profile (F52); off → decoded as it is
+    fast_analysis: bool = False  # decide on the half-size RAW development, apply at full size (F51); off → one full decode
     raw_recover: bool = False  # rebuild highlights the default decode clips, from LibRaw's blend decode (F44); off → decoded as before
 
     # segmentation
@@ -105,6 +107,7 @@ class RunConfig(BaseModel):
     vignette: bool = True  # frame/subject vignette (subset of compose); off → no edge falloff
     sharpen: bool = True  # output sharpening (unsharp mask); off → no sharpen ops applied
     highlight_hold: bool = False  # keep source-blown highlights white (F6); off → the edit may grey them
+    highlight_detail: bool = False  # the highlight knee keeps faint cloud and snow texture (F50); off → the knee as before
     levels: bool = False  # black and white point (F5); off → the rule-driven black_point is dropped after decide
     light_shaping: bool = False  # a soft warm glow where the sun is (F18); off → the sun glow move does not exist
     snap_edges: bool = False  # region masks that stop just short of the frame edge are extended to it (F39); off → masks as segmented
@@ -121,6 +124,11 @@ class RunConfig(BaseModel):
     colour_report: bool = False  # measure the subject colour of every photo and report the spread per group (F34)
     straighten: bool = False  # turn the export so a clear waterline or horizon is level (F32); off → no turn
     out_aspect: str | None = Field(default=None, max_length=7)  # crop the export to this W:H shape (F32); None or "" = the photo's own
+    # Saved visual edits (F55), hidden from the general settings form. Offsets themselves are
+    # photo Adjustments; these names/masks/framing make replay use the same regions and frame.
+    selected_regions: list[str] = Field(default_factory=list)
+    mask_refinements: dict[str, list[dict]] = Field(default_factory=dict)
+    photo_geometry: dict | None = None
     # A watermark (F48): set only by an export preset (exports.toml); drawn on the export alone,
     # after the resize and the grain.
     watermark: str | None = Field(default=None, max_length=100)  # one line of text laid over a corner; None = no text
@@ -129,6 +137,8 @@ class RunConfig(BaseModel):
     watermark_size: float = Field(default=3.0, ge=1.0, le=20.0)  # height of the mark in percent of the export's short side
     watermark_opacity: float = Field(default=0.7, ge=0.1, le=1.0)
     reveal_check: bool = False  # report which photos give something away: plates, screens, people, file metadata (F21); never changes a pixel
+    hide: list[str] = Field(default_factory=list)  # reveal kinds to hide in the export, on request only (F22); a kind named here also turns the check on
+    hide_method: Literal["cover", "mosaic", "blur"] | None = None  # how a hidden region looks (F22); None = reveal.toml's [hide] method
     history: bool = False  # one line per exported photo in the profile (F27)
     profile_dir: str | None = None  # the profile folder this config was built with; set by the code
 
@@ -143,6 +153,25 @@ class RunConfig(BaseModel):
     instructions_path: str = Field(default_factory=lambda: config_path("instructions.toml", packaged_fallback=True))
     exports_path: str = Field(default_factory=lambda: config_path("exports.toml", packaged_fallback=True))
     reveal_path: str = Field(default_factory=lambda: config_path("reveal.toml", packaged_fallback=True))
+
+    @field_validator("hide", mode="before")
+    @classmethod
+    def _check_hide(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):    # the settings sheet and the command line send "plate, face"
+            v = [k for k in re.split(r"[,\s]+", v) if k]
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("hide is a list of reveal kinds, e.g. plate, face")
+        out = []
+        for k in v:
+            if not (isinstance(k, str) and re.fullmatch(r"[a-z0-9_-]{1,40}", k)):
+                raise ValueError(f"hide: {k!r} is not a reveal kind name (lower-case letters, digits, - and _)")
+            if k not in out:
+                out.append(k)
+        if len(out) > 40:
+            raise ValueError("hide names more than 40 kinds")
+        return out
 
     @field_validator("out_name")
     @classmethod
@@ -204,6 +233,24 @@ class RunConfig(BaseModel):
         if not 0.2 <= a / b <= 5:
             raise ValueError(f"out_aspect {v!r} is outside 1:5 to 5:1")
         return v
+
+    @field_validator("selected_regions", mode="before")
+    @classmethod
+    def _check_selected_regions(cls, value):
+        from .segment.refine import names
+        return names(value)
+
+    @field_validator("mask_refinements", mode="before")
+    @classmethod
+    def _check_mask_refinements(cls, value):
+        from .segment.refine import check
+        return check(value)
+
+    @field_validator("photo_geometry", mode="before")
+    @classmethod
+    def _check_photo_geometry(cls, value):
+        from .geometry import check_manual
+        return check_manual(value)
 
     @field_validator("watermark")
     @classmethod
@@ -342,9 +389,20 @@ class Adjustment(BaseModel):
     ops: Settings                    # op name -> delta
     source: str = ""                 # the instruction clause it came from; "" for a direct adjustment
     scope: Literal["run", "photo", "look"] = "run"   # "run": from the run's --edit; "photo": from `autoedit adjust`; "look": the look's own habit (F27)
+    resolved_only: bool = Field(default=False, strict=True)  # visual object control: only its arbitrated, displayed region
     status: Literal["", "applied", "clamped", "blocked", "not_found"] = ""   # filled in per photo
     size: float = Field(default=1.0, ge=0.25, le=4.0)  # F20: scales a place's extent ("a bigger gradient"); 1 = as in instructions.toml
     via: Literal["", "local", "cloud"] = ""   # F20: "" = the word list understood it; else which model translated it
+
+    @field_validator("resolved_only")
+    @classmethod
+    def _check_resolved_only(cls, value, info):
+        if value:
+            from .segment.refine import name
+            name(info.data.get("target"))
+            if info.data.get("scope") != "photo":
+                raise ValueError("resolved_only is a photo-scope visual region adjustment")
+        return value
 
 
 class RevealFinding(BaseModel):
@@ -358,6 +416,15 @@ class RevealFinding(BaseModel):
     weak: bool = False                                      # the kind is marked "may miss"
 
 
+class HiddenRegion(BaseModel):
+    """One region hidden in the export because the user asked for its kind (F22)."""
+    kind: str
+    label: str = ""
+    box: list[float] = Field(min_length=4, max_length=4)   # x0, y0, x1, y1 of the hidden area (margin included), shares of the frame
+    method: Literal["cover", "mosaic", "blur"]
+    trace: bool                                             # mosaic and blur keep a trace of what was there; cover copies nothing from under the region
+
+
 class RevealReport(BaseModel):
     picture: Literal["checked", "not_run"]
     reason: str = ""                  # for not_run: why
@@ -365,6 +432,8 @@ class RevealReport(BaseModel):
     findings: list[RevealFinding] = []
     more: int = 0                     # findings left out by max_findings
     file: dict[str, dict[str, bool]] = {}
+    hidden: list[HiddenRegion] = []   # regions hidden in the export on request (F22); [] = nothing was hidden
+    hide_note: str = ""               # F22: why a hide request hid nothing ("" when it did, or none was made)
 
 
 class Geometry(BaseModel):

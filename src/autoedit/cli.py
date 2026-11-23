@@ -37,12 +37,12 @@ def _flatten(d: dict) -> dict:
     run, seg, out, llm, dec, perf = (d.get(k, {}) for k in ("run", "segment", "output", "llm", "decode", "performance"))
     kw: dict = {}
     _dec_map = {"raw_mode": "raw_mode", "max_ev": "raw_max_ev", "clip_budget": "raw_clip_budget",
-                "tone_target_p50": "raw_tone_target_p50", "fallback_ev": "raw_fallback_ev", "recover": "raw_recover", "lens_ca": "lens_ca"}
+                "tone_target_p50": "raw_tone_target_p50", "fallback_ev": "raw_fallback_ev", "recover": "raw_recover", "lens_ca": "lens_ca", "lens_vignette": "lens_vignette", "fast_analysis": "fast_analysis"}
     for src, dst in _dec_map.items():
         if src in dec:
             kw[dst] = dec[src]
     for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
-              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "light_shaping", "snap_edges", "reveal_check",
+              "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "highlight_detail", "light_shaping", "snap_edges", "reveal_check", "hide", "hide_method",
               "translator", "grain", "grain_size", "lut", "lut_amount", "history", "genre", "straighten", "neutral", "wb", "backdrop",
               "consistency_wb", "colour_report"):
         if k in run:
@@ -137,6 +137,8 @@ def load_run_config(args) -> RunConfig:
         "raw_mode": getattr(args, "raw_mode", None),
         "raw_recover": getattr(args, "raw_recover", None),
         "lens_ca": getattr(args, "lens_ca", None),
+        "lens_vignette": getattr(args, "lens_vignette", None),
+        "fast_analysis": getattr(args, "fast_analysis", None),
         "out_format": getattr(args, "format", None),
         "quality": getattr(args, "quality", None),
         "metadata": getattr(args, "metadata", None),
@@ -167,9 +169,12 @@ def load_run_config(args) -> RunConfig:
         "lut_amount": getattr(args, "lut_amount", None),
         "history": getattr(args, "history", None),
         "highlight_hold": getattr(args, "highlight_hold", None),
+        "highlight_detail": getattr(args, "highlight_detail", None),
         "light_shaping": getattr(args, "light_shaping", None),
         "snap_edges": getattr(args, "snap_edges", None),
         "reveal_check": getattr(args, "reveal_check", None),
+        "hide": getattr(args, "hide", None),
+        "hide_method": getattr(args, "hide_method", None),
         "translator": getattr(args, "translator", None),
     }
     for k, v in overrides.items():
@@ -232,6 +237,11 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                         "that did not clip (opt-in, RAW only)")
     p.add_argument("--lens-ca", dest="lens_ca", action="store_true", default=None,
                    help="line up red and blue with green to remove colour fringes toward the corners (opt-in)")
+    p.add_argument("--lens-vignette", dest="lens_vignette", action="store_true", default=None,
+                   help="brighten RAW corners as much as the camera does in its own JPEGs, from a profile "
+                        "(autoedit lens-profile FOLDER; opt-in)")
+    p.add_argument("--fast-analysis", dest="fast_analysis", action="store_true", default=None,
+                   help="decide the edit on a half-size development of a RAW file (faster previews; opt-in)")
     p.add_argument("--format", choices=["jpeg", "tiff", "webp", "png"])
     p.add_argument("--quality", type=int)
     p.add_argument("--metadata", choices=["keep", "shareable", "none"],
@@ -286,6 +296,8 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="do not keep a history, whatever the config files say")
     p.add_argument("--highlight-hold", dest="highlight_hold", action="store_true", default=None,
                    help="keep highlights that are blown in the source white instead of letting the edit grey them (opt-in)")
+    p.add_argument("--highlight-detail", dest="highlight_detail", action="store_true", default=None,
+                   help="keep faint cloud and snow texture where the edit holds back the brightest tones (opt-in)")
     p.add_argument("--light-shaping", dest="light_shaping", action="store_true", default=None,
                    help="add a soft warm glow where the sun is, when the photo has a clear light source (opt-in)")
     p.add_argument("--snap-edges", dest="snap_edges", action="store_true", default=None,
@@ -293,6 +305,12 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--reveal-check", dest="reveal_check", action="store_true", default=None,
                    help="report which photos show a plate, screen, document, person or file metadata "
                         "(opt-in; reveal.html and run.json, no picture changes)")
+    p.add_argument("--hide", dest="hide", metavar="KIND[,KIND]",
+                   help="hide every finding of these reveal kinds in the export, e.g. plate,face (turns the check on). "
+                        "Nothing is hidden unless you ask; every hidden region is listed in the sidecar")
+    p.add_argument("--hide-method", dest="hide_method", choices=("cover", "mosaic", "blur"),
+                   help="how a hidden region looks: cover (default, one flat colour, nothing left), "
+                        "mosaic or blur (softer, keep a trace of what was there)")
     p.add_argument("--workers", type=int,
                    help="render processes for a batch (0 = half the cores, at most 4)")
     p.add_argument("--threads", type=int,
@@ -659,7 +677,7 @@ def _cmd_doctor(args) -> int:
     # a stray ./configs in the CWD silently overrides packaged tuning — always show which won
     print(f"  configs: {os.path.abspath(args.configs_dir or paths.configs_dir())}")
     if args.profile:
-        known = {f"{n}.toml" for n in paths._CONFIG_FILES} | {"defaults.toml", "style.toml", "history.jsonl", "calibrate.toml", "pick.toml", "merge.toml"}
+        known = {f"{n}.toml" for n in paths._CONFIG_FILES} | {"defaults.toml", "style.toml", "history.jsonl", "calibrate.toml", "pick.toml", "merge.toml", "lens_profiles.toml"}
         print(f"  profile: {args.profile}")
         for f in sorted(os.listdir(args.profile)):
             print(f"    {f}" + ("" if f in known else "  (not a config file, ignored)"))
@@ -1059,6 +1077,49 @@ def _cmd_looks(args) -> int:
         return 2
 
 
+def _cmd_lens_profile(args) -> int:
+    from . import lens
+    from .imageio import is_raw
+
+    files = []
+    for d in args.folders:
+        if not os.path.isdir(d):
+            print(f"folder not found: {d}", file=sys.stderr)
+            return 2
+        files += sorted(os.path.join(d, n) for n in os.listdir(d) if is_raw(n) and os.path.isfile(os.path.join(d, n)))
+    if not files:
+        print("no RAW files in the folders", file=sys.stderr)
+        return 1
+    try:
+        target = os.path.join(args.profile or paths.default_profile_dir(), lens._VIG_FILE)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    # ponytail: one process; a pool if catalogues of thousands are common
+    profiles, rep = lens.build_profiles(files)
+    for p, why in rep["skipped"]:
+        print(f"skipped {os.path.basename(p)}: {why}")
+    for cam, lens_name, row, ev in rep["rows"]:
+        print(f"{cam} / {lens_name}: {row[0]:.0f}-{row[1]:.0f} mm f/{row[2]:.1f}-{row[3]:.1f}, "
+              f"{row[4]} photos, corners +{ev:.2f} EV")
+    for cam, lens_name, e, n in rep["short"]:
+        print(f"not enough photos ({n} of {lens._VIG_MIN_FRAMES}): {cam} / {lens_name}, "
+              f"{e[0]:.0f}-{e[1]:.0f} mm f/{e[2]:.1f}-{e[3]:.1f}")
+    if not rep["rows"]:
+        print("no bucket reached the minimum; nothing written", file=sys.stderr)
+        return 1
+    if args.dry_run:
+        print(f"dry run: would write {target}")
+    else:
+        try:
+            lens.write_profiles(target, profiles)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"wrote {target}")
+    return 0
+
+
 def _cmd_calibrate(args) -> int:
     from . import calibrate
 
@@ -1301,6 +1362,12 @@ def main(argv: list[str] | None = None) -> int:
     doc_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
     doc_p.set_defaults(func=_cmd_doctor)
 
+    lp_p = sub.add_parser("lens-profile", help="measure how much your camera brightens lens corners, from your own RAW files (F52)")
+    lp_p.add_argument("folders", nargs="+", metavar="FOLDER", help="folders of RAW files (no subfolders)")
+    lp_p.add_argument("--profile", help="profile folder to write lens_profiles.toml into (created if missing; default: the default profile folder)")
+    lp_p.add_argument("--dry-run", dest="dry_run", action="store_true", help="measure and print, write nothing")
+    lp_p.set_defaults(func=_cmd_lens_profile)
+
     pre_p = sub.add_parser("presets", help="list concept presets")
     pre_p.add_argument("--configs-dir", dest="configs_dir")
     pre_p.add_argument("--profile", help="profile folder with your own config differences (default: $AUTOEDIT_PROFILE, else ~/.config/autoedit if it exists)")
@@ -1428,7 +1495,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(args, "profile"):
         try:
             # `looks save` and `calibrate` may create the profile folder, so a --profile that does not exist yet is fine there.
-            if args.profile and (args.cmd == "calibrate" or (args.cmd == "looks" and args.looks_cmd in ("save", "import"))):
+            if args.profile and (args.cmd in ("calibrate", "lens-profile") or (args.cmd == "looks" and args.looks_cmd in ("save", "import"))):
                 pass
             else:
                 args.profile = paths.profile_dir(args.profile)

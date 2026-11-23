@@ -24,6 +24,17 @@ curve_add    = 5.0          # confident filmic contrast ("visibly finished") —
 #                             so unlike `contrast` it adds punch without a saturation side-effect
 # (no grade_* — natural does not tint shadows or highlights)
 
+# F55 candidate: a quieter, neutral finish. Keep the rules' exposure and colour decisions,
+# reduce added local contrast and omit the unconditional S-curve. The existing natural look
+# remains the default until a blind comparison is preferred by the owner.
+[natural_clean]
+contrast_mul = 1.0
+vibrance_add = 0.0
+saturation_add = 0.0
+clarity_mul = 0.5
+dehaze_mul = 0.5
+curve_add = 0.0
+
 [punchy]
 contrast_mul = 1.4
 vibrance_add = 8.0

@@ -5,7 +5,8 @@
 
 # Not for a person: config file paths, the API key (never shown) and a fixed internal value.
 hidden = ["rules_path", "looks_path", "concepts_path", "styles_path", "compose_path", "intents_path",
-          "palettes_path", "instructions_path", "exports_path", "reveal_path", "api_key", "emit", "profile_dir", "rule_sets"]
+          "palettes_path", "instructions_path", "exports_path", "reveal_path", "api_key", "emit", "profile_dir", "rule_sets",
+          "mask_refinements", "photo_geometry", "selected_regions"]
 
 [groups]
 look = "Look"
@@ -110,6 +111,11 @@ help = "Adds a little final sharpening to the export."
 label = "Keep blown highlights white"
 group = "quality"
 help = "Keeps areas that were pure white in the original from turning grey after the edit."
+
+[setting.highlight_detail]
+label = "Keep detail in bright skies"
+group = "quality"
+help = "Keeps faint cloud and snow texture where the edit holds back the brightest tones. Off: those tones are held back evenly, as before."
 
 [setting.light_shaping]
 label = "Glow where the sun is"
@@ -244,6 +250,16 @@ label = "Check before sharing"
 group = "output"
 help = "Lists photos that show plates, screens, documents, people or file metadata. It looks only for what is on its list. It changes no picture."
 
+[setting.hide]
+label = "Hide on request"
+group = "output"
+help = "Kinds the check finds that are hidden in the saved photo, e.g. plate, face. Nothing is hidden unless listed. Turns the check on."
+
+[setting.hide_method]
+label = "How to hide"
+group = "output"
+help = "Cover copies nothing from the region. Mosaic and blur keep a trace: a plate or text can sometimes be read back."
+
 [setting.history]
 label = "Keep a history of your edits"
 group = "output"
@@ -286,10 +302,22 @@ group = "raw"
 help = "Brings back the tones a RAW file holds in snow and sky that the normal decode turns flat white. RAW files only; a little slower."
 advanced = true
 
+[setting.fast_analysis]
+label = "Faster RAW previews"
+group = "raw"
+help = "Decides the edit on a half-size RAW development, so previews come faster. The saved photo is still full size; its edit can differ slightly."
+advanced = true
+
 [setting.lens_ca]
 label = "Remove colour fringes"
 group = "quality"
 help = "Lines up the red and blue parts of the picture with the green to remove colour fringes toward the corners."
+
+[setting.lens_vignette]
+label = "Brighten dark corners"
+group = "quality"
+help = "Brightens the corners of RAW photos as much as your camera does in its own JPEGs. Needs a profile: autoedit lens-profile FOLDER."
+advanced = true
 
 # ---- Regions ----
 [setting.backend]

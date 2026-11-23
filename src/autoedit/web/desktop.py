@@ -47,6 +47,24 @@ def start_server(configs_dir: str, profile: str | None = None):
     return f"http://127.0.0.1:{port}{PAGE}", server, thread
 
 
+def _window_picker(webview):
+    """The server's picker in the desktop app: the window's own dialog, so it opens on the window.
+    Same process as the server, so no page bridge is needed (the page's CSP forbids pywebview's)."""
+    fd = getattr(webview, "FileDialog", None)
+
+    def pick(kind: str):
+        if not webview.windows:
+            return None
+        if kind == "folder":
+            chosen = webview.windows[0].create_file_dialog(getattr(fd, "FOLDER", None) or webview.FOLDER_DIALOG)
+        else:
+            types = ("JSON (*.json)",) if kind == "json" else ("Images (*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.webp)",)
+            chosen = webview.windows[0].create_file_dialog(getattr(fd, "OPEN", None) or webview.OPEN_DIALOG,
+                                                           file_types=types)
+        return chosen[0] if chosen else None
+    return pick
+
+
 def run(configs_dir: str, profile: str | None = None, debug: bool = False) -> None:
     try:
         import webview
@@ -54,8 +72,8 @@ def run(configs_dir: str, profile: str | None = None, debug: bool = False) -> No
         raise ImportError(_NEEDS) from None
     url, server, thread = start_server(configs_dir, profile)
     try:
-        # Folder picker: /api/v1/pick opens a native dialog server-side; if tkinter is missing
-        # on Linux, pywebview's create_file_dialog is the upgrade.
+        from . import service
+        service.NATIVE_PICKER = _window_picker(webview)   # /api/v1/pick opens the window's own dialog
         webview.create_window("AutoEdit", url, width=1280, height=820, min_size=(900, 600),
                              confirm_close=True)   # a running batch would be lost
         webview.start(debug=debug)

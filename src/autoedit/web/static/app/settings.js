@@ -1,12 +1,32 @@
 // Settings sheet, drawn from GET /settings/schema. A new key in the schema gets a control with no change here.
 import { el, api, store, state, getSchema, openSheet, toast } from './main.js';
 import { runTool } from './tools.js';
+import { folderSettingsChanged } from './project.js';
 
 // Set on the Folder panel (or in a fixed group below), so the sheet has no row for them.
 const ELSEWHERE = new Set(['look', 'genre', 'intensity', 'edit', 'export', 'backend', 'neutral', 'wb']);
 // Settings that name a file on this computer, with the picker kind that fits (POST /pick: folder, file = photos, json = any file).
 const PICK = { reference: 'file', watermark_logo: 'file', lut: 'json', recipe_model: 'json' };
 const GROUP_NOTE = { llm: 'Off by default. When on, only a small preview and measurements leave this computer, never the full photo.' };
+
+// Cloud suggestions are requested explicitly, and their credentials die with this page.
+const assistantSession = { api_key: '', allow_cloud: false };
+export const assistantOptions = () => ({ ...assistantSession });
+export const setAssistantConsent = allowed => { assistantSession.allow_cloud = allowed === true; };
+
+function assistantSection() {
+  const enabled = el('input', { type: 'checkbox', id: 'assistant-enabled', checked: assistantSession.allow_cloud,
+    on: { change: e => { assistantSession.allow_cloud = e.target.checked; } } });
+  const key = el('input', { type: 'password', id: 'assistant-key', value: assistantSession.api_key, maxLength: 256,
+    autocomplete: 'off', placeholder: 'Use a server key, or paste your key for this session',
+    on: { input: e => { assistantSession.api_key = e.target.value.trim(); } } });
+  return el('details', { class: 'settings-section' }, el('summary', null, 'Gemini suggestions'),
+    el('p', { class: 'fine' }, 'Ask for a suggestion from the photo editor, review its changes, then choose whether to apply them. Your saved adjustments remain editable.'),
+    el('label', { htmlFor: 'assistant-enabled', class: 'assistant-consent' }, enabled, ' Allow a small preview and editing measurements to be sent to Google when I request a suggestion'),
+    el('label', { htmlFor: 'assistant-key' }, 'Gemini API key'), key,
+    el('small', null, 'The key is kept only until this page closes. If the server already has a Gemini key, leave this blank. API usage may be billed by Google.'),
+    el('button', { type: 'button', class: 'link', on: { click: () => { assistantSession.api_key = ''; assistantSession.allow_cloud = false; key.value = ''; enabled.checked = false; } } }, 'Clear key and turn off'));
+}
 
 export function applySurround() { document.documentElement.classList.toggle('dark-surround', !!store.get('dark', false)); }
 
@@ -24,7 +44,7 @@ export function runOptions() {
 function keep(s, v) {   // hold a value only while it differs from the engine's default
   const same = v === '' || v === null || (Number.isNaN(v)) || v === s.default || (s.type === 'bool' && !v && !s.default);
   if (same) delete state.settings[s.key]; else state.settings[s.key] = v;
-  store.set('settings', state.settings);
+  store.set('settings', state.settings); folderSettingsChanged();
 }
 
 function control(s) {
@@ -99,7 +119,7 @@ function finderSection(by) {
   return el('section', null, el('fieldset', null, el('legend', null, 'Region finder'),
     ...(b.choices || ['auto', 'sam3', 'stub']).map(c => el('label', null,
       el('input', { type: 'radio', name: 'finder', value: c, checked: state.finder === c,
-        on: { change: () => { state.finder = c; store.set('finder', c); } } }), ' ' + (FINDER[c] || c)))),
+        on: { change: () => { state.finder = c; store.set('finder', c); folderSettingsChanged(); } } }), ' ' + (FINDER[c] || c)))),
     b.help ? el('small', null, b.help) : null, modelRow());
 }
 
@@ -139,19 +159,24 @@ export async function openSettings() {
   try { sc = await getSchema(); } catch (e) { toast('Settings could not be read: ' + e.message); return; }
   const by = Object.fromEntries((sc.settings || []).map(s => [s.key, s]));
   openSheet('Settings', (body, close) => {
-    body.append(appearanceSection(), finderSection(by));
+    body.append(appearanceSection(), assistantSection());
+    const setup = el('details', { class: 'settings-section' }, el('summary', null, 'Object selection setup'), finderSection(by));
+    body.append(setup);
     for (const g of sc.groups || []) {
       const rows = (sc.settings || []).filter(s => s.group === g.key && !ELSEWHERE.has(s.key));
       if (!rows.length) continue;
       const adv = rows.filter(s => s.advanced);
-      body.append(el('section', null, el('h3', null, g.label),
+      body.append(el('details', { class: 'settings-section' }, el('summary', null, g.label),
         GROUP_NOTE[g.key] ? el('small', null, GROUP_NOTE[g.key]) : null,
         g.key === 'llm' ? readerLine() : null,
         ...rows.filter(s => !s.advanced).map(row),
         adv.length ? el('details', null, el('summary', null, 'More'), ...adv.map(row)) : null));
     }
     body.append(el('section', null,
-      el('button', { type: 'button', class: 'line', on: { click: () => { state.settings = {}; store.set('settings', {}); close(); toast('Settings are back to the defaults.'); } } }, 'Reset all settings')),
+      el('button', { type: 'button', class: 'line', on: { click: () => {
+        state.settings = {}; assistantSession.api_key = ''; assistantSession.allow_cloud = false;
+        store.set('settings', {}); folderSettingsChanged(); close(); toast('Settings are back to the defaults.');
+      } } }, 'Reset all settings')),
       aboutSection(),
       el('button', { type: 'button', class: 'primary', on: { click: close } }, 'Done'));
   });

@@ -52,6 +52,8 @@ class Job:
     created: float = 0.0
     photo_edits: dict | None = None  # abspath of a photo -> its follow-up text (F19)
     photo_marks: dict | None = None  # abspath of a photo -> its checked marks (F37)
+    photo_hide: dict | None = None   # abspath of a photo -> {"hide": [kinds], "hide_method": m}: what the Hide control asked for (F22)
+    photo_options: dict | None = None  # persisted look, neutral/reference and slider offsets per photo
 
 
 _JOBS: dict[str, Job] = {}
@@ -133,14 +135,75 @@ def _check_photo_marks(photo_marks, srcs, opts, configs_dir, profile) -> dict[st
     return out
 
 
+def _check_photo_hide(photo_hide, srcs, opts, configs_dir, profile) -> dict[str, dict]:
+    """Validate the per-photo hide map {path of one of the job's photos: {"hide": [kinds], "hide_method": m}} (F22).
+    The kinds are the whole list for that photo (the run's own included); the job's options apply to the other photos.
+    A bad kind or method refuses the job here, not half way through it."""
+    if photo_hide in (None, {}):
+        return {}
+    from .. import reveal
+    from .service import make_cfg
+    if not isinstance(photo_hide, dict):
+        raise ValueError("photo_hide must be an object of path to {hide, hide_method}")
+    if len(photo_hide) > MAX_PHOTO_EDITS:
+        raise ValueError(f"photo_hide has more than {MAX_PHOTO_EDITS} entries")
+    known = {os.path.abspath(s) for s in srcs}
+    out: dict[str, dict] = {}
+    for path, req in photo_hide.items():
+        if not isinstance(path, str) or os.path.abspath(path) not in known:
+            raise ValueError(f"photo_hide names a photo that is not in the job: {path}")
+        if not isinstance(req, dict) or set(req) - {"hide", "hide_method"}:
+            raise ValueError("photo_hide values are objects with hide and hide_method")
+        cfg = make_cfg({**opts, **req}, configs_dir, profile)          # checks the names and the method
+        if cfg.hide:
+            reveal.check_hide(reveal.load(cfg.reveal_path), cfg.hide)
+        out[os.path.abspath(path)] = {k: v for k, v in req.items() if v is not None}
+    return out
+
+
+def _check_photo_options(value, srcs, opts, configs_dir, profile):
+    from . import photo_base
+    from .service import check_photo_settings, check_region_settings, ensure_allowed, make_cfg
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > MAX_PHOTO_EDITS:
+        raise ValueError("photo_options must be an object with at most 10000 photos")
+    known = {os.path.abspath(s) for s in srcs}
+    allowed = {"look", "intensity", "neutral", "reference", "reference_strength", "photo_settings", "photo_base", "hide", "hide_method",
+               "region_settings", "mask_refinements", "photo_geometry", "local_only"}
+    checked = {}
+    for path, req in value.items():
+        if not isinstance(path, str) or os.path.abspath(path) not in known:
+            raise ValueError("photo_options names a photo that is not in the job")
+        if not isinstance(req, dict) or set(req) - allowed:
+            raise ValueError("photo_options contains unsupported options")
+        req = dict(req)
+        if "photo_settings" in req:
+            req["photo_settings"] = check_photo_settings(req["photo_settings"])
+        if "photo_base" in req:
+            req["photo_base"] = photo_base.check(req["photo_base"])
+        if "region_settings" in req:
+            req["region_settings"] = check_region_settings(req["region_settings"])
+        if req.get("reference"):
+            ensure_allowed(req["reference"])
+        make_cfg({**opts, **req}, configs_dir, profile)
+        checked[os.path.abspath(path)] = req
+    return checked
+
+
 def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo_edits=None,
-          photo_marks=None) -> Job:
+          photo_marks=None, photo_hide=None, photo_options=None) -> Job:
     # An omitted selection means scan the folder; an explicit [] means no photos selected.
     srcs = list(files) if files is not None else _list_images(input_dir)
     if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
         raise ValueError("no supported images found to process")
+    # Reject invalid options and unapproved reference/LUT paths before a worker is started.
+    from .service import make_cfg
+    make_cfg(opts, configs_dir, profile)
     edits = _check_photo_edits(photo_edits, srcs)
     marks = _check_photo_marks(photo_marks, srcs, opts, configs_dir, profile)
+    hides = _check_photo_hide(photo_hide, srcs, opts, configs_dir, profile)
+    options = _check_photo_options(photo_options, srcs, opts, configs_dir, profile)
     if not out_dir:
         base = input_dir or os.path.dirname(srcs[0])
         out_dir = os.path.join(base, "AutoEdit Exports")
@@ -148,6 +211,8 @@ def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo
               items=[Item(name=os.path.basename(s), src=s) for s in srcs], created=time.time())
     job.photo_edits = edits
     job.photo_marks = marks
+    job.photo_hide = hides
+    job.photo_options = options
     with _LOCK:
         _JOBS[job.id] = job
         _prune_locked()
@@ -169,7 +234,8 @@ def _note_input_dir(out_dir: str, srcs: list[str]) -> None:
 
 def _run(job: Job, configs_dir, profile=None) -> None:
     try:
-        from .service import INFERENCE_LOCK, build_pipeline, make_cfg, mark_adjustments, photo_adjustments  # local import avoids a cycle
+        from . import photo_base
+        from .service import INFERENCE_LOCK, build_pipeline, make_cfg, mark_adjustments, photo_adjustments, settings_adjustments, region_adjustments  # local import avoids a cycle
 
         cfg = make_cfg(job.opts, configs_dir, profile)
         os.makedirs(job.out_dir, exist_ok=True)
@@ -183,6 +249,21 @@ def _run(job: Job, configs_dir, profile=None) -> None:
         if consistent:
             with INFERENCE_LOCK:         # bursts mode runs the model on the frames it compares
                 biases = consistency.plan([it.src for it in job.items], cfg, pipe)
+
+        by_options: dict = {}            # distinct configurations share the resident segmenter
+
+        def own(key):
+            req = {k: v for k, v in (job.photo_options or {}).get(key, {}).items() if k != "photo_settings"}
+            req.update((job.photo_hide or {}).get(key, {}))
+            if not req:
+                return pipe, cfg
+            sig = json.dumps(req, sort_keys=True)
+            if sig not in by_options:
+                c = make_cfg({**job.opts, **req}, configs_dir, profile)
+                p = build_pipeline(c)
+                p.use_mask_cache(job.out_dir)
+                by_options[sig] = (p, c)
+            return by_options[sig]
 
         durs: list[float] = []
         taken: set[str] = set()          # de-dupe same-stem outputs across the job's source list
@@ -202,17 +283,22 @@ def _run(job: Job, configs_dir, profile=None) -> None:
             try:
                 bias = biases.get(item.src, consistency.Bias())
                 key = os.path.abspath(item.src)
-                photo_adjs, _ = photo_adjustments(pipe, (job.photo_edits or {}).get(key))
-                photo_adjs += mark_adjustments(pipe, (job.photo_marks or {}).get(key, []))[0]
+                pipe_i, cfg_i = own(key)
+                base = photo_base.check((job.photo_options or {}).get(key, {}).get("photo_base", job.opts.get("photo_base")))
+                photo_adjs, _ = photo_adjustments(pipe_i, (job.photo_edits or {}).get(key))
+                photo_adjs = photo_base.adjustments(base) + photo_adjs
+                photo_adjs += mark_adjustments(pipe_i, (job.photo_marks or {}).get(key, []))[0]
+                photo_adjs += settings_adjustments((job.photo_options or {}).get(key, {}).get("photo_settings", job.opts.get("photo_settings")))
+                photo_adjs += region_adjustments((job.photo_options or {}).get(key, {}).get("region_settings", job.opts.get("region_settings")))
                 with INFERENCE_LOCK:
-                    out_rgb, result = pipe.process_one(item.src, do_apply=True, exposure_bias=bias.exposure,
-                                                       batch_group=bias.group, wb_bias=(bias.temp, bias.tint),
+                    out_rgb, result = pipe_i.process_one(item.src, do_apply=True, exposure_bias=base.get("exposure_bias", bias.exposure),
+                                                       batch_group=bias.group, wb_bias=tuple(base.get("wb_bias", (bias.temp, bias.tint))),
                                                        adjustments=photo_adjs or None)
                 image_out, sidecar = emit.output_paths(
-                    job.out_dir, item.src, cfg.out_format, taken, name=cfg.out_name,
-                    subdir=cfg.out_subdir, fields={"style": cfg.style, "n": i + 1},
+                    job.out_dir, item.src, cfg_i.out_format, taken, name=cfg_i.out_name,
+                    subdir=cfg_i.out_subdir, fields={"style": cfg_i.style, "n": i + 1},
                     sources=sources)
-                emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, item.src)
+                emit.write_outputs(out_rgb, result, image_out, sidecar, cfg_i, item.src)
                 item.out, item.scene = image_out, result.scene
                 item.status, item.warn = _safety(result)
             except Exception as e:       # isolate per-image failures

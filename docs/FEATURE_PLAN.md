@@ -44,7 +44,7 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F19 | Follow-up edits | M | done |
 | F20 | Free-text instructions (more words, a local model) | M | done |
 | F21 | Reveal check: what a photo gives away | L | done, off by default (`--reveal-check`, `autoedit check`, "Check before sharing" in Studio); measured on 134 of the owner's photos (plates 14 of 14); seven kinds unmeasured and marked "may miss"; tiles not built; spec [F21](plans/F21-reveal-check.md) |
-| F22 | Hide on request: cover, mosaic, blur | M | planned; needs the owner's yes on the content rule |
+| F22 | Hide on request: cover, mosaic, blur | M | built, off by default (`--hide plate,face`, `--hide-method`, `hide` and `hide_method` settings, a Hide control in the app); the owner said yes to the content rule on 2026-11-22; a real photo at full size is still to be looked at; spec and result [F22](plans/F22-hide-on-request.md) |
 | F23 | Grain | M | done, off by default (`--grain N`, a look's `grain`, "add grain"); the owner looks at the crops in `out-features/F23/` |
 | F24 | Black and white, and film looks | M | done, off by default (`--look bw_classic`, `bw_red_filter`, `bw_soft`, `film_warm`, `film_cool`, `film_faded`, `cross_process`, `instant`); the owner looks at the sheets in `out-features/F24/` |
 | F25 | LUT files | S | done, off by default (`--lut FILE.cube`, `--lut-amount N`; `autoedit looks lut NAME -o FILE.cube`); the owner tries a LUT of their own |
@@ -66,12 +66,18 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F41 | Search by what is in the photo, and keywords | M | done (`autoedit find`, `autoedit keywords`, keywords as `.xmp` beside the export); spec [F41](plans/F41-search-and-keywords.md) |
 | F42 | Edit declaration | M | done (`autoedit declare`); no signing (C2PA needs a certificate); merged frames not declared; spec [F42](plans/F42-edit-declaration.md) |
 | F43 | Timelapse flicker | M | done, off by default (`--consistency timelapse`); tested on made-up frames, a real timelapse is open; spec [F43](plans/F43-timelapse-flicker.md) |
-| F44 | RAW highlight recovery | M | done, off by default (`--raw-recover`); tone gate 0 and 0, and the highlight rules now hold recovered highlights (`recovered_highlight`) and the edit no longer gains headroom from recovery; 0109, 0028 and 0033 keep their full edit. Still pulled back: 0066 and 0103, where the edit flattens recovered cloud in a bright sky (needs a contrast-keeping pull, op math). Blind gallery of 48 photos, off vs on, built for the owner. spec [F44](plans/F44-raw-highlight-recovery.md) |
+| F44 | RAW highlight recovery | M | done, off by default (`--raw-recover`); tone gate 0 and 0, and the highlight rules hold recovered highlights without adding exposure headroom. F54 restores source highlight detail: 0066 now keeps its full edit; 0103 still receives the 75% safety blend in the integrated run. Blind gallery of 48 photos, off vs on, built for the owner. spec [F44](plans/F44-raw-highlight-recovery.md), follow-up [F54](plans/F54-editing-workspace.md) |
 | F45 | Dehaze by distance | S | not built: measured as covered by the existing dehaze and region rules; spec [F45](plans/F45-distance-dehaze.md) |
 | F46 | Lens fixes: colour fringes | S | done, off by default (`--lens-ca`); vignette correction left out, a per-lens median over a shoot is an owner decision; spec [F46](plans/F46-lens-fixes.md) |
 | F47 | Copy edits to similar photos | M | done (`autoedit sync PHOTO`); spec [F47](plans/F47-copy-edits.md) |
 | F48 | Watermark and gallery | M | done (watermark keys in an export preset, off unless set; `autoedit gallery`); spec [F48](plans/F48-watermark-and-gallery.md) |
 | F49 | A minimal interface, on the desktop and in the browser (replaces Studio and the Lab) | L | done (U0–U11; installers U12 wait for the owner's signing decision); spec [UI-minimal](plans/UI-minimal.md) |
+| F54 | A saved editing workspace | L | done: saved controls, projects/history, quick previews, visual looks/reference, comparison/zoom, folder/review navigation, selective sync and recovered highlight detail. 1,185 tests and both 110-photo RAW tone gates pass; spec [F54](plans/F54-editing-workspace.md) |
+| F50 | Sky detail: a highlight roll-off that keeps faint cloud | M | done, off by default (`--highlight-detail`); with `raw_recover` 0066 and 0103 keep their full edit; tone gate 0 and 0; replaces the unreleased `recover_detail` step (owner, 2026-11-22); default by blind vote; spec [F50](plans/F50-sky-highlight-pull.md) |
+| F51 | Faster previews: half-size analysis, quicker WebP, half-size thumbnails | M | done; `fast_analysis` off by default (tone gate 0 and 0, no photo newly pulled back, 0051 moves 1.7 levels); WebP and thumbnails always on (owner's yes on thumbnails); spec [F51](plans/F51-fast-analysis-decode.md) |
+| F52 | Lens vignette profiles from the camera's own JPEG | M | done, off by default (`autoedit lens-profile`, `--lens-vignette`, as strong as the camera); 6 buckets cover 87 of 110 corpus photos; tone gate 0 and 0, one photo (0095) newly pulled back to 75 %, one (0065) no longer; spec [F52](plans/F52-lens-vignette-profiles.md) |
+| F53 | Reveal check precision for the seven unmeasured kinds | M | measuring tools built (`scripts/eval_reveal.py`); waits for the owner's photos and labels (about 20 per kind) before any threshold changes; spec [F53](plans/F53-reveal-check-precision.md) |
+| F55 | Guided photo workflow and Gemini suggestions | L | done: object selection/sliders/brushes, framing/native detail, portable presets, first-use guidance and reviewable Gemini adjustments. 1,232 tests, stub/browser exports and both 110-photo RAW gates pass. Natural-clean candidate stays opt-in pending owner blind preference; spec [F55](plans/F55-guided-photo-workflow.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -415,7 +421,7 @@ The feature the owner asked for most. Order matters: the check first, measured, 
   - `--hide plate,screen` hides every finding of those kinds; in Studio a finding has a Hide
     button. Nothing is hidden unless the user asks.
   - Three methods, as data in `reveal.toml`. `cover` is the default: one flat fill in the average
-    colour of the region's surroundings, so nothing from inside is left. `mosaic` and `blur` look softer
+    colour of the region's surroundings, so nothing under the region is copied into it. `mosaic` and `blur` look softer
     and keep a trace of what was there; the interface says so. A light blur or small blocks over
     text can be read back, so both scale with the size of the region.
   - The mask is grown by a margin and never feathered inward. Hiding is the last pixel step of
@@ -425,11 +431,13 @@ The feature the owner asked for most. Order matters: the check first, measured, 
     copies a fixed list of metadata tags and should carry no embedded preview; a test makes sure.
   - Nothing is generated: no copied texture, no rebuilt background, nothing that looks like
     picture content.
-- **Owner decision:** the plan says "AutoEdit must never change content". Hiding changes what can
-  be seen. Proposed wording: "AutoEdit never invents content: nothing is generated, replaced or
-  filled in. Hiding a region is allowed when the user asks for it, and is always reported."
-- **Done when:** two different pictures under the same mask give identical pixels with `cover`
-  (a test: nothing under the mask can be told apart); pixels outside the grown mask are
+- **Owner decision (yes, 2026-11-22):** "AutoEdit never invents content: nothing is generated,
+  replaced or filled in. Hiding a region is allowed when the user asks for it, and is always
+  reported." What was built is in [F22](plans/F22-hide-on-request.md).
+- **Done when:** at the hide step, two different pictures under the same mask give identical
+  pixels with `cover` (a test: nothing under the region is copied into the fill; the region still
+  counts toward the whole-photo exposure and colour measurement, so its average can shift the edit
+  slightly); pixels outside the grown mask are
   byte-identical to a run without hiding; the exported file holds no embedded preview; a real
   photo is checked at full size; default output is byte-identical.
 
@@ -700,9 +708,10 @@ None has a spec. Whether people want them was not researched, except where it sa
 - **Not now:** an XMP hand-off to Lightroom. AutoEdit's op math does not map onto Adobe's sliders.
 - **Not now:** the learned recipe predictor as a default. It needs evidence first.
 - **Never:** generative edits (sky replacement, object removal, inpainting) and retouching that
-  changes content. AutoEdit must never change content. (Two features ask the owner for a
-  bounded exception, each reported in the sidecar: hiding a region on request, F22, and
-  straightening or cropping, F32. Neither generates anything.)
+  invents content. AutoEdit never invents content: nothing is generated, replaced or filled in.
+  Hiding a region is allowed when the user asks for it, and is always reported (F22, decided
+  2026-11-22). Straightening or cropping (F32) asks the owner for a bounded exception too; it
+  generates nothing and is reported in the sidecar.
 - **After this plan:** the website (the Studio rebuild and the desktop shell are done as F49).
 
 ## Rules for every feature
@@ -731,7 +740,7 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Bursts mode as the default consistency? | [F9 result](plans/F9-shoot-consistency.md) | `consistency = "bursts"` under `[run]` |
 | Gated SAM 3 flow, or a second segmenter? | The candidate list in `ARCHITECTURE.md`, "Adding a segmenter" (licences unverified) | F14 follow-up |
 | What should the website do first: showcase and download, or online editing? | none yet | After this plan |
-| May AutoEdit hide a region when the user asks (F22)? | The proposed wording of the content rule is in F22 | F22 is built; the "Never" line above is reworded |
+| May AutoEdit hide a region when the user asks (F22)? | Yes, 2026-11-22: [F22](plans/F22-hide-on-request.md) | Built; the "Never" line above is reworded |
 | May AutoEdit straighten and crop (F32)? Both are built switched off. | `out-features/F32/` | `straighten` in `defaults.toml`; `aspect` in an export preset |
 | Upright needs 20 or more photos of buildings or rooms with leaning walls (F32). Do you have some? | none | a task of its own |
 | Which kinds of photography first? | [GENRES.md](GENRES.md), "Order". A pack can only be tested on photos of its kind, and the repo has mountain landscapes only | The owner names the kinds and supplies at least 20 photos of each |

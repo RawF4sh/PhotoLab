@@ -16,8 +16,9 @@
 <p align="center"><a href="https://photolab.fridshtand.ai">Photo Lab — demonstrations and editing comparisons</a></p>
 
 Photo Lab presents several editing approaches. This repository contains AutoEdit's local
-rules pipeline and optional Anthropic refinement; the site's Gemini experiments are a
-separate workflow. The public source does not include the comparison photographs, private
+rules pipeline, optional Anthropic refinement, and a Gemini assistant that proposes editable
+adjustments in the local app. The site's generated-image experiments remain a separate
+workflow. The public source does not include the comparison photographs, private
 evaluation datasets, API credentials, or model weights.
 
 ---
@@ -126,9 +127,12 @@ choosing the best variants from a batch.
 
 Open the interface with `pip install -e '.[ui]'` and `autoedit ui` (a browser tab on
 `127.0.0.1:8765`), or as a desktop window with `pip install -e '.[app]'` and `autoedit app` (on
-Linux it needs a GTK or Qt web view). Open a folder, pick a look, say what to change, and edit all
-the photos; click a photo to mark an oval, see how it was done, or try the sliders yourself. Find,
-share checks, gallery and the other tools are on the same screens. Light or dark follows the system.
+Linux it needs a GTK or Qt web view). Open one photo, a folder, or the generated sample set.
+Refine the automatic result with saved tone/color controls, compare looks, mark a region or match
+a reference. Preview, Save and batch editing use the same per-photo choices. Projects retain
+your changes and undo history when reopened. Split comparison, preview zoom, a filmstrip and the
+review queue help check a shoot; Copy to similar lets you choose recipients and adjustments.
+Find, share checks and gallery tools remain on the same screens. Light or dark follows the system.
 See [APP_GUIDE.md](APP_GUIDE.md).
 
 Run without installing:
@@ -146,6 +150,20 @@ anywhere. The optional LLM decider (`--decider llm`) is **off unless you opt in*
 provider and bills **your** key per photo — full-resolution pixels never leave your machine.
 Without consent or a key it transparently falls back to the local rules. Run `autoedit doctor`
 to see your current status.
+
+The photo editor also offers an optional **Gemini assistant**. Enable it explicitly in Settings
+and supply a session-only key or `GEMINI_API_KEY`. Each request sends a stripped thumbnail
+(at most 512 pixels) and numeric editing context to Google. Review the proposed adjustments
+before applying them; they become normal saved controls with undo, and subsequent previews
+and exports run locally. No key is saved in projects or presets. Provider errors leave the
+local edit usable. Automated checks use a fake provider and do not upload photos.
+
+The guided workspace includes object sliders, **Find an object**, selection brushes, crop and
+straighten, native-resolution detail inspection, and reusable **My presets** for photos and
+folders. Precise object selection requires SAM 3; the stub offers explicitly approximate demo
+regions. The opt-in `natural_clean` look is a candidate for blind comparison, not a new default.
+See [APP_GUIDE.md](APP_GUIDE.md) for the controls and [the F55 plan](docs/plans/F55-guided-photo-workflow.md)
+for validation and remaining limits.
 
 The interface is a local application. Keep its default loopback address; the Photo Lab website
 links to this project and does not expose it or your filesystem. Generated images can

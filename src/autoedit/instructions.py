@@ -547,6 +547,9 @@ class Plan:
     asked: dict[str, Settings] = field(default_factory=dict)   # target -> the summed change, after [limits] and the op bounds (F37)
     inside: dict[str, dict[str, float]] = field(default_factory=dict)   # thing mark -> {guarded concept: share of the mark with its own cells} (F37)
     guarded: dict[str, tuple] = field(default_factory=dict)    # layer -> (held settings, share on guarded regions, concepts); the pipeline fills it (F37)
+    visual_hit: dict[str, list[str]] = field(default_factory=dict)  # displayed region -> its final cells only (F55)
+    visual_asked: dict[str, Settings] = field(default_factory=dict)
+    visual_limited: set[tuple[str, str]] = field(default_factory=set)
 
     @property
     def cells(self) -> list[RegionMask]:
@@ -646,11 +649,16 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
     concepts and for `extra_concepts(adjustments, concepts)`. A place target is no region: it
     comes back in `layers` for the caller to blend on its own, and `light` (what the light finder
     found, or None) decides whether the place "light" exists in this photo."""
-    asked, limited = _summed(adjustments, vocab)
+    asked, limited = _summed([a for a in adjustments if not a.resolved_only], vocab)
+    visual_asked, visual_limited = _summed([a for a in adjustments if a.resolved_only], vocab)
     hit: dict[str, list[str]] = {}
     if GLOBAL in asked:
         for op, delta in asked[GLOBAL].items():
-            global_settings[op] = global_settings.get(op, 0.0) + delta
+            value = global_settings.get(op, 0.0) + delta
+            lo, hi = OP_BOUNDS.get(op, (-100.0, 100.0))
+            global_settings[op] = min(max(value, lo), hi)
+            if global_settings[op] != value:
+                limited.add((GLOBAL, op))
         hit[GLOBAL] = [GLOBAL]
 
     extra = extra_concepts(adjustments, concepts)
@@ -771,13 +779,27 @@ def plan(adjustments: list[Adjustment], vocab: Vocab, raw: list[RegionMask], con
             groups.append(leftover)
             feather.append(target)
             touched.append(True)
+    # A clicked object's alpha is its arbitration claim, not its original overlapping union.
+    # The first groups still partition those exact resolved regions after all text/mark cuts.
+    # Add visual offsets only to their own group's cells. This preserves text union semantics,
+    # never creates a leftover group, and cannot cross into a higher-priority object's pixels.
+    visual_hit = {target: [] for target in visual_asked}
+    for gi, region in enumerate(resolved.regions):
+        delta = visual_asked.get(region.name)
+        if not delta:
+            continue
+        for cell, _mask, _owners in groups[gi]:
+            settings[cell.name] = _add(settings.get(cell.name, {}), delta)
+            visual_hit[region.name].append(cell.name)
+        touched[gi] = True
     return Plan(groups=[[(cell, fmask) for cell, fmask, _own in group] for group in groups],
                 feather=feather, settings=settings,
                 owners={cell.name: own for group in groups for cell, _f, own in group},
                 detected=list(ext.detected) if ext else [], hit=hit, limited=limited,
                 before={name: dict(s) for name, s in settings.items()},
                 present={t for t in asked if t in union}, touched=touched, layers=layers, sizes=sizes,
-                why=why, asked=asked, inside=inside)
+                why=why, asked=asked, inside=inside,
+                visual_hit=visual_hit, visual_asked=visual_asked, visual_limited=visual_limited)
 
 
 def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings],
@@ -795,7 +817,9 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
         mark = parse_mark(a.target)
         if mark:
             where = "the marked area" if mark[0] == "area" else "the marked " + mark[2]
-        cells = p.hit.get(a.target, [])
+        cells = (p.visual_hit if a.resolved_only else p.hit).get(a.target, [])
+        if a.resolved_only:
+            where = "the selected " + a.target
         if not cells:
             a.status = "not_found"
             if a.target in p.why:
@@ -820,7 +844,7 @@ def report(adjustments: list[Adjustment], p: Plan, settings: dict[str, Settings]
             notes.append(f"{label}: not applied to {where}, the region policy forbids "
                          f"{', '.join(a.ops)}")
             continue
-        clamped = any((a.target, op) in p.limited for op in a.ops) or any(
+        clamped = any((a.target, op) in (p.visual_limited if a.resolved_only else p.limited) for op in a.ops) or any(
             settings.get(c, {}).get(op, 0.0) != p.before.get(c, {}).get(op, 0.0)
             for c in regions for op in a.ops)
         layer = a.target[len(PLACE):] if is_place(a.target) else a.target

@@ -1,47 +1,108 @@
 // Start screen and Folder screen: open, recent, grid, side panel, the batch job and its event stream.
 // Note: main.js and this file import each other; nothing here may use main.js at load time, only inside functions.
 import { el, api, state, store, nice, thumbUrl, joinPath, baseName, getSchema, go, toast, openSheet, setBar, backButton, gearButton } from './main.js';
-import { runOptions } from './settings.js';
-import { loadEntries, textOf, marksOf } from './photo.js';
+import { runOptions, openSettings } from './settings.js';
+import { loadEntries, textOf, marksOf, hideRequest } from './photo.js';
 import { runTool } from './tools.js';
 import { openShare, exportsDir } from './share.js';
+import { getPhoto, loadProject, persistProject, scheduleProjectSave, folderSettingsChanged } from './project.js';
+import { openPhotoPresets } from './presets.js';
+import { workflowSteps, readinessCard } from './workflow.js';
 
 const stemOf = n => n.replace(/\.[^./\\]+$/, '').toLowerCase();
 const MAX_RECENT = 8;
 const DATA_IMG = /^data:image\//;
+const PAGE_SIZE = 100;
 
-const view = { note: '', kind: '', filter: 'all', out: '', hits: null, findNote: '', ui: null, last: -1 };   // ui: the live elements, null when the screen is away
+const view = { note: '', kind: '', filter: 'all', out: '', hits: null, findNote: '', ui: null, last: -1, page: 0, anchor: -1, burst: '' };   // ui: the live elements, null when the screen is away
 let stream = null;
+let opening = false;
+let batchSettings = new Map();
 
 function stopStream() { if (stream) { stream.close(); stream = null; } }
 const running = () => !!state.job && (state.job.status === 'running' || state.job.status === 'paused');
 
 /* ---- opening a folder ------------------------------------------------------------------------ */
-export async function loadFolderPath(path) {
+export async function loadFolderPath(path, { photo } = {}) {
   if (running()) {   // a started batch keeps its folder; ponytail: no background handle, so refuse instead of losing Pause and Cancel
     if (path === state.dir) go('folder'); else toast('A batch is running. Cancel or finish it before opening another folder.');
     return;
   }
-  const g = await api('/groups?dir=' + encodeURIComponent(path)).catch(e => { toast(e.message); return null; });
-  if (!g) return;
-  if (!Array.isArray(g) || !g.length) { toast('No photos in this folder.'); return; }
-  stopStream();
-  Object.assign(state, { dir: path, job: null, look: '', genre: '', strength: null, runText: '', exportPreset: '' });
-  state.files = g.map(x => ({ name: x.raw || x.pixel, path: joinPath(path, x.raw || x.pixel),
-    thumb: joinPath(path, x.pixel || x.raw), checked: true, status: '' }));
-  Object.assign(view, { note: '', kind: '', filter: 'all', out: '', hits: null, findNote: '', last: -1 });
-  try {   // photos already exported show as finished; no exports folder yet is fine
-    const done = new Map((await api('/list?dir=' + encodeURIComponent(exportsDir()))).map(n => [stemOf(n), joinPath(exportsDir(), n)]));
-    state.files.forEach(f => { const p = done.get(stemOf(f.name)); if (p) { f.status = 'finished'; f.exported = p; } });
-  } catch (_) { /* nothing exported yet */ }
-  store.set('recent', [{ path, name: baseName(path), count: g.length, at: Date.now() },
-    ...recents().filter(r => r.path !== path)].slice(0, MAX_RECENT));
-  go('folder');
+  if (opening) return;
+  opening = true;
+  try {
+    if (await persistProject() === false) { toast('Your changes could not be saved. Keep this folder open and try again.'); return; }
+    const g = await api('/groups?dir=' + encodeURIComponent(path)).catch(e => { toast(e.message); return null; });
+    if (!g) return;
+    if (!Array.isArray(g) || !g.length) { toast('No photos in this folder.'); return; }
+    let saved;
+    try { saved = await loadProject(path, { initialize: () => {
+      stopStream();
+      Object.assign(state, { dir: path, job: null, reviewQueue: false, look: '', genre: '', strength: null, runText: '', exportPreset: '', folderSliders: {} });
+      state.files = g.map(x => ({ name: x.raw || x.pixel, path: joinPath(path, x.raw || x.pixel),
+        thumb: joinPath(path, x.pixel || x.raw), checked: true, status: '', captureTime: x.capture_time }));
+    } }); }
+    catch (error) { toast('This project could not be opened: ' + error.message); return; }
+    const last = Number.isInteger(saved.last_index) ? Math.min(saved.last_index, state.files.length - 1) : -1;
+    Object.assign(view, { note: '', kind: '', filter: 'all', out: '', hits: null, findNote: '', last, page: Math.max(0, Math.floor(last / PAGE_SIZE)), anchor: -1, burst: '' });
+    assignBursts();
+    const output = exportsDir();
+    api('/list?dir=' + encodeURIComponent(output)).then(names => {   // exports should not delay opening the workspace
+      if (state.dir !== path) return;
+      const done = new Map(names.map(n => [stemOf(n), joinPath(output, n)]));
+      state.files.forEach(f => { const p = done.get(stemOf(f.name)); if (p) { if (!f.status) f.status = 'finished'; f.exported = p; } });
+      scheduleProjectSave(); paintAll();
+    }).catch(() => { /* nothing exported yet */ });
+    store.set('recent', [{ path, name: baseName(path), count: g.length, at: Date.now() },
+      ...recents().filter(r => r.path !== path)].slice(0, MAX_RECENT));
+    scheduleProjectSave();
+    if (photo) {
+      const index = state.files.findIndex(f => f.path === photo || f.thumb === photo);
+      if (index >= 0) { view.last = index; go('photo', { index }); return; }
+    }
+    go('folder');
+  } finally { opening = false; }
 }
 
+export async function loadPhotoPath(path) {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  if (slash < 0) { toast('Choose a photo using Open photo.'); return; }
+  await loadFolderPath(path.slice(0, slash) || '/', { photo: path });
+}
+
+let picking = false;   // one dialog at a time
 export async function openFolderDialog() {
+  if (picking) return;
+  picking = true;
   try { const r = await api('/pick?kind=folder', {}); if (r.path) await loadFolderPath(r.path); }
   catch (e) { toast(e.message); }
+  finally { picking = false; }
+}
+
+async function openPhotoDialog() {
+  if (picking) return;
+  picking = true;
+  try { const r = await api('/pick?kind=file', {}); if (r.path) await loadPhotoPath(r.path); }
+  catch (e) { toast(e.message); }
+  finally { picking = false; }
+}
+
+async function openSample(event) {
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const sample = await api('/sample', {});
+    await loadFolderPath(sample.dir);
+    if (state.dir === sample.dir) { state.finder = 'stub'; scheduleProjectSave(); }
+  } catch (error) { toast(error.message); }
+  finally { button.disabled = false; }
+}
+
+function dropped(event) {
+  event.preventDefault(); event.currentTarget.classList.remove('dragging');
+  const file = event.dataTransfer?.files?.[0];
+  // Some desktop hosts expose an actual local path; browsers deliberately do not.
+  if (file && typeof file.path === 'string' && file.path) { loadPhotoPath(file.path); return; }
+  toast('Use Open photo or Open folder to choose files on this computer.');
 }
 
 const recents = () => {   // whatever is stored, only well-formed rows
@@ -58,8 +119,16 @@ export const screen = {   // Start
     setBar(el('span', { class: 'title grow' }, 'AutoEdit'), gearButton());
     const recent = recents();
     root.append(el('div', { class: 'start' },
-      el('button', { type: 'button', class: 'primary', on: { click: openFolderDialog } }, 'Open folder'),
-      el('p', { class: 'fine' }, 'Your photos stay on this computer.'),
+      el('h1', null, 'A better edit, ready to make your own'),
+      el('p', { class: 'fine' }, 'Open a photo to refine it, or a folder to edit a whole shoot.'),
+      workflowSteps('open'),
+      el('div', { class: 'start-actions', on: { dragover: e => { e.preventDefault(); e.currentTarget.classList.add('dragging'); }, dragleave: e => e.currentTarget.classList.remove('dragging'), drop: dropped } },
+        el('button', { type: 'button', class: 'primary', on: { click: openPhotoDialog } }, 'Open photo'),
+        el('button', { type: 'button', class: 'line', on: { click: openFolderDialog } }, 'Open folder')),
+      el('button', { type: 'button', class: 'link', on: { click: openSample } }, 'Try a sample set'),
+      el('small', null, 'Generated demo images. No download or setup.'),
+      readinessCard(openSettings),
+      el('p', { class: 'fine' }, 'Edits stay on this computer. Optional cloud suggestions send a small preview only when you request them.'),
       recent.length ? el('div', { class: 'recent' }, el('h3', null, 'Recent'),
         ...recent.map(r => el('button', { type: 'button', on: { click: () => loadFolderPath(r.path) } },
           r.name, el('small', null, r.count + ' photos · opened ' + ago(r.at))))) : null));
@@ -72,11 +141,24 @@ function etaText(s) {
   return s.eta_s >= 90 ? 'about ' + Math.round(s.eta_s / 60) + ' min' : 'about ' + Math.max(1, s.eta_s) + ' s';
 }
 
+function photoSignature(path) {
+  const own = getPhoto(path); delete own.history; delete own.future;
+  return JSON.stringify({ folder: runOptions(), photo: own,
+    sliders: own.sliders === undefined ? state.folderSliders : own.sliders });
+}
+
 function applySnap(s) {
   state.job = { id: s.id, status: s.status };
+  const byPath = new Map(state.files.map(file => [file.path, file]));
   (s.items || []).forEach(it => {
-    const f = state.files.find(x => x.path === it.src);
-    if (f) { f.status = it.status; f.error = it.error || ''; }
+    const f = byPath.get(it.src);
+    if (f) {
+      f.status = it.status; f.error = it.error || '';
+      if (it.out) {
+        f.exported = it.out;
+        if (batchSettings.has(f.path)) f.dirty = batchSettings.get(f.path) !== photoSignature(f.path);
+      }
+    }
   });
   const bits = [];
   if (s.review) bits.push(s.review + ' to look at');
@@ -95,6 +177,7 @@ function applySnap(s) {
   }
   view.out = s.out_dir || '';
   if (!running()) stopStream();
+  scheduleProjectSave();
   paintAll();
 }
 
@@ -116,17 +199,27 @@ function startStream(id) {
 async function editPhotos() {
   const files = state.files.filter(f => f.checked);
   if (!files.length || running()) return;
-  state.files.forEach(f => { f.status = ''; f.error = ''; });
+  files.forEach(f => { f.status = ''; f.error = ''; });
   view.note = 'Starting…'; view.kind = ''; paintAll();
   try {
-    const photo_edits = {}, photo_marks = {};   // each photo's own sentences and marks, as the Photo screen keeps them
+    batchSettings = new Map(files.map(f => [f.path, photoSignature(f.path)]));
+    const photo_edits = {}, photo_marks = {}, photo_hide = {}, photo_options = {};   // exactly the same per-photo settings as Preview and Save
     files.forEach(f => {
-      const l = loadEntries(f.path), t = textOf(l), m = marksOf(l);
+      const l = loadEntries(f.path), t = textOf(l), m = marksOf(l), h = hideRequest(f.path);
       if (t) photo_edits[f.path] = t;
       if (m.length) photo_marks[f.path] = m;
+      if (h) photo_hide[f.path] = h;
+      const own = getPhoto(f.path), options = {};
+      ['look', 'intensity', 'neutral', 'reference', 'reference_strength'].forEach(k => { if (own[k] !== undefined) options[k] = own[k]; });
+      const sliders = own.sliders === undefined ? state.folderSliders : own.sliders;
+      if (sliders && Object.keys(sliders).length) options.photo_settings = sliders;
+      if (own.base !== undefined) options.photo_base = own.base;
+      ['region_settings', 'mask_refinements', 'photo_geometry', 'local_only'].forEach(key => { if (own[key] !== undefined) options[key] = own[key]; });
+      if (Object.keys(options).length) photo_options[f.path] = options;
     });
     const s = await api('/jobs', { input_dir: state.dir, files: files.map(f => f.path), ...runOptions(),
-      ...(Object.keys(photo_edits).length ? { photo_edits } : {}), ...(Object.keys(photo_marks).length ? { photo_marks } : {}) });
+      ...(Object.keys(photo_edits).length ? { photo_edits } : {}), ...(Object.keys(photo_marks).length ? { photo_marks } : {}),
+      ...(Object.keys(photo_hide).length ? { photo_hide } : {}), ...(Object.keys(photo_options).length ? { photo_options } : {}) });
     applySnap(s); startStream(s.id);
   } catch (e) { state.job = null; view.note = e.message; view.kind = 'bad'; paintAll(); }
 }
@@ -135,14 +228,48 @@ const control = action => state.job && api('/jobs/' + encodeURIComponent(state.j
   .then(applySnap).catch(e => { view.note = e.message; view.kind = 'bad'; paintAll(); });
 
 /* ---- painting -------------------------------------------------------------------------------- */
+function assignBursts() {
+  let group = [], id = 0;
+  const time = value => typeof value === 'number' ? value * (value < 1e11 ? 1000 : 1) : Date.parse(value || '');
+  const finish = () => { if (group.length > 1) { const key = 'burst' + ++id; group.forEach(f => { f.burst = key; }); } group = []; };
+  for (const f of [...state.files].sort((a, b) => time(a.captureTime) - time(b.captureTime))) {
+    const t = time(f.captureTime);
+    if (!Number.isFinite(t)) { finish(); continue; }
+    if (group.length && (t - time(group[group.length - 1].captureTime) > 2000)) finish();
+    group.push(f);
+  }
+  finish();
+}
+
+function visibleFiles() {
+  return state.files.filter(f => (view.filter === 'all' || f.status === view.filter || (view.filter === 'attention' && ['review', 'failed'].includes(f.status)))
+    && (!view.hits || view.hits.has(f.path)) && (!view.burst || f.burst === view.burst));
+}
+
+function paintGrid() {
+  const u = view.ui; if (!u) return;
+  const shown = visibleFiles(), pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  view.page = Math.min(Math.max(0, view.page), pages - 1);
+  const page = shown.slice(view.page * PAGE_SIZE, (view.page + 1) * PAGE_SIZE);
+  const sig = page.map(f => f.path).join('\n');
+  if (sig !== u.grid.dataset.signature) {
+    state.files.forEach(f => { f.dot = f.cell = f.box = f.btn = null; });
+    u.grid.replaceChildren(...page.map(f => tile(f, state.files.indexOf(f))));
+    u.grid.dataset.signature = sig;
+  }
+  u.empty.hidden = !!shown.length;
+  u.pageText.textContent = shown.length ? `${view.page * PAGE_SIZE + 1}–${Math.min((view.page + 1) * PAGE_SIZE, shown.length)} of ${shown.length}` : 'No photos';
+  u.prev.disabled = view.page === 0; u.next.disabled = view.page === pages - 1;
+  u.pager.hidden = shown.length <= PAGE_SIZE;
+}
+
 function paintAll() {
   const u = view.ui; if (!u) return;
+  paintGrid();
   const n = state.files.filter(f => f.checked).length, total = state.files.length;
   state.files.forEach(f => {
     if (!f.dot) return;
     if (f.status) f.dot.dataset.status = f.status; else delete f.dot.dataset.status;
-    f.cell.hidden = !(view.filter === 'all' || (view.filter === 'review' && f.status === 'review') || (view.filter === 'failed' && f.status === 'failed'));
-    if (view.hits && !view.hits.has(f.path)) f.cell.hidden = true;
     f.box.checked = f.checked;
     f.btn.title = f.error || '';
   });
@@ -155,15 +282,29 @@ function paintAll() {
   u.findNote.textContent = view.findNote; u.clear.hidden = !view.hits;
   u.pause.hidden = u.cancel.hidden = !running();
   u.pause.textContent = state.job && state.job.status === 'paused' ? 'Resume' : 'Pause';
+  const attention = state.files.filter(f => ['review', 'failed'].includes(f.status)).length;
+  u.review.textContent = 'Review ' + attention; u.review.disabled = !attention;
+  for (const option of u.filter.options) {
+    const labels = { all: 'All', review: 'Needs review', failed: 'Failed', attention: 'Review queue' };
+    const count = option.value === 'all' ? total : option.value === 'attention' ? attention : state.files.filter(f => f.status === option.value).length;
+    option.textContent = labels[option.value] + ' · ' + count;
+  }
 }
 
 function tile(f, i) {
-  f.btn = el('button', { type: 'button', 'aria-label': 'Open ' + f.name, on: { click: () => { view.last = i; go('photo', { index: i }); } } },
+  f.btn = el('button', { type: 'button', 'aria-label': 'Open ' + f.name, on: { click: () => { view.last = i; state.reviewQueue = false; go('photo', { index: i }); } } },
     el('img', { src: thumbUrl(f.thumb, 320), alt: '', loading: 'lazy' }));
   f.box = el('input', { type: 'checkbox', checked: f.checked, 'aria-label': 'Include ' + f.name,
-    on: { change: e => { f.checked = e.target.checked; paintAll(); } } });
+    on: { click: e => {
+      const checked = e.target.checked, visible = visibleFiles();
+      const a = visible.indexOf(state.files[view.anchor]), b = visible.indexOf(f);
+      if (e.shiftKey && a >= 0) visible.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => { x.checked = checked; });
+      else f.checked = checked;
+      view.anchor = i; scheduleProjectSave(); paintAll();
+    } } });
   f.dot = el('span', { class: 'dot' });
-  f.cell = el('li', { class: 'cell' }, f.btn, f.box, f.dot);
+  f.cell = el('li', { class: 'cell' }, f.btn, f.box, f.dot,
+    el('span', { class: 'cell-name' }, f.name), f.burst ? el('span', { class: 'burst-label', title: 'Photos taken within two seconds of the next frame' }, 'Sequence') : null);
   return f.cell;
 }
 
@@ -210,7 +351,7 @@ function surprise(lookSelect) {
           const v = (j.variants || []).find(x => x.name === name) || {};
           grid.append(el('button', { type: 'button', on: { click: () => {
             if (![...lookSelect.options].some(o => o.value === name)) lookSelect.add(new Option(nice(name), name));
-            lookSelect.value = state.look = name; close();
+            lookSelect.value = state.look = name; folderSettingsChanged(); close();
           } } }, el('img', { alt: nice(name), src: DATA_IMG.test(v.after) ? v.after : '' }), el('span', null, nice(name)),
           v.needs_review ? el('small', null, 'may need a look on this photo') : null));
         });
@@ -223,18 +364,18 @@ function surprise(lookSelect) {
 
 function sidePanel() {
   const side = el('aside', { class: 'side', 'aria-label': 'Edit options' });
-  const lookSel = select([['', 'Default']], '', v => { state.look = v; }, 'look');
-  const genreSel = select([['', 'None']], state.genre, v => { state.genre = v; }, 'genre');
+  const lookSel = select([['', 'Default']], '', v => { state.look = v; folderSettingsChanged(); }, 'look');
+  const genreSel = select([['', 'None']], state.genre, v => { state.genre = v; folderSettingsChanged(); }, 'genre');
   const genreField = field('Kind of photo', 'genre', genreSel); genreField.hidden = true;
   const range = el('input', { type: 'range', id: 'strength', min: 0, max: 2, step: 0.05, value: 0.8 });
   const out = el('span', { class: 'value num' }), reset = el('button', { type: 'button', class: 'link', hidden: true }, 'Reset');
   let dflt = 0.8;
   const paintStrength = () => { out.textContent = Number(range.value).toFixed(2); reset.hidden = state.strength === null; };
-  range.addEventListener('input', () => { state.strength = Number(range.value); paintStrength(); });
-  reset.addEventListener('click', () => { state.strength = null; range.value = dflt; paintStrength(); });
+  range.addEventListener('input', () => { state.strength = Number(range.value); paintStrength(); folderSettingsChanged(); });
+  reset.addEventListener('click', () => { state.strength = null; range.value = dflt; paintStrength(); folderSettingsChanged(); });
   const text = el('textarea', { id: 'runText', rows: 3, value: state.runText, placeholder: 'e.g. darken the sky',
-    on: { input: e => { state.runText = e.target.value; } } });
-  const exportSel = select([['', 'Default']], state.exportPreset, v => { state.exportPreset = v; }, 'export');
+    on: { input: e => { state.runText = e.target.value; folderSettingsChanged(); } } });
+  const exportSel = select([['', 'Default']], state.exportPreset, v => { state.exportPreset = v; folderSettingsChanged(); }, 'export');
   const exportField = field('Export as', 'export', exportSel); exportField.hidden = true;
 
   getSchema().then(sc => {
@@ -255,7 +396,14 @@ function sidePanel() {
 
   const run = el('button', { type: 'button', class: 'primary', on: { click: editPhotos } }, 'Edit photos');
   side.append(
-    field('Look', 'look', lookSel, el('button', { type: 'button', class: 'link', on: { click: () => surprise(lookSel) } }, 'Surprise me')),
+    field('Look', 'look', lookSel, el('button', { type: 'button', class: 'link', on: { click: () => surprise(lookSel) } }, 'Surprise me'),
+      el('button', { type: 'button', class: 'link', on: { click: () => openPhotoPresets({
+        getOptions: () => ({ look: state.look, intensity: state.strength === null ? dflt : state.strength, sliders: state.folderSliders || {} }),
+        onApply: settings => {
+          state.look = settings.look || ''; state.strength = settings.intensity === undefined ? null : settings.intensity;
+          state.folderSliders = settings.sliders || {}; folderSettingsChanged(); go('folder');
+        },
+      }) } }, 'My presets')),
     genreField,
     el('div', { class: 'field' }, el('div', { class: 'row' }, el('label', { htmlFor: 'strength' }, 'Strength'), out, reset), range),
     field('What to change in every photo', 'runText', text),
@@ -277,31 +425,53 @@ export const folder = {
       el('button', { type: 'button', on: { click: openShare } }, 'Share'),
       el('button', { type: 'button', on: { click: () => go('tools') } }, 'Tools'),
       gearButton());
-    const all = el('input', { type: 'checkbox', id: 'all', on: { change: e => { state.files.forEach(f => { f.checked = e.target.checked; }); paintAll(); } } });
+    const all = el('input', { type: 'checkbox', id: 'all', on: { change: e => { state.files.forEach(f => { f.checked = e.target.checked; }); scheduleProjectSave(); paintAll(); } } });
     const allText = el('span');
-    const filter = select([['all', 'All'], ['review', 'Look at'], ['failed', 'Failed']], view.filter, v => { view.filter = v; paintAll(); }, 'show');
+    const filter = select([['all', 'All'], ['attention', 'Review queue'], ['review', 'Needs review'], ['failed', 'Failed']], view.filter, v => { view.filter = v; view.page = 0; paintAll(); }, 'show');
+    const review = el('button', { type: 'button', class: 'line', on: { click: () => {
+      const index = state.files.findIndex(f => ['review', 'failed'].includes(f.status));
+      if (index >= 0) { view.filter = 'attention'; view.last = index; state.reviewQueue = true; go('photo', { index }); }
+    } } }, 'Review');
+    const groups = new Map();
+    state.files.filter(f => f.burst).forEach(f => groups.set(f.burst, (groups.get(f.burst) || 0) + 1));
+    const burst = select([['', 'All photos'], ...[...groups].map(([key, n], index) => [key, 'Time group ' + (index + 1) + ' · ' + n + ' photos'])],
+      view.burst, value => { view.burst = value; view.page = 0; paintAll(); }, 'burst');
+    const burstControl = el('div', { class: 'burst-control', hidden: !groups.size }, el('label', { htmlFor: 'burst' }, 'Sequence'), burst);
     const note = el('span', { class: 'grow', role: 'status' });
     const findNote = el('span', { class: 'findnote', role: 'status' });
     const clear = el('button', { type: 'button', class: 'link', hidden: true, on: { click: () => clearFind(findBox) } }, 'Clear');
     const pause = el('button', { type: 'button', hidden: true, on: { click: () => control(state.job.status === 'paused' ? 'resume' : 'pause') } }, 'Pause');
     const cancel = el('button', { type: 'button', hidden: true, on: { click: () => control('cancel') } }, 'Cancel');
     const line = el('div', { class: 'statusline' }, note, pause, cancel);
+    const grid = el('ul', { class: 'grid', 'aria-label': 'Photos' });
+    const empty = el('p', { class: 'grid-empty', hidden: true }, 'No photos match this view. Choose All to see your folder.');
+    const pageText = el('span', { class: 'num', 'aria-live': 'polite' });
+    const changePage = delta => { view.page += delta; paintAll(); grid.scrollIntoView({ block: 'start' }); };
+    const prev = el('button', { type: 'button', class: 'line', on: { click: () => changePage(-1) } }, 'Previous page');
+    const next = el('button', { type: 'button', class: 'line', on: { click: () => changePage(1) } }, 'Next page');
+    const pager = el('nav', { class: 'grid-pages', 'aria-label': 'Photo pages' }, prev, pageText, next);
     const { side, run } = sidePanel();
     root.append(el('div', { class: 'folder' },
       el('div', { class: 'main' },
-        el('ul', { class: 'grid' }, ...state.files.map(tile)),
+        el('div', { class: 'folder-guide' },
+          el('div', null, el('strong', null, 'Start with one photo'), el('small', null, 'Preview the automatic edit, make it yours, then reuse your settings across the folder.')),
+          el('button', { type: 'button', class: 'line', on: { click: () => { const i = state.files.findIndex(file => file.checked); go('photo', { index: i < 0 ? 0 : i }); } } }, 'Preview a photo')),
         el('div', { class: 'tools' }, el('label', null, all, ' ', allText), el('span', { class: 'grow' }),
-          el('label', { htmlFor: 'show' }, 'Show '), filter, findNote, clear),
-        line),
+          burstControl, el('label', { htmlFor: 'show' }, 'Show '), filter, review, findNote, clear),
+        el('small', { class: 'selection-hint' }, 'Shift-click a checkbox to select a range.'),
+        line, grid, empty, pager),
       side));
-    view.ui = { all, allText, run, note, line, pause, cancel, findNote, clear };
+    view.ui = { all, allText, run, note, line, pause, cancel, findNote, clear, filter, review, grid, empty, pageText, prev, next, pager };
     paintAll();
   },
   focus() {   // back from a photo: the tile it came from; else the first one shown
-    const f = state.files[view.last] || state.files.find(x => !x.cell.hidden);
+    const previous = state.files[view.last];
+    const shown = visibleFiles(), position = shown.indexOf(previous);
+    if (position >= 0 && Math.floor(position / PAGE_SIZE) !== view.page) { view.page = Math.floor(position / PAGE_SIZE); paintAll(); }
+    const f = previous?.btn ? previous : state.files.find(x => x.btn);
     if (f) f.btn.focus();
   },
-  unmount() { view.ui = null; },
+  unmount() { scheduleProjectSave(); view.ui = null; },
   key(e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); editPhotos(); return true; }
     return false;

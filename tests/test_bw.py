@@ -255,7 +255,8 @@ def test_the_default_is_unchanged(tmp_path):
     assert all(getattr(zero, k) == 0.0 for k in ("dehaze_add", *ops.BW_KEYS))
     assert looks_mod._BW_FIELDS == ops.BW_KEYS
     packaged = _packaged()
-    assert set(packaged) == _OLD_LOOKS | _NIGHT_LOOKS | set(GOLDEN)
+    # F55 adds an opt-in natural candidate; the existing/default looks remain pinned below.
+    assert set(packaged) == _OLD_LOOKS | _NIGHT_LOOKS | set(GOLDEN) | {"natural_clean"}
     for name, look in packaged.items():
         has_bw = any(getattr(look, k) for k in ops.BW_KEYS)
         assert has_bw == (name in _BW_LOOKS), name

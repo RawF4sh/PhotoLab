@@ -113,6 +113,22 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     def presets():
         return guard(lambda: service.list_presets(configs_dir, profile))
 
+    @api.get("/edit-presets")
+    def editing_presets():
+        from . import edit_presets
+        return guard(lambda: {"presets": edit_presets.listing(profile=profile)})
+
+    @api.post("/edit-presets")
+    def save_editing_preset(payload: dict = Body(...)):
+        from . import edit_presets
+        return guard(lambda: {"preset": edit_presets.save(payload.get("name"), payload.get("settings"),
+                                                          preset_id=payload.get("id"), profile=profile)})
+
+    @api.delete("/edit-presets/{preset_id}")
+    def delete_editing_preset(preset_id: str):
+        from . import edit_presets
+        return guard(lambda: {"deleted": edit_presets.remove(preset_id, profile=profile)})
+
     @api.get("/genres")
     def genres():
         return guard(lambda: service.list_genres(configs_dir, profile))
@@ -144,6 +160,29 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         # RAW+JPEG pairs collapsed into one logical photo (the Studio UI consumes this)
         return guard(lambda: (service.ensure_allowed(dir), service.group_images(dir))[1])
 
+    @api.get("/project")
+    def get_project(dir: str):
+        from . import projects
+        return guard(lambda: {"project": projects.load(dir, profile)})
+
+    @api.post("/project")
+    def save_project(payload: dict = Body(...)):
+        from . import projects
+        def go():
+            _require(payload, "dir", "project")
+            projects.save(payload["dir"], payload["project"], profile)
+            return {"saved": True}
+        return guard(go)
+
+    @api.post("/sample")
+    def sample_project():
+        from .sample import sample_folder
+        def go():
+            folder = sample_folder(profile)
+            service.approve_root(folder)
+            return {"dir": folder}
+        return guard(go)
+
     @api.get("/thumb")
     def thumb(path: str, px: int = 360):
         def go():
@@ -165,6 +204,29 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         folder, file = payload.get("dir", ""), payload.get("file", "")
         path = os.path.join(folder, file) if folder and file else (file or folder)
         return guard(lambda: (service.ensure_allowed(path), service.preview(path, payload, configs_dir, profile=profile))[1])
+
+    @api.post("/detail")
+    def native_detail(payload: dict = Body(...)):
+        def go():
+            _require(payload, "file")
+            if not isinstance(payload["file"], str) or not isinstance(payload.get("dir", ""), str):
+                raise ValueError("file and dir must be paths as text")
+            path = os.path.join(payload.get("dir", ""), payload["file"])
+            service.ensure_allowed(path)
+            return service.detail(path, payload, configs_dir, profile=profile)
+        return guard(go)
+
+    @api.post("/assist")
+    def assistant_suggestion(payload: dict = Body(...)):
+        from . import assist
+        def go():
+            _require(payload, "file")
+            if not isinstance(payload["file"], str) or not isinstance(payload.get("dir", ""), str):
+                raise ValueError("file and dir must be paths as text")
+            path = os.path.join(payload.get("dir", ""), payload["file"])
+            service.ensure_allowed(path)
+            return assist.suggest(path, payload, configs_dir, profile=profile)
+        return guard(go)
 
     @api.post("/run")
     def run(payload: dict = Body(...)):
@@ -208,7 +270,8 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
             return jobs.snapshot(jobs.start(
                 payload.get("input_dir"), payload.get("files"), payload.get("out_dir"),
                 payload, configs_dir, profile, photo_edits=payload.get("photo_edits"),
-                photo_marks=payload.get("photo_marks")))
+                photo_marks=payload.get("photo_marks"), photo_hide=payload.get("photo_hide"),
+                photo_options=payload.get("photo_options")))
         return guard(go)
 
     @api.get("/jobs/{job_id}")

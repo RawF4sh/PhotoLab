@@ -22,7 +22,7 @@ _EPS = 1e-6
 OP_NAMES = (
     # night sky (F31): corrections of the capture, made by the pipeline to the decoded photo
     "hot_pixels", "sky_gradient",
-    "exposure", "highlight_rolloff", "shadows_ev", "contrast", "highlights", "shadows", "whites",
+    "exposure", "highlight_rolloff", "highlight_detail", "shadows_ev", "contrast", "highlights", "shadows", "whites",
     "blacks", "curve", "clarity", "black_point", "white_point", "vibrance", "saturation", "dehaze", "temp", "tint",
     # color grading (split-tone) — tint shadows/highlights independently
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
@@ -45,6 +45,7 @@ BW_KEYS = ("bw", "bw_red", "bw_yellow", "bw_green", "bw_cyan", "bw_blue", "bw_ma
 OP_BOUNDS = {
     "exposure": (-3.0, 3.0),
     "highlight_rolloff": (0.0, 100.0),
+    "highlight_detail": (0.0, 100.0),
     "shadows_ev": (-2.5, 2.5),  # stops at black; the lift stays monotonic below 2.88
     "contrast": (-100.0, 100.0),
     "highlights": (-100.0, 100.0),
@@ -87,7 +88,7 @@ OP_BOUNDS = {
 
 # Ops that read more than their own pixel: neighbours (blurs) or the whole frame (dehaze airlight).
 SPATIAL_OPS = frozenset({"dehaze", "clarity", "sharpen", "black_point", "white_point", "denoise", "grain",
-                         "hot_pixels", "sky_gradient", "denoise_stars", "sharpen_stars"})
+                         "hot_pixels", "sky_gradient", "denoise_stars", "sharpen_stars", "highlight_detail"})
 
 # The frozen order as data: one tuple per step of apply_ops, in order. A settings bundle may be
 # cut between two steps and applied in two calls with the same result (apply.py relies on it).
@@ -97,7 +98,7 @@ SPATIAL_OPS = frozenset({"dehaze", "clarity", "sharpen", "black_point", "white_p
 # writes, after the resize.
 STEPS = (
     ("hot_pixels", "sky_gradient"),
-    ("temp", "tint", "exposure", "highlight_rolloff"),
+    ("temp", "tint", "exposure", "highlight_rolloff", "highlight_detail"),
     ("shadows_ev",),
     ("highlights", "shadows", "whites", "blacks"),
     ("contrast",),
@@ -152,27 +153,71 @@ def _resize_float(a: np.ndarray, size: tuple[int, int], resample=PILImage.BILINE
 _WHITE_LIN = float(srgb_to_linear(np.float32(0.98)))
 
 
-def highlight_rolloff(lin: np.ndarray, amount: float) -> np.ndarray:
+# Highlight detail (F50). Constants of the op, like the levels and grain constants.
+_DETAIL_SIGMA = 0.01    # the base: the bright pixels within about this share of the long edge (Gaussian sigma)
+_DETAIL_FROM = 0.70     # gamma luma where a pixel starts to count as bright ...
+_DETAIL_FULL = 0.85     # ... and counts fully
+_DETAIL_RATIO = 1.1     # largest base/pixel ratio (linear) a pixel is held by; beyond it, it is structure
+_DETAIL_TOP = float(srgb_to_linear(np.float32(0.975)))   # kept detail ends under 0.975: room for the sharpening
+
+
+def detail_ratio(rgb: np.ndarray) -> np.ndarray:
+    """F50: per pixel, base / pixel in linear light; the base is the mean luma of the BRIGHT pixels around
+    it, so a sky beside a dark ridge takes its base from the sky. Clipped to [1/_DETAIL_RATIO,
+    _DETAIL_RATIO], faded to 1 on pixels that are not bright. Reads the whole frame: once, before the strips."""
+    y = luma(rgb).astype(np.float32)
+    m = np.clip((y - _DETAIL_FROM) / (_DETAIL_FULL - _DETAIL_FROM), 0.0, 1.0)
+    sigma = _DETAIL_SIGMA * max(y.shape)
+    base = gaussian_blur(y * m, sigma) / np.maximum(gaussian_blur(m, sigma), 1e-4)
+    r = srgb_to_linear(base) / np.maximum(srgb_to_linear(y), 1e-6)
+    return np.exp(m * np.log(np.clip(r, 1.0 / _DETAIL_RATIO, _DETAIL_RATIO))).astype(np.float32)
+
+
+def _shoulder(v, a, w):
+    """v up to a; above it a + (w - a)(1 - exp(-(v - a) / (w - a))): slope 1 at a, under w (a < w)."""
+    d = w - a
+    return np.where(v > a, a + d * (1.0 - np.exp(-np.maximum(v - a, 0.0) / d)), v)
+
+
+def highlight_rolloff(lin: np.ndarray, amount: float, ratio: np.ndarray | None = None,
+                      detail: float = 0.0) -> np.ndarray:
     """Soft highlight knee in LINEAR light — what a camera's tone curve does that a bare exposure
     multiply cannot. With W = the clip level (0.98 gamma) and knee point kp = W·(1 − amount/200)
     (amount 40 → kp ≈ 0.76 linear ≈ 0.88 gamma), values above kp follow
     kp + (W−kp)·(1 − exp(−(x−kp)/(W−kp))): continuous with slope 1 at kp, monotonic, asymptote W,
     so anything an exposure lift pushes past white compresses into [kp, W) instead of clipping.
-    Pixels below kp are untouched; amount 0 is the identity."""
+    Pixels below kp are untouched; amount 0 is the identity.
+
+    F50: with `ratio` (from `detail_ratio`, base / pixel per pixel) and `detail` > 0 (percent), a bright
+    pixel is held by the level of the bright area around it, not by its own: at or under its base it
+    takes the base's gain, so texture on it keeps its ratio to its surroundings; above its base the
+    same gain under a soft cap that ends at 0.975. A smooth area (ratio 1) is held exactly as before."""
     if amount <= 0.0:
         return lin
     kp = _WHITE_LIN * (1.0 - 0.5 * min(amount, 100.0) / 100.0)
+    s = min(max(float(detail), 0.0), 100.0) / 100.0 if ratio is not None else 0.0
     over = lin > kp
-    if not over.any():
+    if not over.any() and s == 0.0:
         return lin
     out = lin.copy()
     x = (lin[over] - kp) / (_WHITE_LIN - kp)
     out[over] = kp + (_WHITE_LIN - kp) * (1.0 - np.exp(-x))
+    if s == 0.0:
+        return out
+    r = np.broadcast_to(ratio[..., None], lin.shape)
+    b = lin * r                                    # each channel at its base level
+    act = np.maximum(lin, b) > kp                  # elsewhere the plain knee's values stay, bit for bit
+    r, b, o = r[act], b[act], out[act]
+    kb = _shoulder(b, kp, _WHITE_LIN)              # the knee at the base
+    top = np.float32(_DETAIL_TOP)
+    cap = _shoulder(kb / r, np.minimum(kb, top * np.float32(0.9999)), top)
+    local = np.where(r >= 1.0, kb / r, np.maximum(o, cap))   # at/below the base: its gain; above: capped
+    out[act] = o + np.float32(s) * (local - o)
     return out
 
 
 def light(rgb: np.ndarray, temp: float = 0.0, tint: float = 0.0, ev: float = 0.0,
-          rolloff: float = 0.0) -> np.ndarray:
+          rolloff: float = 0.0, ratio: np.ndarray | None = None, detail: float = 0.0) -> np.ndarray:
     """White balance + exposure + highlight knee in ONE linear pass (one decode, one encode).
     The separate `white_balance`/`exposure` ops are kept for tests and callers; apply_ops uses
     this because each gamma round-trip on a 22 MP frame costs ~0.5 s. No intermediate clip
@@ -185,7 +230,7 @@ def light(rgb: np.ndarray, temp: float = 0.0, tint: float = 0.0, ev: float = 0.0
         lin[..., 2] *= 1.0 - 0.2 * (temp / 100.0)
     if ev:
         lin = lin * (2.0 ** ev)
-    return linear_to_srgb(highlight_rolloff(lin, rolloff))
+    return linear_to_srgb(highlight_rolloff(lin, rolloff, ratio, detail))
 
 
 def exposure(rgb: np.ndarray, ev: float, rolloff: float = 0.0) -> np.ndarray:
@@ -757,12 +802,13 @@ def bw(rgb: np.ndarray, amt: float, red: float = 0.0, yellow: float = 0.0, green
     return (rgb + np.float32(a) * (y[..., None] - rgb)).astype(np.float32)
 
 
-def _tone_steps(out: np.ndarray, settings: dict) -> np.ndarray:
-    """The per-pixel steps before dehaze: light, shadow lift, tone, contrast, curve."""
+def _tone_steps(out: np.ndarray, settings: dict, ratio: np.ndarray | None = None) -> np.ndarray:
+    """The per-pixel steps before dehaze: light, shadow lift, tone, contrast, curve. `ratio` (F50) is the
+    knee's base / pixel map of the whole frame, for `highlight_detail`."""
     temp, tint = settings.get("temp", 0.0), settings.get("tint", 0.0)
     ev, rolloff = settings.get("exposure", 0.0), settings.get("highlight_rolloff", 0.0)
     if temp or tint or ev or rolloff:  # WB → exposure → knee, one linear pass (frozen order kept)
-        out = light(out, temp, tint, ev, rolloff)
+        out = light(out, temp, tint, ev, rolloff, ratio, settings.get("highlight_detail", 0.0))
     if settings.get("shadows_ev", 0.0):  # black-pinned lift, before the additive tone sliders
         out = shadow_lift(out, settings["shadows_ev"])
     if any(settings.get(k, 0.0) for k in ("highlights", "shadows", "whites", "blacks")):
@@ -796,7 +842,11 @@ def apply_ops(rgb: np.ndarray, settings: dict) -> np.ndarray:
     The first step (`hot_pixels`, `sky_gradient`: the pipeline corrects the decoded photo, F31) and the last two steps, `lut` and `grain`, are not rendered here: the pipeline lays the LUT over the finished picture and emit.py adds the grain to the picture it writes."""
     out = rgb
     if any(settings.get(k, 0.0) for k in _TONE_KEYS):
-        out = par.rows(lambda a: _tone_steps(a, settings), out)
+        if settings.get("highlight_detail", 0.0) and settings.get("highlight_rolloff", 0.0):
+            # F50: the base reads the whole frame, so it is made once, before the strips
+            out = par.rows(lambda a, r: _tone_steps(a, settings, r), out, detail_ratio(out))
+        else:
+            out = par.rows(lambda a: _tone_steps(a, settings), out)
     if settings.get("dehaze", 0.0):
         out = dehaze(out, settings["dehaze"])
     if settings.get("clarity", 0.0):

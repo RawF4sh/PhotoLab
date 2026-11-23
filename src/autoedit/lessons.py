@@ -123,7 +123,7 @@ def _item(part, op, asked, target, plan, before, after) -> dict:
     if "big" in part:
         c = part["big"]
         was, now = before.get(c, {}), after.get(c, {})
-        shared = sum(c in cs for cs in plan.hit.values()) > 1
+        shared = sum(c in cs for cs in (*plan.hit.values(), *plan.visual_hit.values())) > 1
         value = now.get(op, 0.0) if shared else now.get(op, 0.0) - (was.get(op, 0.0) - asked)
         blocked = op in was and op not in now
         full = (now.get(op, 0.0) == was.get(op, 0.0)) if shared else round(value, 6) == round(asked, 6)
@@ -141,20 +141,24 @@ def walk(adjs, plan, before, after, vocab, lessons) -> list[dict]:
     """The walk-through of one photo's own changes: one entry per target of a photo-scope
     adjustment, in order. `before` and `after` are the cell settings before and after the
     policies ran."""
-    mine: dict[str, list] = {}
+    mine: dict[tuple[str, bool], list] = {}
     for a in adjs:
         if a.scope == "photo":
-            mine.setdefault(a.target, []).append(a)
+            mine.setdefault((a.target, a.resolved_only), []).append(a)
     out = []
-    for target, group in mine.items():
+    for (target, resolved_only), group in mine.items():
         label, kind = _label_kind(target)
-        cells = plan.hit.get(target, [])
+        if resolved_only:
+            label = "the selected " + target
+        cells = (plan.visual_hit if resolved_only else plan.hit).get(target, [])
+        wanted = plan.visual_asked if resolved_only else plan.asked
+        limited = plan.visual_limited if resolved_only else plan.limited
         found = bool(cells)
         sources = list(dict.fromkeys(a.source for a in group if a.source))
         statuses = [a.status for a in group if a.status in _RANK]
         parts = _parts(target, kind, label, cells, plan) if found else []
         tools, held = [], []
-        for op, asked in plan.asked.get(target, {}).items():
+        for op, asked in wanted.get(target, {}).items():
             items = [_item(p, op, float(asked), target, plan, before, after) for p in parts]
             tools.append({"op": op, "asked": round(float(asked), 6), "applied": items, **_lines(lessons, "op", op)})
             for it in items:
@@ -162,12 +166,13 @@ def walk(adjs, plan, before, after, vocab, lessons) -> list[dict]:
                     held.append(f"{it['part']} keeps its limits: {op} {asked:+g} became {it['value']:+g}")
                 elif it["state"] == "blocked":
                     held.append(f"{it['part']} takes no {op}: its policy forbids it")
-            if found and (target, op) in plan.limited:
-                held.append(f"the limit for typed changes holds {op} at {asked:+g}")
+            if found and (target, op) in limited:
+                held.append(f"the limit for {'selected-object' if resolved_only else 'typed'} changes holds {op} at {asked:+g}")
         kinds = (["policy"] if any(i["state"] != "full" for t in tools for i in t["applied"]) else []) + \
-                (["limit"] if found and any((target, t["op"]) in plan.limited for t in tools) else []) + ["gate"]
+                (["limit"] if found and any((target, t["op"]) in limited for t in tools) else []) + ["gate"]
         guards = [{"kind": k, **_lines(lessons, "guard", k)} for k in kinds if k in lessons.get("guard", {})]
         out.append({"target": target, "sources": sources, "label": label,
+                    **({"resolved_only": True} if resolved_only else {}),
                     "status": min(statuses, key=_RANK.index) if statuses else "",
                     "mask": _mask(target, kind, label, found, plan, lessons),
                     "parts": [{"label": p["label"], "share": float(p["share"])} for p in parts],

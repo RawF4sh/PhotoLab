@@ -1,0 +1,46 @@
+/* Workspace navigation stays compact while selection targets remain easy to hit. */
+.start h1, .start > p { text-align: center; max-width: 42ch; }
+.start-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-3); padding: var(--sp-4); border: 1px dashed transparent; border-radius: var(--r-m); }
+.start-actions.dragging { border-color: var(--accent); background: var(--raised); }
+.start-actions button { min-height: 44px; padding-inline: var(--sp-5); }
+.folder .tools { margin: 0 0 var(--sp-2); }
+.folder .tools button, .folder .tools select { min-height: 40px; }
+.folder .tools label { display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 40px; }
+.selection-hint { display: block; margin-bottom: var(--sp-2); }
+.folder .statusline { margin: 0 0 var(--sp-3); }
+.burst-control { display: flex; align-items: center; gap: var(--sp-2); }
+.cell-name { position: absolute; left: 0; right: 0; bottom: 0; padding: var(--sp-2); color: #fff; font-size: var(--fs-s); background: linear-gradient(transparent, rgb(0 0 0 / .72)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.burst-label { position: absolute; right: var(--sp-2); bottom: 32px; border-radius: var(--r-s); padding: 2px 5px; font-size: 11px; color: #fff; background: rgb(0 0 0 / .65); pointer-events: none; }
+.grid-pages { display: flex; justify-content: center; align-items: center; gap: var(--sp-4); margin-top: var(--sp-5); }
+.grid-pages button { min-height: 44px; }
+.grid-empty { padding: var(--sp-6); color: var(--text-2); text-align: center; }
+.workflow-steps { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-4); width: min(840px, 100%); margin: var(--sp-5) 0; text-align: left; }
+.workflow-steps li { display: flex; align-items: flex-start; gap: var(--sp-2); color: var(--text-2); }
+.workflow-steps small, .readiness-card small, .folder-guide small, .saved-preset small { display: block; line-height: 1.5; }
+.step-number { display: grid; place-items: center; flex: 0 0 26px; height: 26px; border: 1px solid var(--line); border-radius: 50%; font-size: 12px; }
+.workflow-steps .current .step-number { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.readiness-card, .folder-guide { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-m); padding: var(--sp-4); }
+.readiness-card { max-width: 650px; text-align: left; margin-top: var(--sp-4); }
+.folder-guide { margin-bottom: var(--sp-4); background: var(--raised); }
+.readiness-card button, .folder-guide button { flex-shrink: 0; min-height: 44px; }
+.settings-section { padding: var(--sp-4) 0; border-bottom: 1px solid var(--line); }
+.settings-section > summary { cursor: pointer; min-height: 44px; align-content: center; font-weight: 600; }
+.settings-section > input { width: 100%; margin: var(--sp-2) 0; }
+.settings-section input[type=password] { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-s); min-height: 40px; padding: var(--sp-2); }
+.assistant-consent { display: flex; align-items: flex-start; gap: var(--sp-2); margin: var(--sp-4) 0; }
+.assistant-consent input { flex: 0 0 auto; margin-top: 3px; }
+.saved-presets { display: grid; gap: var(--sp-2); margin: var(--sp-4) 0; }
+.saved-preset { display: flex; gap: var(--sp-2); }
+.saved-preset > button:first-child { flex: 1; text-align: left; min-height: 56px; white-space: normal; }
+.saved-preset small { font-weight: 400; color: var(--text-2); }
+.preset-save { display: grid; grid-template-columns: 1fr auto; gap: var(--sp-2); }
+.preset-save label { grid-column: 1 / -1; }
+.preset-save input { min-width: 0; }
+@media (max-width: 719px) {
+  .folder .tools { align-items: stretch; }
+  .folder .tools .grow { flex-basis: 100%; }
+  .grid-pages { gap: var(--sp-2); }
+  .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+  .readiness-card, .folder-guide { align-items: stretch; flex-direction: column; }
+  .preset-save { grid-template-columns: 1fr; }
+}

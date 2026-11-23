@@ -18,6 +18,52 @@ DEFAULTS = {"max_angle": 5.0, "min_angle": 0.3, "tolerance": 0.004, "water_span"
 _SCAN, _STEP = 8.0, 0.05     # degrees tried on each side of level, and between two tries
 _MIN_DEPTH = 0.02            # a column counts when the mask is this share of the height deep there
 
+
+def check_manual(value):
+    """Explicit source-coordinate crop/rotation; None inherits the automatic framing choice."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"angle", "crop"}:
+        raise ValueError("photo_geometry must contain angle and/or crop")
+    angle = value.get("angle", 0)
+    if isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle) or not -15 <= angle <= 15:
+        raise ValueError("photo_geometry.angle must be a finite number from -15 to 15 degrees")
+    crop = value.get("crop")
+    if crop is not None:
+        if not isinstance(crop, (list, tuple)) or len(crop) != 4 or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 1 for v in crop):
+            raise ValueError("photo_geometry.crop must be [x0, y0, x1, y1] in 0 to 1")
+        if crop[2] - crop[0] < .02 or crop[3] - crop[1] < .02:
+            raise ValueError("photo_geometry.crop must keep at least 2% of each source dimension")
+        crop = [float(v) for v in crop]
+    return {"angle": float(angle), "crop": crop}
+
+
+def manual(value, hw):
+    """Create an emit-stage frame wholly inside real source pixels; no fill or expansion.
+
+    The crop selects a centre/size in the source. Rotation keeps that centre and aspect, reducing
+    its size only as much as needed for all four rotated corners to remain inside the source.
+    """
+    value = check_manual(value)
+    if value is None:
+        return None, []
+    angle, crop = value["angle"], value["crop"]
+    x0, y0, x1, y1 = crop or (0, 0, 1, 1)
+    if not angle and (x0, y0, x1, y1) == (0, 0, 1, 1):
+        return None, ["framing: explicit original frame, no rotation or crop"]
+    H, W = hw
+    cx, cy, w, h = (x0+x1)/2, (y0+y1)/2, x1-x0, y1-y0
+    c, s = abs(math.cos(math.radians(angle))), abs(math.sin(math.radians(angle)))
+    a, b = w*W/2, h*H/2
+    scale = min(1., min(cx, 1-cx)*W / (a*c+b*s), min(cy, 1-cy)*H / (a*s+b*c))
+    geo = Geometry(angle=angle, line="manual" if angle else "", cx=cx, cy=cy, w=w*scale, h=h*scale,
+                   kept=w*h*scale*scale, aspect="manual")
+    notes = [f"framing: manual rotation {angle:+.2f} degrees; {geo.kept*100:.1f}% of source frame retained"]
+    if scale < 1 - 1e-8:
+        notes.append("framing: crop reduced to remain inside real source pixels; no edges were generated")
+    return geo, notes
+
 def config(rules: dict) -> dict:
     """`DEFAULTS` with the `[geometry]` block of `rules` laid over it (an older rules file has none)."""
     out = dict(DEFAULTS)

@@ -2,6 +2,7 @@
 import { screen as start, openFolderDialog, loadFolderPath, folder } from './folder.js';
 import { screen as photo } from './photo.js';
 import { openSettings, applySurround } from './settings.js';
+import { rememberPhoto } from './project.js';
 
 const KEY = 'autoedit.app.v1';
 export const store = {
@@ -10,9 +11,14 @@ export const store = {
 };
 
 export const state = {
-  dir: '', files: [], look: '', genre: '', strength: null, runText: '', exportPreset: '',
+  dir: '', files: [], look: '', genre: '', strength: null, runText: '', exportPreset: '', folderSliders: {},
   finder: store.get('finder', 'auto'), settings: store.get('settings', {}), job: null,
 };
+
+// Older settings sheets could store a manually entered key. Keys are session-only now;
+// remove any legacy credential fields instead of carrying them into another workspace.
+state.settings = Object.fromEntries(Object.entries(state.settings || {}).filter(([key]) => !/key|secret|token|password|credential/i.test(key)));
+store.set('settings', state.settings);
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -32,12 +38,15 @@ export function el(tag, attrs, ...kids) {
   return n;
 }
 
-export async function api(path, body) {
+export async function api(path, body, { signal } = {}) {
   let r;
   try {
-    r = await fetch('/api/v1' + path, body === undefined ? {} :
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch (_) { throw new Error('The AutoEdit server is not reachable.'); }
+    r = await fetch('/api/v1' + path, body === undefined ? { signal } :
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw new Error('The AutoEdit server is not reachable.');
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.error) throw new Error(j.error || 'The server answered ' + r.status);
   return j;
@@ -100,6 +109,7 @@ function render() {
   if (current && current.unmount) current.unmount();
   const root = $('#view'); root.replaceChildren(); setBar();
   current = screens[target];
+  if (target === 'photo') rememberPhoto(idx === undefined ? 0 : Number(idx) || 0);
   current.mount(root, { index: idx === undefined ? 0 : Number(idx) || 0 });
   if (current.focus) current.focus();
   document.title = 'AutoEdit';

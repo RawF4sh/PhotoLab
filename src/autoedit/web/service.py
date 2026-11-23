@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import base64
 import io
+import copy
+import json
 import os
 import subprocess
 import sys
 import threading
+from collections import OrderedDict
+from dataclasses import replace
 
 import numpy as np
 from PIL import Image as PILImage
@@ -19,27 +23,40 @@ from PIL import Image as PILImage
 from .. import batch, curate, emit, geometry, history, instructions, lessons, looks as looks_mod, paths, teach, variants
 from ..concepts import load_concepts
 from ..contract import Adjustment, RunConfig
-from ..imageio import downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
+from ..imageio import analysis_opts, downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
 from ..pipeline import Pipeline
 from ..segment.base import parse_mark
+from ..segment import refine as refine_masks
 from ..styles import load_styles
+from . import photo_base
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
 _ALLOWED = (
     "style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
-    "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "night_sky", "raw_mode", "raw_recover", "lens_ca",
-    "highlight_hold", "light_shaping", "snap_edges", "out_long_edge", "out_name", "out_subdir",
+    "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "night_sky", "raw_mode", "raw_recover", "lens_ca", "lens_vignette", "fast_analysis",
+    "highlight_hold", "highlight_detail", "light_shaping", "snap_edges", "out_long_edge", "out_name", "out_subdir",
     "translator", "grain", "grain_size", "lut", "lut_amount", "history", "straighten", "out_aspect",
-    "neutral", "wb", "backdrop", "consistency_wb", "colour_report", "reveal_check",
+    "neutral", "wb", "backdrop", "consistency_wb", "colour_report", "reveal_check", "hide", "hide_method",
+    "mask_refinements", "photo_geometry",
 )
 
 
 def make_cfg(opts: dict, configs_dir: str | None = None, profile: str | None = None) -> RunConfig:
+    opts = photo_base.options(opts)
+    if "local_only" in opts and not isinstance(opts["local_only"], bool):
+        raise ValueError("local_only must be true or false")
+    # A per-photo Default clears an inherited folder look; the genre/style then supplies its
+    # normal default, exactly as the photo screen does when it omits its cleared look.
+    if opts.get("look") == "":
+        opts = {k: v for k, v in opts.items() if k != "look"}
     kw: dict = paths.config_paths(configs_dir, profile)
-    if opts.get("lut"):     # a file path from a request: inside a folder the user picked, like every photo
-        ensure_allowed(str(opts["lut"]))
+    # Restoring a project never grants file access: an external reference must be picked again
+    # in this session, just like a LUT. All preview, export and variant paths share this guard.
+    for key in ("lut", "reference"):
+        if opts.get(key):
+            ensure_allowed(str(opts[key]))
     if opts.get("genre"):   # a genre first (F30): the export preset and explicit options win over it
         from .. import genres as _genres
         kw.update(_genres.run_kwargs(str(opts["genre"]), kw, style_named=opts.get("style") is not None))
@@ -53,6 +70,11 @@ def make_cfg(opts: dict, configs_dir: str | None = None, profile: str | None = N
     for k in _ALLOWED:
         if opts.get(k) is not None:
             kw[k] = opts[k]
+    selected = photo_base.check(opts.get("photo_base")).get("selected_regions", [])
+    if "region_settings" in opts or selected:
+        kw["selected_regions"] = list(dict.fromkeys([*selected, *check_region_settings(opts.get("region_settings"))]))
+    if opts.get("local_only"):
+        kw.update(decider="rules", allow_cloud=False)
     kw["profile_dir"] = profile
     concepts = opts.get("concepts")
     if isinstance(concepts, str) and concepts.strip():
@@ -191,10 +213,13 @@ def group_images(folder: str) -> list[dict]:
         by_stem[key].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
 
     def _entry(members: list[dict]) -> dict:
+        from ..consistency import capture_time
         raw = next((m["name"] for m in members if m["kind"] == "raw"), None)
         pixel = next((m["name"] for m in members if m["kind"] == "pixel"), None)
+        # Metadata only: prefer the camera's JPEG, avoiding a RAW decode just to group a shoot.
+        stamp = capture_time(os.path.join(folder, pixel or raw or members[0]["name"]))
         return {"stem": os.path.splitext(members[0]["name"])[0], "members": members,
-                "raw": raw, "pixel": pixel}
+                "raw": raw, "pixel": pixel, "capture_time": stamp}
 
     out: list[dict] = []
     for key in order:
@@ -235,8 +260,9 @@ def _img_b64(rgb01: np.ndarray, max_px: int = 1600, fmt: str = "jpeg", quality: 
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
     if fmt == "webp":
         # Lossless WebP: pixel-exact like PNG (so the anti-banding dither survives) but typically
-        # 30–45% smaller — the before/after preview ships two of these per keystroke.
-        pil.save(buf, format="WEBP", lossless=True, quality=100, method=4)
+        # 30–45% smaller — the before/after preview ships two of these per keystroke. Lowest
+        # effort (F51): same pixels, about 6 % larger, 10x faster than quality=100, method=4.
+        pil.save(buf, format="WEBP", lossless=True, quality=50, method=0)
         return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
     pil.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -248,7 +274,12 @@ def thumb_bytes(path: str, px: int = 360, quality: int = 82) -> bytes:
     caller can't turn this into a full-resolution image server (px=100000 would skip downscale)."""
     check_image(path)
     px = max(32, min(int(px), 2048))
-    proxy = downscale_long_edge(load_image(path), px)
+    # A RAW thumbnail from LibRaw's half-size demosaic (F51, owner's yes): about 2.4x faster; a full decode
+    # when the half-size picture would be smaller than the px asked for.
+    proxy = load_image(path, {"half_size": True})
+    if is_raw(path) and max(proxy.rgb.shape[:2]) < px:
+        proxy = load_image(path)
+    proxy = downscale_long_edge(proxy, px)
     pil = PILImage.fromarray((np.clip(proxy.rgb, 0.0, 1.0) * 255 + 0.5).astype(np.uint8), "RGB")
     buf = io.BytesIO()
     pil.save(buf, format="JPEG", quality=quality)
@@ -312,7 +343,104 @@ def photo_adjustments(pipe: Pipeline, text) -> tuple[list, list[str]]:
 
 MAX_PHOTO_MARKS = 20         # marks on one photo (F37)
 PREVIEW_LONG_EDGE = 4096     # a preview applies on a copy of at most this size; the export applies at full size
+PREVIEW_EDGES = (640, 1600, 2560)
+_PREVIEW_CACHE = OrderedDict()
+_PREVIEW_CACHE_LOCK = threading.Lock()
+_PREVIEW_CACHE_BYTES = 384 * 1024 * 1024
+_PREVIEW_LATEST = OrderedDict()
+_PREVIEW_LATEST_LOCK = threading.Lock()
 _RANK = ["not_found", "blocked", "clamped", "applied"]
+
+
+def editor_sliders() -> tuple[dict, dict]:
+    les = lessons.load(paths.config_path("lessons.toml", packaged_fallback=True))
+    return teach.sliders(les), les
+
+
+def check_photo_settings(value) -> dict:
+    """Saved controls are direct, bounded offsets to the automatic plan; zero is unchanged."""
+    if value is None:
+        return {}
+    table, _ = editor_sliders()
+    try:
+        return teach.check_try({"sliders": value}, table)["sliders"]
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("try.sliders", "photo_settings")) from None
+
+
+def settings_adjustments(value) -> list[Adjustment]:
+    checked = check_photo_settings(value)
+    return [Adjustment(target=instructions.GLOBAL, ops=checked, scope="photo")] if checked else []
+
+
+def check_region_settings(value) -> dict:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > refine_masks.MAX_CONCEPTS:
+        raise ValueError("region_settings must contain at most 32 concepts")
+    return {refine_masks.name(name): check_photo_settings(ops) for name, ops in value.items()}
+
+
+def region_adjustments(value) -> list[Adjustment]:
+    return [Adjustment(target=name, ops=ops, scope="photo", resolved_only=True)
+            for name, ops in check_region_settings(value).items() if ops]
+
+
+def _preview_request(opts, register=False):
+    """Superseded UI requests may finish decoding, but skip queued model/render work."""
+    session, revision = opts.get("preview_session"), opts.get("preview_revision")
+    if session is None and revision is None:
+        return
+    if not isinstance(session, str) or not 1 <= len(session) <= 128 or type(revision) is not int or revision < 0:
+        raise ValueError("preview_session and preview_revision must be a short name and a non-negative integer")
+    with _PREVIEW_LATEST_LOCK:
+        newest = _PREVIEW_LATEST.get(session, -1)
+        if revision < newest:
+            raise ValueError("preview superseded by a newer edit")
+        if register:
+            _PREVIEW_LATEST[session] = revision
+            _PREVIEW_LATEST.move_to_end(session)
+            while len(_PREVIEW_LATEST) > 256:
+                _PREVIEW_LATEST.popitem(last=False)
+
+
+def _preview_images(image_path: str, cfg, edge: int):
+    """Cache the bounded source plus its original analysis proxy, never an edited result.
+
+    File identity and decode options invalidate the cache. Every caller owns its arrays and
+    metadata, so an in-place operation cannot contaminate another preview. Full exports decode
+    independently and never consume this reduced copy.
+    """
+    stat = os.stat(image_path)
+    opts = analysis_opts(cfg, image_path) or raw_opts_from(cfg)   # F51: the mode is in the key
+    prof = opts.get("lens_profiles")
+    try:
+        prof_mt = os.stat(prof).st_mtime_ns if prof else None   # a rebuilt profile is a new key
+    except OSError:
+        prof_mt = None
+    key = (os.path.realpath(image_path), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns,
+           stat.st_ctime_ns, json.dumps(opts, sort_keys=True), prof_mt, cfg.analysis_long_edge, PREVIEW_LONG_EDGE)
+    with _PREVIEW_CACHE_LOCK:
+        entry = _PREVIEW_CACHE.get(key)
+        if entry is None:
+            source = load_image(image_path, decode=opts)
+            proxy = downscale_long_edge(source, cfg.analysis_long_edge)
+            work = downscale_long_edge(source, PREVIEW_LONG_EDGE)
+            size = work.rgb.nbytes + proxy.rgb.nbytes
+            entry = (work, proxy, size, source.long_edge)
+            if size <= _PREVIEW_CACHE_BYTES:
+                _PREVIEW_CACHE[key] = entry
+                while len(_PREVIEW_CACHE) > 3 or sum(x[2] for x in _PREVIEW_CACHE.values()) > _PREVIEW_CACHE_BYTES:
+                    _PREVIEW_CACHE.popitem(last=False)
+        elif key in _PREVIEW_CACHE:
+            _PREVIEW_CACHE.move_to_end(key)
+    work, proxy, _, original_edge = entry
+    # The final preview retains the existing 4096px apply path. Quick previews reduce apply
+    # cost but analyze the exact same original proxy, reusing segmentation and decisions.
+    work = downscale_long_edge(work, edge if edge < 2560 else PREVIEW_LONG_EDGE)
+    def owned(img):
+        return replace(img, rgb=img.rgb.copy(), exif=copy.deepcopy(img.exif), decode_info=copy.deepcopy(img.decode_info))
+    return owned(work), owned(proxy) if work.long_edge < original_edge else None
 
 
 def check_marks(marks, vocab) -> list[dict]:
@@ -400,16 +528,17 @@ def translator_status(configs_dir: str | None = None, profile: str | None = None
 
 
 _PENDING = "\0pending"      # a step picture that waits for the export's frame (F32)
-TRY_DROPS = ("edit", "prompt", "reference", "lut", "neutral", "wb", "backdrop")            # run options that edit: a try starts without them
+TRY_DROPS = ("edit", "prompt", "reference", "lut", "neutral", "wb", "backdrop", "photo_base", "region_settings")            # run options that edit: a try starts without them
 TRY_FIXED = {"decider": "rules", "allow_cloud": False, "compose": False, "palette": "none", "grain": 0.0}
-NOT_THE_ENGINE = ("try", "steps", "photo_edit", "photo_marks")   # request keys that are the user's own
+NOT_THE_ENGINE = ("try", "steps", "photo_edit", "photo_marks", "photo_settings", "photo_base", "region_settings")   # request keys that are the user's own
 
 
 def _edit(image_path: str, opts: dict, configs_dir: str | None, profile: str | None, trial=None, steps=None,
-          geo_box: list | None = None) -> dict:
+          geo_box: list | None = None, native: bool = False) -> dict:
     """One preview render: what `preview` answers from. `trial`: a checked `try` (F29), edited by nothing but
     its sliders and sentences. `steps`: a `teach.Steps` that listens to it (F29). `geo_box` (F32): a list that gets the
     export's geometry as soon as the render has decided it, so the step pictures can be turned before it ends."""
+    base = photo_base.check(opts.get("photo_base")) if trial is None else {}
     cfg = make_cfg({**{k: v for k, v in opts.items() if k not in TRY_DROPS}, **TRY_FIXED} if trial is not None else opts,
                    configs_dir, profile)
     pipe = build_pipeline(cfg)
@@ -418,14 +547,20 @@ def _edit(image_path: str, opts: dict, configs_dir: str | None, profile: str | N
     photo_adjs, photo_problems = photo_adjustments(pipe, opts.get("photo_edit"))
     vocab = pipe.vocab()
     mark_adjs, facts = mark_adjustments(pipe, check_marks(opts.get("photo_marks"), vocab))
-    photo_adjs = photo_adjs + mark_adjs
+    photo_adjs = photo_base.adjustments(base) + photo_adjs + mark_adjs
+    if trial is None:
+        photo_adjs += settings_adjustments(opts.get("photo_settings"))
+        photo_adjs += region_adjustments(opts.get("region_settings"))
     if trial and trial["sliders"]:      # a direct adjustment, as `autoedit adjust --set global.OP=VALUE` makes it
         photo_adjs.insert(0, Adjustment(target=instructions.GLOBAL, ops=dict(trial["sliders"]), scope="photo"))
-    work = load_image(image_path, decode=raw_opts_from(cfg))
-    proxy = None
-    if work.long_edge > PREVIEW_LONG_EDGE:          # bound apply cost on very large files
-        proxy = downscale_long_edge(work, cfg.analysis_long_edge)   # as the export analyses it
-        work = downscale_long_edge(work, PREVIEW_LONG_EDGE)
+    _preview_request(opts)
+    if native:
+        work = load_image(image_path, decode=raw_opts_from(cfg))
+        fast = analysis_opts(cfg, image_path)
+        analysis = load_image(image_path, decode=fast) if fast is not None else work
+        proxy = downscale_long_edge(analysis, cfg.analysis_long_edge)
+    else:
+        work, proxy = _preview_images(image_path, cfg, opts.get("preview_edge", 2560))
     seen, walk, shape, union, regions = [], [], [(0, 0)], {}, []
 
     def _resolved(resolved):
@@ -438,16 +573,21 @@ def _edit(image_path: str, opts: dict, configs_dir: str | None, profile: str | N
         walk.extend(lessons.walk(*args, vocab, lessons.load(
             paths.config_path("lessons.toml", packaged_fallback=True))))
     with INFERENCE_LOCK:
+        _preview_request(opts)
         out_rgb, result = pipe.process_one(
             image_path, do_apply=True, image=work, proxy=proxy, adjustments=photo_adjs or None,
+            exposure_bias=base.get("exposure_bias", 0.0),
+            wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))),
             on_resolved=_resolved, on_plan=_planned,
             on_stage=steps.stage if steps else None, on_step=steps.step if steps else None,
             on_geometry=(lambda g: geo_box.__setitem__(slice(None), [g])) if geo_box is not None else None)
-    geo = result.geometry
+    geo = None if opts.get("preview_unframed") else result.geometry
     overlays = [o for resolved in regions for o in _mask_previews(resolved, geo)]
+    source_overlays = overlays if geo is None else [o for resolved in regions for o in _mask_previews(resolved)]
     marks, mark_overlays = _mark_answer(facts, seen[0] if seen else None, shape[0], vocab, geo)
     return {"cfg": cfg, "pipe": pipe, "work": work, "proxy": proxy, "out": out_rgb, "result": result,
             "union": union, "walk": walk, "overlays": overlays,
+            "source_overlays": source_overlays,
             "problems": [*pipe.adjust_problems, *photo_problems], "marks": marks, "mark_overlays": mark_overlays}
 
 
@@ -471,19 +611,26 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     typed sentences alone, and the answer's `before`, `after`, `result` describe that try; `try` gives the sliders,
     `compare` (on request) the engine's edit beside it. Only this function reads `try`: an export never does."""
     check_image(image_path)
-    trial = table = les = None
+    _preview_request(opts, register=True)
+    if "preview_unframed" in opts and not isinstance(opts["preview_unframed"], bool):
+        raise ValueError("preview_unframed must be true or false")
+    edge = opts.get("preview_edge", 2560)
+    if isinstance(edge, bool) or not isinstance(edge, int) or edge not in PREVIEW_EDGES:
+        raise ValueError("preview_edge must be 640, 1600 or 2560")
+    max_px = min(max_px, edge)
+    saved_sliders = check_photo_settings(opts.get("photo_settings"))
+    table, les = editor_sliders()
+    trial = None
     px, lossless = teach.check_steps(opts.get("steps"))     # first: {} is a valid steps value, and asks for steps
-    if opts.get("try") is not None or px:
-        les = lessons.load(paths.config_path("lessons.toml", packaged_fallback=True))
     if opts.get("try") is not None:
-        table = teach.sliders(les)
         trial = teach.check_try(opts["try"], table)
     px = min(px, max_px)
 
     geo_box, held = [], []      # F32: the export's frame, once the render has decided it; the source picture, held for it
 
     def small(rgb, grain=None):
-        return _img_b64(rgb, px, fmt="webp" if lossless else "jpeg", grain=grain, geo=geo_box[0] if geo_box else None)
+        return _img_b64(rgb, px, fmt="webp" if lossless else "jpeg", grain=grain,
+                        geo=None if opts.get("preview_unframed") else geo_box[0] if geo_box else None)
 
     def encode(rgb):
         if not held:            # the first picture is shown before the frame is decided: it is encoded at the end
@@ -492,7 +639,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
         return small(rgb)
     walk = teach.Steps(encode) if px else None
     r = _edit(image_path, opts, configs_dir, profile, trial, walk, geo_box)
-    geo = r["result"].geometry
+    geo = None if opts.get("preview_unframed") else r["result"].geometry
+    actual = {m["name"]: m for m in r["source_overlays"]}
     grain = emit.grain_args(r["result"], r["cfg"])
     answer = {
         "before": _img_b64(r["work"].rgb, max_px, fmt="webp", geo=geo),
@@ -503,6 +651,15 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
         "walkthrough": r["walk"],
         "mark_overlays": r["mark_overlays"],
         "marks": r["marks"],
+        "preview_edge": edge,
+        "coordinate_space": "source" if opts.get("preview_unframed") or geo is None else "framed",
+        "source": {"width": r["work"].width, "height": r["work"].height},
+        "objects": [{"name": c.name, "label": c.name.replace("_", " "), "found": c.name in actual,
+                      "coverage": actual.get(c.name, {}).get("coverage", 0), "alpha": actual.get(c.name, {}).get("alpha")}
+                     for c in r["result"].concepts],
+        "editor": {"sliders": [{"op": op, "min": lo, "max": hi, "step": st,
+                                  "value": saved_sliders.get(op, 0.0), **lessons._lines(les, "op", op)}
+                                 for op, (lo, hi, st) in table.items()]},
         "reveal": r["result"].reveal.model_dump() if r["result"].reveal else None,     # F21: null = the check was off
     }
     if walk is not None:
@@ -522,10 +679,57 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
         m = [teach.measure(x["work"].rgb, x["out"], x["proxy"] or downscale_long_edge(x["work"], x["cfg"].analysis_long_edge),
                            x["union"], x["pipe"]) for x in (r, e)]
         answer["compare"] = {"engine": _img_b64(e["out"], max_px, fmt="webp", grain=emit.grain_args(e["result"], e["cfg"]),
-                                           geo=e["result"].geometry),
+                                           geo=None if opts.get("preview_unframed") else e["result"].geometry),
                              **teach.compare(r["result"], e["result"], m[0], m[1], les, trial["sliders"],
                                              r["pipe"].quality_gate)}
     return answer
+
+
+def detail(image_path: str, opts: dict, configs_dir: str | None = None, profile: str | None = None) -> dict:
+    """One-to-one pixel crops from the full local render, after its output framing.
+
+    No preview cache or reduced development is used for apply. Grain and output quantization
+    happen on the complete native frame before cutting, preserving their pixel coordinates.
+    Export resize and lossy file compression are intentionally outside this native inspection.
+    """
+    from ..imageio import _to_u8
+    from ..edit import ops
+    from .. import watermark
+    ensure_allowed(image_path)
+    check_image(image_path)
+    xy = [opts.get(k, .5) for k in ("x", "y")]
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v <= 1 for v in xy):
+        raise ValueError("detail x and y must be finite normalized coordinates from 0 to 1")
+    requested = opts.get("size", 512)
+    if type(requested) is not int or not 64 <= requested <= 1024:
+        raise ValueError("detail size must be a whole number from 64 to 1024")
+    local = {**{k: v for k, v in opts.items() if k not in ("try", "steps")},
+             "local_only": True, "decider": "rules", "allow_cloud": False, "translator": "off", "preview_unframed": False}
+    r = _edit(image_path, local, configs_dir, profile, native=True)
+    geo = r["result"].geometry
+    before, after = geometry.warp(r["work"].rgb, geo), geometry.warp(r["out"], geo)
+    grain = emit.grain_args(r["result"], r["cfg"])
+    if grain:
+        after = ops.grain(after, *grain)
+    mark = watermark.args(r["cfg"])
+    if mark:
+        after = watermark.draw(after, **mark)
+    h, w = after.shape[:2]
+    cw, ch = min(requested, w), min(requested, h)
+    x = max(0, min(w-cw, round(xy[0]*w - cw/2)))
+    y = max(0, min(h-ch, round(xy[1]*h - ch/2)))
+
+    def encode(rgb):
+        crop = _to_u8(rgb)[y:y+ch, x:x+cw]
+        buf = io.BytesIO()
+        PILImage.fromarray(crop, "RGB").save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    return {"before": encode(before), "after": encode(after), "crop": {"x": x, "y": y, "width": cw, "height": ch},
+            "full": {"width": w, "height": h}, "source": {"width": r["work"].width, "height": r["work"].height},
+            "scale": 1, "geometry": geo.model_dump() if geo else None,
+            "export_resize": r["cfg"].out_long_edge, "local_only": True,
+            "note": "Native pixels before export resize and file compression. The same local edits and framing are applied."}
 
 
 def run_batch(input_dir: str, out_dir: str, opts: dict, configs_dir: str | None = None,
@@ -654,7 +858,8 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
         except Exception:
             model = None
 
-    work = None
+    work = proxy = None
+    base = photo_base.check(opts.get("photo_base"))
     decode_opts = None
     scored = []
     for spec in specs:
@@ -663,11 +868,21 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
         cfg = make_cfg(o, configs_dir, profile)
         raw_opts = raw_opts_from(cfg)
         if work is None or raw_opts != decode_opts:
-            work = downscale_long_edge(load_image(image_path, decode=raw_opts), 1400)
+            work, proxy = _preview_images(image_path, cfg, 1600)
+            if proxy is None and work.long_edge > 1400:
+                proxy = downscale_long_edge(work, cfg.analysis_long_edge)
+            work = downscale_long_edge(work, 1400)
             decode_opts = raw_opts
         pipe = build_pipeline(cfg)
+        photo_adjs, _ = photo_adjustments(pipe, opts.get("photo_edit"))
+        photo_adjs = photo_base.adjustments(base) + photo_adjs
+        photo_adjs += mark_adjustments(pipe, check_marks(opts.get("photo_marks"), pipe.vocab()))[0]
+        photo_adjs += settings_adjustments(opts.get("photo_settings"))
+        photo_adjs += region_adjustments(opts.get("region_settings"))
         with INFERENCE_LOCK:
-            out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work)
+            out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work, proxy=proxy,
+                                               adjustments=photo_adjs or None, exposure_bias=base.get("exposure_bias", 0.0),
+                                               wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))))
         item = {"name": spec["name"], "opts": variants.spec_opts(spec), "scene": result.scene,
                 **variants.score_variant(result, out_rgb, model)}
         if with_images:
@@ -688,18 +903,27 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
             profile: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)
+    base = photo_base.check(opts.get("photo_base"))
     cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
     pipe.use_mask_cache(out_dir)
     photo_adjs, _ = photo_adjustments(pipe, opts.get("photo_edit"))
+    photo_adjs = photo_base.adjustments(base) + photo_adjs
     photo_adjs += mark_adjustments(pipe, check_marks(opts.get("photo_marks"), pipe.vocab()))[0]
+    photo_adjs += settings_adjustments(opts.get("photo_settings"))
+    photo_adjs += region_adjustments(opts.get("region_settings"))
     with INFERENCE_LOCK:
-        out_rgb, result = pipe.process_one(image_path, do_apply=True, adjustments=photo_adjs or None)
+        out_rgb, result = pipe.process_one(image_path, do_apply=True, adjustments=photo_adjs or None,
+                                           exposure_bias=base.get("exposure_bias", 0.0),
+                                           wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))))
     os.makedirs(out_dir, exist_ok=True)
     image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,
                                            subdir=cfg.out_subdir, fields={"style": cfg.style, "n": 1},
                                            sources=emit.source_ids([image_path]))
     emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, image_path)
+    # Single-photo saves must be replayable by Copy to similar just like a batch export.
+    from .jobs import _note_input_dir
+    _note_input_dir(out_dir, [image_path])
     return {"image_out": image_out, "sidecar": sidecar, "result": result.model_dump()}
 
 
@@ -737,6 +961,9 @@ def pick_path(kind: str = "folder") -> str | None:
     return path
 
 
+NATIVE_PICKER = None   # set by web/desktop.py: kind -> path or None
+
+
 def _pick_native(kind: str = "folder") -> str | None:
     """Open a NATIVE picker on the machine running the server (the user's own Mac/PC) and
     return the chosen absolute path. kind: 'folder' | 'file' | 'json'. Returns None on cancel.
@@ -744,6 +971,8 @@ def _pick_native(kind: str = "folder") -> str | None:
     macOS uses Finder via osascript; other platforms fall back to a tkinter dialog. This is
     why AutoEdit's UI is a *local* app — the server can read local paths and pop a real dialog,
     which a sandboxed browser cannot do on its own."""
+    if NATIVE_PICKER is not None:   # the desktop app (`autoedit app`) sets its window's dialog
+        return NATIVE_PICKER(kind)
     if sys.platform == "darwin":
         if kind == "folder":
             verb = 'choose folder with prompt "Select a folder for AutoEdit"'

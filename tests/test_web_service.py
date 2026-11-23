@@ -284,3 +284,27 @@ def test_preview_analyses_what_the_export_analyses(tmp_path):
         assert pre[k] == exp[k], k
     assert [(m["target"], m["coverage"], m["ops"]) for m in pre["masks"]] == \
            [(m["target"], m["coverage"], m["ops"]) for m in exp["masks"]]
+
+
+def test_fast_webp_is_still_lossless():
+    # F51 T1: the low-effort WebP decodes to exactly the pixels it was given.
+    rgb = np.random.default_rng(0).random((90, 120, 3)).astype(np.float32)
+    def px(fmt):
+        data = base64.b64decode(service._img_b64(rgb, max_px=512, fmt=fmt).split(",", 1)[1])
+        return np.asarray(PILImage.open(io.BytesIO(data)).convert("RGB"))
+    assert np.array_equal(px("webp"), px("png"))
+
+
+def test_thumbnails_decode_at_half_size(tmp_path):
+    # F51 T3 (owner's yes, 2026-11-22): thumbnails ask the decoder for LibRaw's half-size demosaic.
+    from autoedit.imageio import Image
+    p = tmp_path / "a.jpg"
+    PILImage.new("RGB", (64, 48), (90, 120, 150)).save(p)
+    seen = []
+    real = service.load_image
+    service.load_image = lambda path, decode=None: seen.append(decode) or Image(rgb=np.full((48, 64, 3), 0.5, np.float32))
+    try:
+        assert service.thumb_bytes(str(p), px=32)[:2] == b"\xff\xd8"
+    finally:
+        service.load_image = real
+    assert seen == [{"half_size": True}]

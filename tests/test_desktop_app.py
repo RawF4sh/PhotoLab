@@ -104,3 +104,15 @@ def test_app_help_parses():
     r = subprocess.run([sys.executable, "-m", "autoedit.cli", "app", "--help"], capture_output=True,
                        text=True, env={"PYTHONPATH": str(ROOT / "src"), "PATH": ""})
     assert r.returncode == 0 and "--debug" in r.stdout, r.stderr
+
+
+def test_server_picker_uses_the_window_dialog():
+    # `autoedit app` sets service.NATIVE_PICKER so /api/v1/pick opens on the window, not in Finder.
+    from autoedit.web import service
+    seen = []
+    old = service.NATIVE_PICKER
+    service.NATIVE_PICKER = lambda kind: seen.append(kind) or None
+    try:
+        assert service._pick_native("folder") is None and seen == ["folder"]
+    finally:
+        service.NATIVE_PICKER = old

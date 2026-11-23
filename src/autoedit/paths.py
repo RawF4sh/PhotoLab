@@ -183,11 +183,37 @@ def _number(val, lo: float, hi: float, name: str, path: str) -> None:
         raise ValueError(f"{path}: {name} must be from {lo} to {hi}, not {val}")
 
 
+# The hide methods (F22) and the numbers each takes; the methods themselves are code (hide.py).
+_HIDE_SCALARS = {"margin": (0, 1), "margin_min_px": (0, 50)}
+_HIDE_METHODS = {"cover": {"ring": (0.02, 2)}, "mosaic": {"blocks": (2, 40)}, "blur": {"sigma": (0.02, 2)}}
+
+
+def _check_hide(hide, path: str) -> None:
+    if not isinstance(hide, dict):
+        raise ValueError(f"{path}: hide must be a table")
+    for key, val in hide.items():
+        if key == "method":
+            if val not in _HIDE_METHODS:
+                raise ValueError(f"{path}: hide.method must be one of {', '.join(_HIDE_METHODS)}, not {val!r}")
+        elif key in _HIDE_SCALARS:
+            _number(val, *_HIDE_SCALARS[key], f"hide.{key}", path)
+        elif key in _HIDE_METHODS:
+            if not isinstance(val, dict):
+                raise ValueError(f"{path}: hide.{key} must be a table")
+            for k, x in val.items():
+                if k not in _HIDE_METHODS[key]:
+                    raise ValueError(f"{path}: unknown key hide.{key}.{k}; valid keys: {', '.join(_HIDE_METHODS[key])}")
+                _number(x, *_HIDE_METHODS[key][k], f"hide.{key}.{k}", path)
+        else:
+            raise ValueError(f"{path}: unknown key hide.{key}; valid keys: "
+                             f"{', '.join(['method', *_HIDE_SCALARS, *_HIDE_METHODS])}")
+
+
 def _check_reveal(data: dict, path: str) -> None:
     """Refuse a reveal.toml that is malformed or would make the check slow (each word is a model call)."""
     for key in data:
-        if key not in ("check", "kind"):
-            raise ValueError(f"{path}: unknown key {key!r}; valid keys: check, kind")
+        if key not in ("check", "kind", "hide"):
+            raise ValueError(f"{path}: unknown key {key!r}; valid keys: check, kind, hide")
     check = data.get("check", {})
     if not isinstance(check, dict):
         raise ValueError(f"{path}: check must be a table")
@@ -204,6 +230,7 @@ def _check_reveal(data: dict, path: str) -> None:
         else:
             raise ValueError(f"{path}: unknown key check.{key}; valid keys: "
                              f"{', '.join(list(_CHECK_RANGES) + ['max_findings', 'tiles'])}")
+    _check_hide(data.get("hide", {}), path)
     kinds = data.get("kind", {})
     if not isinstance(kinds, dict):
         raise ValueError(f"{path}: kind must be a table of tables")

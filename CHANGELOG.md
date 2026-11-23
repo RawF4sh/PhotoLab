@@ -3,6 +3,86 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Guided photo editing and optional Gemini suggestions (F55)
+
+### Added
+
+- Guided first use with sample photos, local/model readiness and collapsed advanced settings.
+- Found-object sliders, arbitrary named-object requests, and undoable selection correction
+  brushes. Coordinates stay attached to the uncropped source; missing objects are explicit.
+- Visual crop/straighten and native-resolution before/after detail inspection, shared across
+  preview, save and folder export. Rotation never fills missing edges.
+- Gemini suggestions as reviewable, bounded global/object adjustments. Applying is one history
+  action and leaves subsequent rendering local. Session-only keys, explicit cloud consent,
+  stripped thumbnails, request limits and safe failure preserve the local workflow.
+- Local named presets for look, strength and whole-photo controls, reusable on photos/folders
+  while preserving per-photo overrides. Presets exclude coordinates, paths and credentials.
+- Opt-in `natural_clean` candidate and `scripts/natural_review.py` for repeatable blind comparison
+  with honest category coverage. The default recipe is unchanged; owner preference is still required.
+
+Spec and verification: `docs/plans/F55-guided-photo-workflow.md`.
+
+## [Unreleased] — Saved editing workspace (F54)
+
+### Added
+- Main photo controls for exposure, contrast, highlights, shadows, temperature, tint and color.
+  They are saved adjustments to the automatic edit, shared by previews, single exports and batches.
+- Local projects restore folder choices, individual edits, selection, export state and bounded
+  undo/redo history. Projects survive the desktop server changing ports; credentials are excluded.
+- Visual look comparisons, a reference panel, split before/after, preview pixel zoom/pan,
+  a neighboring-photo filmstrip, and quick previews followed by sharp previews.
+- Single-photo opening, locally generated sample images, paged folder grids, Shift selection,
+  capture-time groups and a review queue. Browser drops without a local path use the file picker.
+- Copy-to-similar recipient and adjustment-category selection; unrelated edits and marks on
+  recipient photos are preserved. Exposure matching can be switched off independently.
+
+### Changed
+- Preview decode caching is bounded and invalidated by source/decode changes; stale queued
+  previews can be skipped. Exports continue using full-resolution source pixels.
+- Global adjustment limits include the automatic baseline; clamped adjustments are reported.
+
+Spec and verification: `docs/plans/F54-editing-workspace.md`.
+
+## [Unreleased] — F22 and F50–F53
+
+### Added
+- **Hide on request** (F22), off by default: `autoedit run ... --hide plate,face` hides every
+  finding of those reveal kinds in the export; `--hide-method cover|mosaic|blur` and the `hide`
+  and `hide_method` settings. `cover` (default) is one flat fill in the average colour of the
+  surroundings and copies nothing from under the region; `mosaic` and `blur` scale with the region and keep a trace.
+  The mask is grown by a margin and never feathered inward; hiding is the last pixel step of
+  apply, on the full-size picture, and the source is never changed. Methods and numbers are data
+  in the `[hide]` table of `configs/reveal.toml`. The photo screen lists findings with a Hide
+  button. Content rule (owner, 2026-11-22): AutoEdit never invents content; hiding a region is
+  allowed when the user asks and is always reported.
+- Every hidden region is in the sidecar (`reveal.hidden`: kind, box, method, trace) and the
+  notes; a request that hid nothing says why (`reveal.hide_note`); `run.json` and the last line
+  of a run count them. Spec and result: `docs/plans/F22-hide-on-request.md`.
+- **Sky detail** (F50), off by default (`--highlight-detail`, setting `highlight_detail`): the
+  highlight roll-off takes its gain from the level around each bright pixel, so faint cloud and snow
+  keep their contrast. With `raw_recover` it keeps 0066 and 0103 at their full edit (tone gate: no
+  photo pulled back that the default leaves alone). Replaces an earlier, unreleased texture step
+  for the same failure. Spec: `docs/plans/F50-sky-highlight-pull.md`.
+- **Fast analysis** (F51), off by default (`--fast-analysis`, `[decode] fast_analysis`): the edit is
+  decided on LibRaw's half-size development and applied to the full one; previews come faster.
+  Spec: `docs/plans/F51-fast-analysis-decode.md`.
+- **Lens vignette** (F52), off by default: `autoedit lens-profile FOLDER` builds a per-lens profile
+  (camera and lens model names and numbers only) by comparing each RAW with its camera JPEG; 
+  `--lens-vignette` applies it at decode, as strong as the camera's own correction. Spec:
+  `docs/plans/F52-lens-vignette-profiles.md`.
+- **Reveal check measurement** (F53): `scripts/eval_reveal.py` measures each word on its own and
+  recommends thresholds by the new rule; it changes no setting until the owner labels new photos.
+  Spec: `docs/plans/F53-reveal-check-precision.md`.
+
+### Changed
+- Previews encode their lossless WebP at the lowest effort (same pixels, about 10x faster), and RAW
+  thumbnails decode at half size (F51).
+- The desktop app's folder and file dialogs open on its own window (`autoedit app`), and a second
+  click no longer opens a second dialog.
+- The reveal findings are built by one function that can also return their masks; the report
+  is unchanged.
+- The "Never" line of the plan now reads: AutoEdit never invents content.
+
 ## [Unreleased] — A minimal interface for the browser and the desktop (F49)
 
 ### Added

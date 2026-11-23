@@ -32,9 +32,9 @@ _GROUP_GAP = 0.08
 _MAX_BIAS_EV = 0.15
 
 
-def quick_lum(path: str, px: int = 384) -> float:
-    """Cheap mean luminance from a small proxy — no segmentation (pass-1 signal)."""
-    proxy = downscale_long_edge(load_image(path), px)
+def quick_lum(path: str, px: int = 384, half: bool = False) -> float:
+    """Cheap mean luminance from a small proxy — no segmentation (pass-1 signal). `half`: F51, a RAW file at half size."""
+    proxy = downscale_long_edge(load_image(path, {"half_size": True} if half and is_raw(path) else None), px)
     return float(luma(proxy.rgb).mean())
 
 
@@ -253,11 +253,11 @@ def _timelapse_plan(images: list[str], pipeline, thr: dict) -> dict[str, Bias]:
     return out
 
 
-def _brightness_plan(images: list[str]) -> dict[str, Bias]:
+def _brightness_plan(images: list[str], half: bool = False) -> dict[str, Bias]:
     lums: dict[str, float] = {}
     for path in images:
         try:
-            lums[path] = quick_lum(path)
+            lums[path] = quick_lum(path, half=half)
         except Exception:
             continue
     groups = plan_groups(list(lums.items()))
@@ -398,7 +398,7 @@ def plan(images: list[str], cfg, pipeline, thr: dict | None = None, progress=Non
         return _with_rules(pipeline, lambda: _timelapse_plan(images, pipeline, thr))
     if cfg.consistency == "bursts":
         return _bursts_plan(images, pipeline, thr, progress, by_cast)
-    out = _brightness_plan(images)
+    out = _brightness_plan(images, getattr(cfg, "fast_analysis", False))
     if by_cast:
         _with_rules(pipeline, lambda: _cast_plan(out, pipeline, thr, progress))
     return out
