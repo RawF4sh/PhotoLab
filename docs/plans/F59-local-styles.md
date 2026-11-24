@@ -376,7 +376,9 @@ second one read the fixes.
 
 - A default run and Standard render as before the build: the two smoke photos and eight RAW files
   of the corpus are byte-identical to the commit before it.
-- TONE_LINE
+- The tone report on the 110 RAW files passes by default and with each candidate on, also after
+  the fixes below: 0 dark made darker, 0 pushed into clipping, 0 hard failures. Moody landscape
+  declares 11 photos darker, which is counted apart.
 - `quality.toml` is untouched, and the order of the pipeline's stages is unchanged.
 - `darker` skips only the relative darkness check, and `richer` only the two relative colour
   checks. Clipping, banding, texture and halo checks still fire for both.
@@ -410,6 +412,19 @@ second one read the fixes.
 | The search adds up its measures | A control may move one measure away from its range when the sum improves: raising saturation to reach `sat` moved `warmth` further off. | Refuse a step that moves any listed measure away from its range. |
 | A profile's style table | One malformed table refuses every run, Standard included. | Refuse only the style that is wrong. |
 | The optional LLM decider's wording | Its prompt says every op but exposure runs on a scale of 100. `shadows_ev` is in stops too, and has been since before this build. A model that answers on the wrong scale is held at the op's bound, 2.5 EV. | Name the ops in stops in the prompt and give them the small step exposure has. A change of the protected network path, with its own check. |
+
+**What the sheets of the first round show, as hypotheses for the next one**
+
+Seen on the comparison sheets of the held-back photos. Those 24 photos per style are spent by
+this: a second round needs a new held-back set.
+
+| Seen | Likely cause | One change to try |
+| --- | --- | --- |
+| Dark islands in a sky: small blue openings between clouds turn dark grey, and a dark smear runs along a cloud's edge | The burn works `within = "sky"`, and the sky's mask has holes wherever a cloud was found as its own region. Each fragment near the top gets the full gradient while the cloud beside it gets none. | Let a move work inside several regions and burn inside sky and cloud together, as a photographer burns a whole sky. |
+| A luminous stripe where a mountain meets low cloud | The band sits on a "horizon" that was the edge of a cloud, not a waterline. The round lowered the band from +1.0 to +0.2 EV, which hides it and does not remove the cause. | Place the band only when water lies under the line. |
+| A blue or cool cast over sunlit grass, larches and rock: named in 13 of the checker's 21 reasons for preferring Standard | The colour pull and the palette work on the whole frame. | Hold warm regions (grass, trees, rock in sun) out of the cool pull, as lamps are held out of the lift. |
+| A dark, heavy or grey picture: named in 11 of the 21 | The frame is pulled toward darker shadows, and the sky burn and the vignette come on top. | A smaller `pull`, or a shadow range measured on more photos than the seed. |
+| Dots along the top edge of a pale sky | Not found. A feathered mask that reaches the frame edge does not fade there (measured). The sky's mask may stop short of the edge on these photos. | Look at the masks of the three photos before changing anything. |
 
 ## Left out, and what would bring each back
 

@@ -95,6 +95,9 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     source = source or _source_from_manifest(out_dir, old.image)
     if not source or not os.path.isfile(source):
         raise FileNotFoundError(f"source photo for {old.image} not found; pass --source")
+    if apply:       # D11: a re-render cannot apply the manual stage, so it must not replace an export that has one
+        from .web import projects
+        projects.require_automatic_export(source, projects.manual_sources(os.path.dirname(os.path.abspath(source)), profile))
     given = {"reference": reference, "recipe_model": recipe_model, "lut": lut}
     for key, name in (old.audit.get("run_inputs") or {}).items():
         if not name:

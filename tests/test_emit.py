@@ -5,6 +5,7 @@ import json
 import os
 
 import numpy as np
+import pytest
 from PIL import Image as PILImage
 
 from autoedit import emit
@@ -43,3 +44,42 @@ def test_save_image_atomic_no_partfile(tmp_path):
     assert os.path.exists(p)
     assert not os.path.exists(p + ".part.jpg")
     assert PILImage.open(p).size == (8, 8)
+
+
+def _own_export(folder, source, fmt="jpeg", image_field=None):
+    """Make the files an earlier single-photo export of `source` would have left."""
+    image, sidecar = emit.output_paths(str(folder), source, fmt)
+    open(image, "wb").write(b"export")
+    json.dump({"image": image_field or os.path.basename(source)}, open(sidecar, "w"))
+    return image, sidecar
+
+
+def test_single_output_paths_free_names_and_own_earlier_export(tmp_path):
+    img, side = emit.single_output_paths(str(tmp_path), "/cam/IMG_1.CR2", "jpeg")
+    assert os.path.basename(img) == "IMG_1.jpg" and os.path.basename(side) == "IMG_1.autoedit.json"
+    _own_export(tmp_path, "/cam/IMG_1.CR2")
+    assert emit.single_output_paths(str(tmp_path), "/cam/IMG_1.CR2", "jpeg") == (img, side)   # replaces its own
+
+
+def test_single_output_paths_never_replaces_another_photos_export(tmp_path):
+    _own_export(tmp_path, "/cam/IMG_1.CR2")
+    img, side = emit.single_output_paths(str(tmp_path), "/cam/IMG_1.JPG", "jpeg")
+    assert os.path.basename(img) == "IMG_1-2.jpg" and os.path.basename(side) == "IMG_1-2.autoedit.json"
+    (tmp_path / "IMG_1-2.jpg").write_bytes(b"export")       # the JPG's own export now sits at -2 and is replaced
+    (tmp_path / "IMG_1-2.autoedit.json").write_text('{"image": "IMG_1.JPG"}')
+    assert emit.single_output_paths(str(tmp_path), "/cam/IMG_1.JPG", "jpeg")[0].endswith("IMG_1-2.jpg")
+    assert emit.single_output_paths(str(tmp_path), "/x/IMG_1.TIF", "jpeg")[0].endswith("IMG_1-3.jpg")
+
+
+def test_single_output_paths_unreadable_sidecar_takes_the_next_name(tmp_path):
+    image, sidecar = _own_export(tmp_path, "/cam/IMG_1.CR2")
+    open(sidecar, "w").write("{not json")
+    assert os.path.basename(emit.single_output_paths(str(tmp_path), "/cam/IMG_1.CR2", "jpeg")[0]) == "IMG_1-2.jpg"
+
+
+def test_single_output_paths_refuses_a_file_autoedit_did_not_write(tmp_path):
+    original = tmp_path / "IMG_1.jpg"
+    original.write_bytes(b"the original")
+    with pytest.raises(ValueError, match="did not write.*another output folder"):
+        emit.single_output_paths(str(tmp_path), str(tmp_path / "IMG_1.png"), "jpeg")
+    assert original.read_bytes() == b"the original"

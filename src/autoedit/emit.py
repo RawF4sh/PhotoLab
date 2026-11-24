@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 
 import numpy as np
@@ -217,3 +218,25 @@ def output_paths(out_dir: str, image_name: str, fmt: str,
     os.makedirs(folder, exist_ok=True)
     out_stem = os.path.splitext(os.path.basename(image_out))[0]
     return image_out, os.path.join(folder, f"{out_stem}.autoedit.json")
+
+
+def single_output_paths(out_dir: str, image_name: str, fmt: str, **kw) -> tuple[str, str]:
+    """`output_paths` for one photo exported on its own: replace only this photo's earlier export.
+    A file AutoEdit did not write is never replaced (an image with no sidecar), and another
+    photo's export (a sidecar naming another source, or none that can be read) is never replaced
+    either: that photo takes the next free name."""
+    taken: set[str] = set()
+    while True:
+        image, sidecar = output_paths(out_dir, image_name, fmt, taken, **kw)
+        if not os.path.exists(sidecar):
+            if os.path.exists(image):
+                raise ValueError(f"{image}: this export would overwrite a file AutoEdit did not write; "
+                                 "choose another output folder")
+            return image, sidecar
+        try:
+            with open(sidecar, encoding="utf-8") as fh:
+                owner = json.load(fh).get("image")
+        except (OSError, ValueError, AttributeError):
+            owner = None
+        if owner == os.path.basename(image_name):
+            return image, sidecar

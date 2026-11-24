@@ -106,7 +106,8 @@ def test_request_shape():
         assert tool["strict"] is True
         assert all(o["additionalProperties"] is False for o in _objects(tool["input_schema"]))
         schema = tool["input_schema"]["properties"]
-        assert set(schema["global"]["items"]["properties"]["op"]["enum"]) == set(OP_BOUNDS)
+        # Every op but burn_ev, which belongs to a local style's shaped light (F59).
+        assert set(schema["global"]["items"]["properties"]["op"]["enum"]) == set(OP_BOUNDS) - {"burn_ev"}
         region = schema["regions"]["items"]["properties"]
         assert set(region["name"]["enum"]) == set(base)
         assert "set_edits" in req["messages"][0]["content"][0]["text"]

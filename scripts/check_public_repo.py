@@ -1,11 +1,16 @@
 """Reject private artifacts in the Git index and, optionally, reachable history.
 
+Two checks. Paths: no private file (a photo, a run folder, a key) is tracked. Contents: no tracked
+text file holds an absolute path into somebody's home folder, which names a user and a disk
+layout. The contents check reads the files as they are on disk now, not the history.
+
 This is a publication guard, not a credential detector. Run Gitleaks separately.
 """
 from __future__ import annotations
 
 import argparse
 from pathlib import PurePosixPath
+import re
 import subprocess
 import sys
 
@@ -33,6 +38,21 @@ def private_path(name: str) -> bool:
     )
 
 
+# A path that starts at a home folder: the macOS, Linux and Windows spellings. The name after it is
+# captured; names that documentation uses as stand-ins are not a leak.
+_HOME = re.compile(rb"(?<![A-Za-z0-9._~-])(?:/Users/|/home/|[A-Za-z]:\\Users\\)([A-Za-z0-9._-]+)")
+_STAND_INS = {b"me", b"you", b"user", b"username", b"name", b"someone", b"example", b"runner", b"shared"}
+
+
+def home_path_lines(data: bytes) -> list[int]:
+    """The 1-based lines of a text file that hold an absolute path into a real home folder."""
+    if b"\0" in data[:8192]:
+        return []       # not text
+    return [number for number, line in enumerate(data.splitlines(), 1)
+            if any(re.search(rb"[A-Za-z0-9]", m.group(1)) and m.group(1).lower() not in _STAND_INS
+                   for m in _HOME.finditer(line))]
+
+
 def git(*args: str) -> bytes:
     return subprocess.check_output(["git", *args])
 
@@ -58,8 +78,21 @@ def main(argv=None) -> int:
     if bad:
         print(f"FAIL: {len(bad)} private artifact path(s); values hidden. Remove them from the index/history.")
         return 1
-    print(f"PASS: {len(names)} tracked paths; no blocked private artifacts"
-          + (" or personal commit emails in reachable history." if args.history else "."))
+    leaks = []
+    for name in sorted(names):
+        try:
+            with open(name, "rb") as fh:
+                lines = home_path_lines(fh.read(4_000_000))
+        except OSError:     # deleted in the working tree, or a submodule
+            continue
+        if lines:
+            leaks.append(f"{name}:{lines[0]}")
+    if leaks:
+        print(f"FAIL: an absolute home-folder path in {len(leaks)} tracked file(s); values hidden: "
+              + ", ".join(leaks) + ". Write the path relative to the repository.")
+        return 1
+    print(f"PASS: {len(names)} tracked paths; no blocked private artifacts, no home-folder paths in their text"
+          + (", no personal commit emails in reachable history." if args.history else "."))
     return 0
 
 

@@ -27,6 +27,10 @@ try:
 except Exception:  # pragma: no cover
     OP_BOUNDS = {}
 
+# The ops the model may name. `burn_ev` (F59) belongs to a local style's shaped light and is in
+# stops, not on the ±100 scale the prompt describes, so the model is not offered it.
+_MODEL_OPS = {op: bounds for op, bounds in OP_BOUNDS.items() if op != "burn_ev"}
+
 # How far the LLM may push a value off the rules baseline (refine mode).
 _DELTA = {"exposure": 0.5}
 _DELTA_DEFAULT = 25.0
@@ -41,7 +45,7 @@ def _edits_tool(region_names: list[str]) -> dict:
     """The strict tool the model answers with. Ops and region names are enums, so the model
     cannot invent either."""
     edit = {"type": "object", "additionalProperties": False, "required": ["op", "value"],
-            "properties": {"op": {"type": "string", "enum": sorted(OP_BOUNDS)},
+            "properties": {"op": {"type": "string", "enum": sorted(_MODEL_OPS)},
                            "value": {"type": "number"}}}
     region = {"type": "object", "additionalProperties": False, "required": ["name", "edits"],
               "properties": {"name": {"type": "string", "enum": sorted(region_names)},
@@ -219,7 +223,7 @@ class LlmDecider:
             f"Rule baseline edits already computed: {baseline}.\n"
             f"Return {what} via the set_edits tool, using only the region names present in "
             f"the baseline, to move the image toward the brief. Edit ops: "
-            f"{', '.join(sorted(OP_BOUNDS))} (each ~[-100,100] except exposure, in stops). Keep edits "
+            f"{', '.join(sorted(_MODEL_OPS))} (each ~[-100,100] except exposure, in stops). Keep edits "
             f"tasteful and photographic; only adjust what the brief and stats justify. Do not "
             f"invent regions. Call the set_edits tool exactly once."
         )
@@ -236,7 +240,7 @@ class LlmDecider:
 
     def _apply_proposal(self, base: Settings, proposed: dict) -> None:
         for op, val in proposed.items():
-            if OP_BOUNDS and op not in OP_BOUNDS:
+            if _MODEL_OPS and op not in _MODEL_OPS:
                 continue  # hallucinated/unknown op name — keep it out of settings AND the sidecar
             try:
                 val = float(val)
