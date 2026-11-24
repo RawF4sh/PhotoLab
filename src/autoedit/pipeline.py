@@ -22,9 +22,10 @@ from .concepts import load_concepts, meta_for
 from .contract import Adjustment, HiddenRegion, Result, RunConfig
 from .decide import DecisionContext, make_decider
 from .decide.base import Decider
+from .edit import style_target
 from .edit.mask import snap_to_edges
 from .edit import apply_image, banding, build_alpha, gates, ops, par, reference as ref_match, linear_alpha
-from .imageio import Image, analysis_opts, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
+from .imageio import Image, is_raw, analysis_opts, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
 from .notes import build_notes
 from .segment import ResolvedRegions, make_segmenter, resolve
 from . import segment as segment_mod
@@ -97,6 +98,8 @@ class Pipeline:
     auto_palette: dict  # [auto.<palette>] thresholds/caps from palettes.toml (rules-as-data)
     banding: dict
     quality_gate: dict | None = None  # post-edit gate thresholds from rules.toml (None → defaults)
+    style_target: dict = field(default_factory=dict)
+    style_safety: dict = field(default_factory=dict)
     ref_feats: dict | None = None    # cached per-concept reference look (M5); computed once per run
     ref_proxy: Image | None = None   # cached decoded reference proxy — one decode per run, not per photo
     instr: instructions.Vocab | None = None  # instructions.toml vocabulary (F2)
@@ -120,20 +123,29 @@ class Pipeline:
         lut = lut_mod.read_cube(cfg.lut) if cfg.lut else None   # a broken file stops the run here (F25)
         if cfg.backend == "auto":
             cfg = cfg.model_copy(update={"backend": segment_mod.resolve_backend(cfg.backend)})
+        styles = load_styles(cfg.styles_path)
+        style = style_for(cfg.style, styles)
+        defaults = {k: v for k, v in style.run.items() if k not in cfg.model_fields_set}
+        if defaults:
+            cfg = cfg.model_copy(update=defaults)
         presets, meta = load_concepts(cfg.concepts_path)
-        moves = compose.load_compose(cfg.compose_path, cfg) if cfg.compose else []
+        moves = compose.load_compose(cfg.compose_path, cfg, style.moves) if cfg.compose else []
         if not cfg.vignette:  # vignette is a toggleable subset of the compositional moves
             moves = [m for m in moves if "vignette" not in m.name]
         # Opt-in rule sets ([opt_in.<name>] in rules.toml) join the rules only when their run
         # setting is on; a default run never sees them.
         rules = rules_mod.load(cfg.rules_path, enable=[n for n in _OPT_IN_RULES if getattr(cfg, n, False)],
-                               require=cfg.rule_sets)
+                               require=[*cfg.rule_sets, *(["lights"] if "lights" in style.concepts else [])])
         # which global ops the skin-safe guard holds off protected regions (rules-as-data; the
         # [guard] block in rules.toml, with a sane default so older config files still work).
         guard_ops = set(rules.get("guard", {}).get("ops", []) or _DEFAULT_GUARD_OPS)
         # oversaturation gate: cap each pixel's chroma increase vs the source (None disables).
         cm = rules.get("guard", {}).get("max_chroma_increase", _DEFAULT_CHROMA_MAX)
         chroma_max = None if cm in (None, "", "off") else float(cm)
+        if "richer" in style.intent:
+            # A richer specialist still uses its declared ceiling when a profile disables the general guard.
+            chroma_max = min(0.90, max(chroma_max or 0.0, style.limits.get("chroma", _DEFAULT_CHROMA_MAX)))
+        from .quality import load_quality_config
         hh = None
         if cfg.highlight_hold:
             blk = rules.get("highlight_hold", {})
@@ -148,7 +160,6 @@ class Pipeline:
         if vocab is not None:   # clauses the word list missed or guessed at go to a model (F17, F20)
             adjustments, problems = instructions.translate_problems(
                 problems, vocab, known, decider=decider, cfg=cfg, adjustments=adjustments)
-        styles = load_styles(cfg.styles_path)
         look_name = cfg.look or style_for(cfg.style, styles).look
         habit = looks_mod.load_habits(cfg.looks_path).get(look_name)
         habits = instructions.habit_adjustments(
@@ -163,6 +174,8 @@ class Pipeline:
             presets=presets,
             meta=meta,
             styles=styles,
+            style_target=style_target.load(cfg.targets_path, style.target) if style.target else {},
+            style_safety=load_quality_config() if style.target else {},
             compose_moves=moves,
             light_cfg=compose.load_light_config(cfg.compose_path) if any(m.at == "light" for m in moves) else {},
             segmenter=make_segmenter(cfg.backend, cfg.device),
@@ -237,9 +250,24 @@ class Pipeline:
             extra += [n for n, cm in self.meta.items() if cm.guard_global and n not in concepts and n not in extra]
         extra = self._with_geometry_concepts(extra, concepts)
         words = concepts + extra
+        words = list(dict.fromkeys([*words, *(w for name in concepts for w in meta_for(name, self.meta).words)]))
         if self.reveal is not None and getattr(self.segmenter, "open_vocabulary", False):
             words += [w for w in reveal_mod.words(self.reveal) if w not in words]
         return words
+
+    def _segment(self, image, concepts, words):
+        raw = self.segmenter.segment(image, words)
+        for name in concepts:
+            meta = meta_for(name, self.meta)
+            if not meta.words:
+                continue
+            group = [r for r in raw if r.name in (name, *meta.words) and r.score >= meta.min_score]
+            if group:
+                merged = np.logical_or.reduce([r.mask for r in group])
+                raw = [r for r in raw if r.name != name]
+                raw.append(replace(group[0], name=name, mask=merged, score=max(r.score for r in group),
+                                   coverage=float(merged.mean())))
+        return raw
 
     def _all_habits(self) -> list[Adjustment]:
         """The look's habits of every scene: what to segment for before the scene is known."""
@@ -330,7 +358,7 @@ class Pipeline:
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
-        raw = self.segmenter.segment(proxy, words) if words else []
+        raw = self._segment(proxy, concepts, words) if words else []
         px = self._snap_px()
         if px:   # once, at the root: regions, instruction cells and marks all see the same masks. New arrays: cached masks are shared and never written into.
             snap = set(concepts) | set(instructions.extra_concepts(adjs + self._all_habits(), concepts))
@@ -517,6 +545,39 @@ class Pipeline:
                 if rep:
                     region_ref_note = "reference match (region): " + ", ".join(r["name"] for r in rep)
 
+        style_notes = []
+        if self.style_target:
+            strength = min(1.0, style.pull * cfg.intensity)
+            limits = dict(style.limits)
+            if not is_raw(path) or img.source_bits <= 8 or not cfg.denoise:
+                limits["exposure"] = min(2.0, limits.get("exposure", 2.0))
+            held_regions = [(build_alpha(r.mask, proxy.rgb.shape[:2], meta_for(r.name, self.meta).feather_px),
+                             region_settings.get(r.name, {})) for r in resolved.regions
+                            if self.style_target.get(r.name, {}).get("hold")]
+            before_ev = global_settings.get("exposure", 0.0)
+            global_settings, moves = style_target.fit(proxy.rgb, global_settings,
+                self.style_target.get("global", {}), strength, limits, self.style_safety, held_regions=held_regions)
+            if moves:
+                style_notes.append(f"{style.label}, frame: " + ", ".join(moves))
+            elif self.style_target.get("global"):
+                style_notes.append(f"{style.label}: retained frame settings after checking target ranges and clipping")
+            for region in resolved.regions:
+                ranges = self.style_target.get(region.name, {})
+                current = region_settings.get(region.name, {})
+                if ranges.get("hold"):
+                    held = style_target.held_settings(current, global_settings.get("exposure", 0.0),
+                                                       before_ev, limits.get("lights_ev"))
+                    if held != current:
+                        region_settings[region.name] = held
+                        reduction = current.get("exposure", 0.0) - held["exposure"]
+                        style_notes.append(f"{style.label}: held {region.name} back from the frame lift by {reduction:.2f} EV")
+                    continue
+                fitted, changes = style_target.fit(proxy.rgb, current, ranges, strength, limits, self.style_safety,
+                                                   mask=region.mask, global_after=global_settings)
+                if changes:
+                    region_settings[region.name] = fitted
+                    style_notes.append(f"{style.label}, {region.name}: " + ", ".join(changes))
+
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
         apply_regions, owners, adj_plan = resolved.regions, None, None
@@ -609,7 +670,7 @@ class Pipeline:
             policy_notes.append(f"batch normalize: white balance {wb_bias[0]:+.1f} temp, "
                                 f"{wb_bias[1]:+.1f} tint toward group {batch_group or '?'}")
 
-        notes_extra: list[str] = list(policy_notes) + pick_notes
+        notes_extra: list[str] = list(policy_notes) + pick_notes + style_notes
         if cfg.night_sky:
             notes_extra.append(
                 f"night sky: {'a' if night_frame else 'not a'} night frame (median {gstats.lum_p50:.2f}, ISO "
@@ -716,7 +777,11 @@ class Pipeline:
             notes_extra.append(
                 f"sun glow: light at {light.cx:.2f}, {light.cy:.2f} from the {light.source}" if light
                 else "sun glow: no light source found, none added")
-        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity, light)
+        line = None
+        if cfg.backend != "stub" and any(move.at == "horizon" for move in self.compose_moves):
+            line = geometry.horizon_position(resolved.union, geometry.config(self.rules))
+        shape_masks = {r.name: r.mask for r in resolved.regions} if any(m.within for m in self.compose_moves) else None
+        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity, light, line, shape_masks)
         comp_settings.update(reference_comp_settings)
         if adj_plan is not None:    # a place the user named is a layer of its own, like a vignette (F18)
             comp_settings.update({instructions.LAYER + name: delta for name, delta in adj_plan.layers.items()})
@@ -761,10 +826,12 @@ class Pipeline:
                     cm = meta_for(r.name, self.meta)
                     alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                     regions_apply.append((alpha, s))
-            comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light)
+            comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light, line,
+                                {name: cm.feather_px for name, cm in self.meta.items()}, guide, shape_masks)
             guard_mask, guard_pct, held = self._build_guard(
                 resolved.union, full_hw, global_settings, guide,
-                always=bool(adj_plan is not None and adj_plan.guarded))
+                always=bool(adj_plan is not None and adj_plan.guarded) or "richer" in style.intent)
+            chroma_mask = guard_mask if held or "richer" in style.intent else None
             if adj_plan is not None:
                 for name, delta in adj_plan.layers.items():
                     alpha = instructions.place_alpha(instructions.layer_spec(name, self.vocab()), full_hw, light,
@@ -819,7 +886,7 @@ class Pipeline:
                 guard_mask=guard_mask, guard_ops=self.guard_ops,
                 chroma_max_increase=self.chroma_max,
                 chroma_neutral_allowance=chroma_neutral_allowance,
-                protect_chroma=guard_mask,
+                protect_chroma=chroma_mask,
                 palette=palette_arg, report=gate_report,
                 on_stage=on_stage, highlight_hold=self.highlight_hold,
                 chroma_reference=gate_src, on_step=on_step,
@@ -872,7 +939,7 @@ class Pipeline:
                         guard_mask=guard_mask, guard_ops=self.guard_ops,
                         chroma_max_increase=self.chroma_max,
                         chroma_neutral_allowance=chroma_neutral_allowance,
-                        protect_chroma=guard_mask,
+                        protect_chroma=chroma_mask,
                         palette=palette_arg, report={},
                         on_stage=on_stage, highlight_hold=self.highlight_hold,
                         chroma_reference=gate_src, on_step=on_step,
@@ -953,7 +1020,7 @@ class Pipeline:
                 if self.chroma_max is not None:
                     out_rgb, rlim = gates.chroma_guard(
                         gate_src if gate_src is not None else img.rgb.astype(np.float32), out_rgb,
-                        max_increase=self.chroma_max, protect=guard_mask)
+                        max_increase=self.chroma_max, protect=chroma_mask)
                     out_rgb = np.clip(out_rgb, 0.0, 1.0)
                     if rlim > 0.005:
                         notes_extra.append(
@@ -1062,7 +1129,7 @@ class Pipeline:
                 self.looks.get(look, looks_mod.Look()).preserve_exposure
             quality_score, needs_review, review_reason, warnings = gates.assess(
                 gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate,
-                preserve_exposure=preserve)
+                preserve_exposure=preserve or "darker" in style.intent, richer="richer" in style.intent)
         subject_colour = None
         if cfg.colour_report and post_stats is not None and same_shape:     # F34: the colour report reads this
             subject_colour = consistency.subject_colour(
@@ -1186,6 +1253,9 @@ class Pipeline:
         result.audit.update(decode_info=getattr(img, "decode_info", {}),
                             source_format=os.path.splitext(path)[1].lower().lstrip("."),
                             decode_injected=image is not None)
+        if style.target:
+            result.audit["local_style"] = {"name": style.name, "target": style.target, "pull": style.pull,
+                                           "intent": list(style.intent), "tested": style.tested}
         if neutral_audit is not None:
             result.audit["neutral"] = neutral_audit
         if backdrop_report is not None:
@@ -1228,7 +1298,8 @@ class Pipeline:
             return self.ref_feats
         try:
             ref = self._get_ref_proxy()
-            raw = self.segmenter.segment(ref, concepts)
+            words = list(dict.fromkeys([*concepts, *(w for name in concepts for w in meta_for(name, self.meta).words)]))
+            raw = self._segment(ref, concepts, words)
             rr = resolve(raw, concepts, self.meta, ref.rgb.shape[:2])
             self.ref_feats = ref_match.extract_concept_features(ref.rgb, rr.union)
         except Exception:

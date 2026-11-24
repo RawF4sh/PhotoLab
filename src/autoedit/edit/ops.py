@@ -22,7 +22,7 @@ _EPS = 1e-6
 OP_NAMES = (
     # night sky (F31): corrections of the capture, made by the pipeline to the decoded photo
     "hot_pixels", "sky_gradient",
-    "exposure", "highlight_rolloff", "highlight_detail", "shadows_ev", "contrast", "highlights", "shadows", "whites",
+    "exposure", "highlight_rolloff", "highlight_detail", "shadows_ev", "burn_ev", "contrast", "highlights", "shadows", "whites",
     "blacks", "curve", "clarity", "black_point", "white_point", "vibrance", "saturation", "dehaze", "temp", "tint",
     # color grading (split-tone) — tint shadows/highlights independently
     "grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint",
@@ -46,6 +46,7 @@ OP_BOUNDS = {
     "exposure": (-3.0, 3.0),
     "highlight_rolloff": (0.0, 100.0),
     "highlight_detail": (0.0, 100.0),
+    "burn_ev": (0.0, 2.0),
     "shadows_ev": (-2.5, 2.5),  # stops at black; the lift stays monotonic below 2.88
     "contrast": (-100.0, 100.0),
     "highlights": (-100.0, 100.0),
@@ -99,7 +100,7 @@ SPATIAL_OPS = frozenset({"dehaze", "clarity", "sharpen", "black_point", "white_p
 STEPS = (
     ("hot_pixels", "sky_gradient"),
     ("temp", "tint", "exposure", "highlight_rolloff", "highlight_detail"),
-    ("shadows_ev",),
+    ("shadows_ev", "burn_ev"),
     ("highlights", "shadows", "whites", "blacks"),
     ("contrast",),
     ("curve",),
@@ -267,6 +268,15 @@ def shadow_lift(rgb: np.ndarray, ev: float) -> np.ndarray:
         return rgb
     w = np.clip(1.0 - luma(rgb) / 0.5, 0.0, 1.0)
     return rgb * np.exp2(ev * w * w)[..., None].astype(np.float32)
+
+
+def burn(rgb: np.ndarray, ev: float) -> np.ndarray:
+    """Reduce mid and bright luma with a smooth log ramp, leaving deep blacks and hue intact."""
+    if not ev:
+        return rgb
+    l = luma(rgb)
+    u = np.clip(np.log(np.maximum(l, 0.03) / 0.03) / np.log(0.50 / 0.03), 0.0, 1.0)
+    return rgb * np.exp2(-min(2.0, max(0.0, ev)) * u * u * (3 - 2 * u))[..., None].astype(np.float32)
 
 
 def tone(rgb, highlights=0.0, shadows=0.0, whites=0.0, blacks=0.0) -> np.ndarray:
@@ -811,6 +821,8 @@ def _tone_steps(out: np.ndarray, settings: dict, ratio: np.ndarray | None = None
         out = light(out, temp, tint, ev, rolloff, ratio, settings.get("highlight_detail", 0.0))
     if settings.get("shadows_ev", 0.0):  # black-pinned lift, before the additive tone sliders
         out = shadow_lift(out, settings["shadows_ev"])
+    if settings.get("burn_ev", 0.0):
+        out = burn(out, settings["burn_ev"])
     if any(settings.get(k, 0.0) for k in ("highlights", "shadows", "whites", "blacks")):
         out = tone(out, settings.get("highlights", 0.0), settings.get("shadows", 0.0),
                    settings.get("whites", 0.0), settings.get("blacks", 0.0))

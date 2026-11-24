@@ -45,7 +45,7 @@ GATE_DEFAULTS = {
 
 
 def assess(pre, post, chroma_limited: float = 0.0,
-           thr: dict | None = None, preserve_exposure: bool = False) -> tuple[float, bool, str, list[str]]:
+           thr: dict | None = None, preserve_exposure: bool = False, richer: bool = False) -> tuple[float, bool, str, list[str]]:
     """Judge the EDITED output against the source (both GlobalStatsModel). Returns
     (quality_score 0..1, needs_review, review_reason, warnings).
 
@@ -83,7 +83,7 @@ def assess(pre, post, chroma_limited: float = 0.0,
         score -= min(0.30, (lo - t["shadow_clip"]) * 3.0)
 
     dsat = float(post.mean_sat) - float(pre.mean_sat)
-    if dsat > t["sat_delta"]:
+    if not richer and dsat > t["sat_delta"]:
         warnings.append(f"saturation rose +{dsat * 100:.0f}%")
         score -= min(0.25, (dsat - t["sat_delta"]) * 2.0)
 

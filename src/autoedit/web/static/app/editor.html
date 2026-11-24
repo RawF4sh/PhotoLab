@@ -1,25 +1,15 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark"><title>Photo editor · AutoEdit</title>
+<meta name="color-scheme" content="dark"><title>Fine-tune · AutoEdit</title>
 <link rel="stylesheet" href="/app/editor_host.css">
 <link rel="stylesheet" href="/app/editor_assist.css">
 <script type="module" src="/app/editor_host.js"></script>
 </head><body>
 <header>
-  <a class="home" href="/#/start" aria-label="AutoEdit start">AutoEdit</a>
-  <h1>Photo editor</h1>
-  <nav aria-label="Photo tools">
-    <button id="open" class="primary" disabled>Open photo</button>
-    <button id="open-tiff" disabled>Open RAW as TIFF</button>
-    <button id="auto" disabled>Auto adjust</button>
-    <button id="ask-gemini" disabled>Ask Gemini</button>
-    <button id="mask" disabled>Masking</button>
-    <button id="compare" disabled>Compare</button>
-    <button id="export" disabled>Export</button>
-    <a class="tools" href="/#/workspace">Guided tools</a>
-    <button id="native" hidden>Open desktop editor</button>
-  </nav>
+  <a class="tools" href="/#/editor">Back to Photo editor</a>
+  <h1 id="filename">Fine-tune</h1>
+  <button id="export" class="primary" disabled>Export</button>
 </header>
 <div id="filtered" hidden><span id="filtered-label"></span> <button id="all-photos">Show all photos</button></div>
 <main>
@@ -28,6 +18,13 @@
     <p id="boot-message"></p><button id="install" class="primary" hidden>Download and open</button>
     <button id="retry" hidden>Try again</button></section>
 </main>
+<nav class="fine-tools" aria-label="Fine-tune tools">
+  <button id="open" disabled>Open photo</button>
+  <button id="detail" disabled>Inspect at 100%</button>
+  <button id="compare" disabled>Before / After</button>
+  <button id="ask-gemini" disabled>Ask Gemini</button>
+  <button id="native" hidden>Open desktop editor</button>
+</nav>
 <div id="status" role="status" aria-live="polite"></div>
 <dialog id="comparison" aria-labelledby="comparison-title">
   <div class="compare-top"><h2 id="comparison-title">Before and after</h2><button id="close">Back to editing</button></div>

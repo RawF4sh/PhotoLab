@@ -81,3 +81,34 @@
 .editor-step .check input { flex: none; }
 .editor-step-amount { display: block; }
 .editor-step-amount input { display: block; width: 100%; }
+
+.pv.unified-editor { grid-template-columns: minmax(0,1fr) 320px; }
+.editor-sidebar { padding: 0; }
+.editor-sidebar h2 { margin: 0; font-size: inherit; }
+.editor-section-tab { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; min-height: 46px; border-bottom: 1px solid var(--line); border-radius: 0; text-align: left; }
+.editor-section-tab::after { content: '›'; }
+.editor-section-tab[aria-expanded=true] { background: var(--raised); font-weight: 600; }
+.editor-section-tab[aria-expanded=true]::after { transform: rotate(90deg); }
+.editor-section-content { padding: 14px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 12px; }
+.editor-section-content select { max-width: 100%; }
+.editor-section-content > .editor-tool:first-child { border: 0; padding-top: 0; }
+.editor-tools-toggle, .editor-drawer-head { display: none; }
+@media(max-width:719px) {
+  .pv.unified-editor { position: relative; display: flex; flex-direction: column; height: calc(100dvh - var(--bar)); }
+  .unified-editor .pv-main { min-height: 0; flex: 1; }
+  .unified-editor .pv-stage { flex: 1; height: auto; min-height: 110px; }
+  .unified-editor .pv-canvas { min-height: 0; }
+  .editor-tools-toggle { display: inline-block; }
+  .editor-sidebar { display: none; }
+  .editor-sidebar.drawer-open { display: block; position:absolute; z-index:5; inset:auto 0 0; min-height:0; max-height:46dvh; overflow-y:auto; box-shadow:0 -4px 14px rgb(0 0 0 / .28); }
+  .editor-drawer-head { position:sticky; z-index:2; top:0; display:flex; justify-content:space-between; align-items:center; min-height:44px; padding-inline:16px; border-bottom:1px solid var(--line); background:var(--panel); }
+}
+
+.pv-frame.mask-only { background: #000; }
+.pv-frame.mask-only > img, .pv-frame.mask-only .pv-tint { opacity: 0; }
+.mask-only .editor-selected-mask { background: white; opacity: 1; }
+#editor-panel-isolate > details[open] > summary,
+#editor-panel-gemini > details[open] > summary { display: none; }
+
+.editor-opening { position: absolute; inset: auto auto 12px 12px; padding: 6px 10px; border-radius: 3px; color: white; background: #171717; }
+.drop-source { display:flex; align-items:center; justify-content:space-between; }

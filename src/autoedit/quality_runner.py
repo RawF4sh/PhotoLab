@@ -95,6 +95,18 @@ def _finalize_stats(result: Result, reference: Image, rgb: np.ndarray, masks=Non
     result.post_region_stats = list(ps.values())
 
 
+def style_thresholds(audit, thresholds, selected_style):
+    # Honor only the explicit style on this result, also when reading an older sidecar.
+    style = (audit or {}).get("local_style") or {}
+    intent = style.get("intent", ())
+    thresholds = thresholds or {}
+    if (not intent or not style.get("target") or not selected_style or selected_style in ("natural", "standard")
+            or style.get("name") != selected_style):
+        return thresholds
+    return {**thresholds, "preserve_exposure": "darker" in intent or thresholds.get("preserve_exposure", False),
+            "richer": "richer" in intent}
+
+
 def render_safe(path: str, cfg: RunConfig, workflow: str = "current", image: Image | None = None,
                 common_source: Image | np.ndarray | None = None, options: dict | None = None,
                 engine=None, proposal_sink=None) -> tuple[np.ndarray, Result]:
@@ -131,6 +143,7 @@ def render_safe(path: str, cfg: RunConfig, workflow: str = "current", image: Ima
     # Requested configuration does not establish that segmentation was invoked.
     actual_backend = getattr(engine, "last_backend", "unknown")
     thresholds = {**load_quality_config(quality_config), **(quality_thresholds or {})}
+    thresholds = style_thresholds(result.audit, thresholds, result.style)
     masks = getattr(engine, "last_masks", {})
     holder.last_masks = masks  # export/review must use the masks of the actual fallback engine
     assessment = assess_pixels(reference.rgb, proposal, masks=masks, thresholds=thresholds)
@@ -334,7 +347,7 @@ def run_quality(input_dir: str, output_dir: str, cfg: RunConfig | None = None, *
                 emit.write_image(trial, str(temp), cfg.out_format, cfg.quality)
                 exported = load_image(str(temp))
                 assessment = assess_pixels(reference.rgb, exported.rgb,
-                                           masks=getattr(engine, "last_masks", {}), thresholds=thresholds)
+                                           masks=getattr(engine, "last_masks", {}), thresholds=style_thresholds(result.audit, thresholds, result.style))
                 encoded_attempts.append({"factor": factor, "passed": assessment["passed"],
                                          "failures": assessment["failures"]})
                 if assessment["passed"]:

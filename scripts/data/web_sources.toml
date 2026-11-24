@@ -1,0 +1,31 @@
+# Decimal byte ceilings. These are maximums, never requests to download every file.
+total_bytes = 25000000000
+pause_seconds = 1.0
+
+[rawpixls]
+max_files = 150
+max_bytes = 5000000000
+hosts = ["raw.pixls.us"]
+terms = ["https://raw.pixls.us/"]
+licences = ["CC0 1.0"]
+
+[commons]
+max_files = 600
+max_bytes = 6000000000
+hosts = ["commons.wikimedia.org", "upload.wikimedia.org"]
+terms = ["https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia"]
+licences = ["CC0", "Public domain", "CC BY", "CC BY-SA"]
+
+[commons.queries]
+blue_hour = ['"blue hour" bridge landscape', '"blue hour" waterfront landscape', '"blue hour" mountains lake', 'intitle:"blue hour" filetype:bitmap', 'intitle:"blue hour" city', 'intitle:"blue hour" sky']
+sunset = ['sunset mountains landscape', 'sunset lake landscape', 'sunset clouds countryside']
+moody = ['mist lake mountains landscape', 'overcast mountains landscape', 'storm clouds lake landscape']
+control = ['mountain lake daylight landscape', 'meadow daylight landscape', 'coastline daylight landscape', 'mountains meadow filetype:bitmap', 'lake mountains summer', 'coast landscape sea', 'fields farmland summer']
+opens = ['filetype:bitmap "CMYK" landscape', 'filetype:bitmap "panorama" mountain', 'filetype:bitmap "16-bit" landscape']
+
+[fivek]
+max_files = 300
+max_bytes = 12000000000
+hosts = ["data.csail.mit.edu"]
+terms = ["https://data.csail.mit.edu/graphics/fivek/legal/LicenseAdobe.txt", "https://data.csail.mit.edu/graphics/fivek/legal/LicenseAdobeMIT.txt"]
+licences = ["FiveK Adobe research", "FiveK Adobe-MIT research"]

@@ -37,9 +37,9 @@ def _validate_quality_config(cfg: dict) -> dict:
     values unchanged: this validates the existing thresholds, it does not tune them.
     """
     for key, value in cfg.items():
-        if key == "preserve_exposure":
+        if key in ("preserve_exposure", "richer"):
             if not isinstance(value, bool):
-                raise ValueError("quality preserve_exposure must be a boolean")
+                raise ValueError(f"quality {key} must be a boolean")
             continue
         if key == "remediation_factors":
             if not isinstance(value, (list, tuple)):
@@ -292,7 +292,7 @@ def assess_pixels(source, output, masks=None, thresholds=None, prepared=None) ->
     metrics["neutral_wb_delta"] = (np.median((sb - sb.mean(axis=-1, keepdims=True))[neutral]
                                                    - (sa - sa.mean(axis=-1, keepdims=True))[neutral], axis=0).tolist()
                                    if neutral.any() else None)
-    if metrics["saturation_delta"] > cfg["sat_delta"] or metrics["chroma_delta"] > cfg["chroma_delta"]:
+    if not cfg.get("richer") and (metrics["saturation_delta"] > cfg["sat_delta"] or metrics["chroma_delta"] > cfg["chroma_delta"]):
         failures.append("excessive_color_increase")
     from .edit.banding import banding_score, smooth_region_mask
     al, bl = prepared.luminance if prepared is not None else luma(sa), luma(sb)

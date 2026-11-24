@@ -146,6 +146,7 @@ class RunConfig(BaseModel):
     rules_path: str = Field(default_factory=lambda: config_path("rules.toml"))
     looks_path: str = Field(default_factory=lambda: config_path("looks.toml"))
     concepts_path: str = Field(default_factory=lambda: config_path("concepts.toml"))
+    targets_path: str = Field(default_factory=lambda: config_path("targets.toml", packaged_fallback=True))
     styles_path: str = Field(default_factory=lambda: config_path("styles.toml"))
     compose_path: str = Field(default_factory=lambda: config_path("compose.toml"))
     intents_path: str = Field(default_factory=lambda: config_path("intents.toml"))

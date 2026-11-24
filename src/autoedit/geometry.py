@@ -129,6 +129,19 @@ def horizon(masks: dict[str, np.ndarray], cfg: dict) -> tuple[float, str, float,
             return angle, line, n / x.size, ""
     return 0.0, "", 0.0, why
 
+def horizon_position(masks: dict[str, np.ndarray], cfg: dict):
+    """Fractional heights of the trusted horizon at the left and right image boundaries."""
+    angle, line, _, _ = horizon(masks, cfg)
+    if not line:
+        return None
+    mask = masks["water" if line == "waterline" else "sky"]
+    h, w = mask.shape
+    x, y = _edge(mask, top=line == "waterline")
+    slope = math.tan(math.radians(angle))
+    intercept = float(np.median(y - slope * x))
+    return intercept / h, (intercept + slope * w) / h
+
+
 def frame(angle: float, ratio: float | None, hw: tuple[int, int],
           centre: tuple[float, float] | None = None) -> tuple[float, float, float, float]:
     """(cx, cy, w, h) in shares of the photo: the largest upright rectangle of `ratio` (width over height;

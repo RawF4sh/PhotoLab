@@ -1,0 +1,46 @@
+# Starting briefs from F59. photos=0 denotes provisional ranges, not population
+# measurements. Replace a table with the output of scripts/style_target.py after
+# collecting eligible finished images. p50 is encoded Rec.709 (0..1).
+[blue_hour.meta]
+photos = 0
+[blue_hour.global]
+p50 = [0.392, 0.490]
+[blue_hour.sky]
+p50 = [0.45, 0.60]
+[blue_hour.water]
+p50 = [0.27, 0.50]
+[blue_hour.lights]
+hold = true
+
+[sunset_glow.meta]
+photos = 0
+[sunset_glow.global]
+p50 = [0.34, 0.48]
+[sunset_glow.sky]
+p50 = [0.46, 0.68]
+warmth = [0.02, 0.15]
+[sunset_glow.water]
+p50 = [0.30, 0.46]
+[sunset_glow.mountain]
+p50 = [0.27, 0.40]
+[sunset_glow.trees]
+p50 = [0.21, 0.34]
+
+[moody_landscape.meta]
+photos = 0
+[moody_landscape.global]
+p10 = [0.07, 0.14]
+chroma = [0.09, 0.18]
+[moody_landscape.sky]
+# Sky alone was calibrated on 27 detected skies from 30 licensed finished photos.
+# Other Moody ranges remain provisional until their own comparisons pass.
+p50 = [0.711284, 0.903194]
+
+# No measured portrait targets until a photographer supplies finished portraits.
+[natural_portrait.meta]
+photos = 0
+[natural_portrait.meta.measure]
+global = ["p50"]
+skin = ["p50", "chroma", "warmth"]
+face = ["p50"]
+background = ["p50"]

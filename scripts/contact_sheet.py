@@ -38,7 +38,9 @@ import os
 import pickle
 import random
 import sys
+import tempfile
 import textwrap
+from contextlib import contextmanager
 from collections import Counter
 
 import numpy as np
@@ -50,6 +52,8 @@ from autoedit import batch, emit, tonemetrics as tm  # noqa: E402
 from autoedit.cli import load_run_config  # noqa: E402
 from autoedit.contract import Result, RunConfig  # noqa: E402
 from autoedit.imageio import camera_preview, downscale_long_edge, load_image, raw_opts_from  # noqa: E402
+from autoedit.edit.oklab import linear_to_oklab
+from autoedit.imageio import srgb_to_linear, _to_srgb
 from autoedit.pipeline import Pipeline  # noqa: E402
 
 
@@ -112,12 +116,37 @@ except TypeError:  # Pillow < 10.1 has only the bitmap font
     _FONT = ImageFont.load_default()
 
 
+@contextmanager
+def cache_lock(path):
+    """Serialize writers for a single cache item; the OS releases this on process death."""
+    with open(path + ".lock", "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            import time
+            lock.seek(0, os.SEEK_END)
+            if not lock.tell():
+                lock.write(b" ")
+                lock.flush()
+            lock.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(.2)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
+
+
 class DiskSegmenter:
     """Persist masks per proxy image, so both arms and every later run share one SAM pass.
     ponytail: gzip-pickle keyed by proxy pixels; delete the folder after changing SAM weights."""
 
-    def __init__(self, inner, root: str):
+    def __init__(self, inner, root: str, require_cached: bool = False):
         self.inner, self.root = inner, root
+        self.require_cached = require_cached
         os.makedirs(root, exist_ok=True)
 
     def __getattr__(self, name):
@@ -126,18 +155,23 @@ class DiskSegmenter:
     def segment(self, img, concepts):
         pixels = np.ascontiguousarray(img.rgb)
         path = os.path.join(self.root, hashlib.blake2b(pixels.tobytes(), digest_size=16).hexdigest() + ".pkl.gz")
-        bucket = {}
-        if os.path.exists(path):
-            with gzip.open(path, "rb") as fh:
-                bucket = pickle.load(fh)
-        missing = [c for c in concepts if c not in bucket]
-        if missing:
-            fresh = {m.name: m for m in self.inner.segment(img, missing)}
-            bucket.update({c: fresh.get(c) for c in missing})  # None = tried, found nothing
-            with gzip.open(path + ".part", "wb") as fh:
-                pickle.dump(bucket, fh)
-            os.replace(path + ".part", path)
-        return [bucket[c] for c in concepts if bucket[c] is not None]
+        with cache_lock(path):
+            bucket = {}
+            if os.path.exists(path):
+                with gzip.open(path, "rb") as fh:
+                    bucket = pickle.load(fh)
+            missing = [c for c in concepts if c not in bucket]
+            if missing:
+                if self.require_cached:
+                    # Terminate before a safety wrapper can silently substitute stub masks.
+                    raise SystemExit(f"Unprimed SAM mask(s): {', '.join(missing)}")
+                fresh = {m.name: m for m in self.inner.segment(img, missing)}
+                bucket.update({c: fresh.get(c) for c in missing})  # None = tried, found nothing
+                with gzip.open(path + ".part", "wb") as fh:
+                    pickle.dump(bucket, fh)
+                os.replace(path + ".part", path)
+            self.calls = getattr(self, "calls", 0) + 1
+            return [bucket[c] for c in concepts if bucket[c] is not None]
 
 
 def _config_id(configs_dir: str, backend: str) -> str:
@@ -157,18 +191,40 @@ def _stem(path: str) -> str:
     return os.path.splitext(os.path.basename(path))[0]
 
 
-def _render(pipe: Pipeline, path: str, out_dir: str) -> tuple[str, Result]:
+def _render(pipe: Pipeline | None, path: str, out_dir: str, image=None) -> tuple[str, Result]:
     """Full-resolution render kept on disk as the product's own JPEG + sidecar."""
     jpg = os.path.join(out_dir, _stem(path) + ".jpg")
     side = os.path.join(out_dir, _stem(path) + ".autoedit.json")
-    if not os.path.exists(side):  # the sidecar is written last, so it implies the image
-        os.makedirs(out_dir, exist_ok=True)
-        rgb, res = pipe.process_one(path)
-        emit.write_image(rgb, jpg, "jpeg", pipe.cfg.quality, grain=emit.grain_args(res, pipe.cfg),
-                         geometry=res.geometry)
-        emit.write_sidecar(res, side)
-    with open(side) as fh:
-        return jpg, Result.model_validate_json(fh.read())
+    mask_path = os.path.join(out_dir, _stem(path) + ".regions.npz")
+    os.makedirs(out_dir, exist_ok=True)
+    with cache_lock(jpg):
+        if not all(os.path.isfile(item) for item in (jpg, side, mask_path)):
+            if pipe is None:
+                raise ValueError(f"missing cached output for {_stem(path)}")
+            os.makedirs(out_dir, exist_ok=True)
+            masks = {}
+            def capture(resolved):
+                for region in resolved.regions:
+                    mask = PILImage.fromarray(region.mask.astype(np.uint8))
+                    masks[region.name] = np.asarray(mask.resize((240, 240), PILImage.Resampling.NEAREST))
+            calls = getattr(pipe.segmenter, "calls", 0)
+            rgb, res = pipe.process_one(path, image=image, on_resolved=capture)
+            used = getattr(pipe.segmenter, "calls", 0) > calls
+            res.audit["panel_segmentation"] = {"requested": pipe.cfg.backend,
+                                             "actual": pipe.segmenter.name if used else "none"}
+            # The sidecar marks a complete render. A reader never sees a partial JPEG or NPZ.
+            with tempfile.TemporaryDirectory(dir=out_dir) as staging:
+                jpg_tmp, mask_tmp, side_tmp = [os.path.join(staging, os.path.basename(x)) for x in (jpg, mask_path, side)]
+                np.savez_compressed(mask_tmp, **masks)
+                emit.write_image(rgb, jpg_tmp, "jpeg", pipe.cfg.quality, grain=emit.grain_args(res, pipe.cfg),
+                                 geometry=res.geometry)
+                emit.write_sidecar(res, side_tmp)
+                if os.path.exists(side):
+                    os.unlink(side)
+                for tmp, final in ((jpg_tmp, jpg), (mask_tmp, mask_path), (side_tmp, side)):
+                    os.replace(tmp, final)
+        with open(side) as fh:
+            return jpg, Result.model_validate_json(fh.read())
 
 
 def _caption(res: Result) -> str:
@@ -210,6 +266,38 @@ def _facts(a: PILImage.Image, b: PILImage.Image) -> str:
         pair("saturation", lambda rgb, lum: (rgb.max(axis=2) - rgb.min(axis=2)).mean()),
         pair("warmth(R-B)", lambda rgb, lum: (rgb[..., 0] - rgb[..., 2]).mean()),
     ])
+
+
+def reference_distance(photo, reference, regions=None):
+    """Aligned-frame errors on a common 240 px grid. Brightness is in linear-light stops."""
+    if abs(photo.width / photo.height / (reference.width / reference.height) - 1) > .02:
+        return {"comparable": False, "reason": "different aspect ratios"}
+    def features(image):
+        encoded = np.asarray(image.convert("RGB").resize((240, 240), PILImage.Resampling.BOX), dtype=np.float32) / 255
+        linear = srgb_to_linear(encoded)
+        lum = linear @ [0.2126, 0.7152, 0.0722]
+        labs = linear_to_oklab(linear)[..., 1:]
+        return lum, labs
+    lum, ab = features(photo)
+    target, target_ab = features(reference)
+    def ev(x, y):
+        return np.abs(np.log2((x + 1e-4) / (y + 1e-4)))
+    def cells(x):
+        return x.reshape(6, 40, 6, 40).mean(axis=(1, 3))
+    vector = ab.mean(axis=(0, 1))
+    target_vector = target_ab.mean(axis=(0, 1))
+    hue = None
+    if min(np.linalg.norm(vector), np.linalg.norm(target_vector)) > .001:
+        theta = np.arctan2(vector[1], vector[0]) - np.arctan2(target_vector[1], target_vector[0])
+        hue = abs(float(np.rad2deg(np.arctan2(np.sin(theta), np.cos(theta)))))
+    mask_ev = {}
+    for name, mask in (regions or {}).items():
+        inside = mask.astype(bool)
+        if inside.any():
+            mask_ev[name] = float(ev(lum[inside].mean(), target[inside].mean()))
+    return {"comparable": True, "cells_ev": float(ev(cells(lum), cells(target)).mean()),
+            "chroma": abs(float(np.linalg.norm(ab, axis=2).mean() - np.linalg.norm(target_ab, axis=2).mean())),
+            "hue_degrees": hue, "regions_ev": mask_ev}
 
 
 def _detail(pil: PILImage.Image) -> float:
@@ -265,7 +353,11 @@ def _write_sheets(rows: list[list[tuple[PILImage.Image, str]]], prefix: str, col
 def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, backend: str = "stub",
                 crops_path: str | None = None, seed: int = 1, cache: str | None = None,
                 picks: list[str] | None = None, style: str | None = None,
-                best_style: str | None = None) -> dict:
+                best_style: str | None = None, cached_only: bool = False, require_cached_masks: bool = False,
+                render_max_px: int | None = None) -> dict:
+    if render_max_px is not None and render_max_px < 64:
+        raise ValueError("choose a rendering size of at least 64 pixels")
+    scale = f"-{render_max_px}px" if render_max_px else ""
     with open(panel_path) as fh:
         panel = [line.rstrip("\n").split("\t") for line in fh if line.strip() and not line.startswith("#")]
     if picks:
@@ -282,29 +374,42 @@ def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, bac
     cache = cache or os.path.join(os.path.dirname(os.path.abspath(panel_path)), "cache")
     os.makedirs(out_dir, exist_ok=True)
 
-    pipes, render_dirs = {}, {}
+    pipes, render_dirs, configs = {}, {}, {}
     for role, d in (("best", best_dir), ("candidate", cand_dir)):
         look = (best_style or style) if role == "best" else style   # None → the dir's default style
-        pipes[role] = Pipeline.build(load_run_config(
-            argparse.Namespace(configs_dir=d, backend=backend, style=look)))
-        pipes[role].segmenter = (pipes["best"].segmenter if role == "candidate" else
-                                 DiskSegmenter(pipes[role].segmenter, os.path.join(cache, f"masks-{backend}")))
-        render_dirs[role] = os.path.join(cache, "render-" + _config_id(d, f"{backend}:{look}" if look else backend))
-    decode = raw_opts_from(pipes["best"].cfg)
-    orig_dir = os.path.join(cache, "original-" + decode["raw_mode"])
+        configs[role] = load_run_config(argparse.Namespace(configs_dir=d, backend=backend, style=look))
+        pipes[role] = None if cached_only else Pipeline.build(configs[role])
+        if pipes[role] is not None:
+            pipes[role].segmenter = (pipes["best"].segmenter if role == "candidate" else
+                                     DiskSegmenter(pipes[role].segmenter, os.path.join(cache, f"masks-{backend}"), require_cached_masks))
+        render_dirs[role] = os.path.join(cache, "render-" + _config_id(d, f"{backend}:{look}{scale}" if look else backend + scale))
+    decode = raw_opts_from(configs["best"])
+    orig_dir = os.path.join(cache, "original-" + decode["raw_mode"] + scale)
     os.makedirs(orig_dir, exist_ok=True)
 
     rng = random.Random(seed)
     key = {"seed": seed, "best": os.path.abspath(best_dir), "candidate": os.path.abspath(cand_dir),
            "renders": render_dirs, "rows": {}}
+    key["render_long_edge"] = render_max_px
     blind, shown, crop_rows, facts = [], [], [], []
+    distances = {}
     for i, entry in enumerate(panel, 1):
         path, ref = entry[0], (entry[1] if len(entry) > 1 else "")
         stem = _stem(path)
         orig_jpg = os.path.join(orig_dir, stem + ".jpg")
-        if not os.path.exists(orig_jpg):
-            emit.write_image(load_image(path, decode=decode).rgb, orig_jpg, "jpeg", 95)
-        done = {role: _render(pipes[role], path, render_dirs[role]) for role in ("best", "candidate")}
+        work = None
+        if render_max_px and (not cached_only or not os.path.exists(orig_jpg)):
+            if raw_opts_from(configs["candidate"]) != decode:
+                raise ValueError("reduced-size comparisons require the same decode in both arms")
+            work = downscale_long_edge(load_image(path, decode=decode), render_max_px)
+        with cache_lock(orig_jpg):
+            if not os.path.exists(orig_jpg):
+                original = work if work is not None else load_image(path, decode=decode)
+                with tempfile.TemporaryDirectory(dir=orig_dir) as staging:
+                    tmp = os.path.join(staging, "original.jpg")
+                    emit.write_image(original.rgb, tmp, "jpeg", 95)
+                    os.replace(tmp, orig_jpg)
+        done = {role: _render(pipes[role], path, render_dirs[role], image=work) for role in ("best", "candidate")}
         sides = ["best", "candidate"]
         rng.shuffle(sides)
         side = dict(zip("AB", sides))
@@ -312,14 +417,28 @@ def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, bac
 
         orig = PILImage.open(orig_jpg)
         ae = {s: PILImage.open(done[r][0]) for s, r in side.items()}
-        facts.append(f"{stem}\t{_facts(ae['A'], ae['B'])}")
+        row_facts = _facts(ae["A"], ae["B"])
         if ref == "camera":
             cam = camera_preview(path, 1600)
             ref_pil = None if cam is None else PILImage.fromarray((np.clip(cam, 0, 1) * 255 + 0.5).astype(np.uint8))
             ref_label = "camera preview"
         else:
-            ref_pil = ImageOps.exif_transpose(PILImage.open(ref)) if ref else None
+            ref_pil = None
+            if ref:
+                with PILImage.open(ref) as file:
+                    ref_pil = _to_srgb(ImageOps.exif_transpose(file)).convert("RGB")
             ref_label = os.path.basename(os.path.dirname(ref)) if ref else ""
+        if ref_pil is not None:
+            with np.load(os.path.join(render_dirs["best"], stem + ".regions.npz"), allow_pickle=False) as data:
+                # Masks are in the upright uncropped source frame.
+                masks = dict(data) if all(result.geometry is None for _, result in done.values()) else {}
+            distances[stem] = {s: reference_distance(ae[s], ref_pil, masks) for s in "AB"}
+            for s, values in distances[stem].items():
+                if values["comparable"]:
+                    row_facts += f"  {s} reference: {values['cells_ev']:.3f} EV (36 cells), chroma {values['chroma']:.4f}"
+                else:
+                    row_facts += f"  {s} reference unavailable: {values['reason']}"
+        facts.append(f"{stem}\t{row_facts}")
         ref_cell = (_fit(ref_pil) if ref_pil is not None else PILImage.new("RGB", (8, 8)),
                     f"reference: {ref_label}" if ref_pil is not None else "(no reference)")
         base = [(_fit(orig), f"{stem}  ORIGINAL")]
@@ -328,7 +447,7 @@ def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, bac
                              for s in "AB"] + [ref_cell])
         for cx, cy, label in crops.get(stem, []):
             cut = {"ORIGINAL": _crop(orig, cx, cy), **{s: _crop(ae[s], cx, cy) for s in "AB"}}
-            crop_rows.append([(cut["ORIGINAL"], f"{stem}  {label}  ORIGINAL 100%")]
+            crop_rows.append([(cut["ORIGINAL"], f"{stem}  {label}  ORIGINAL 100%" + (f" of {render_max_px}px" if render_max_px else ""))]
                              + [(cut[s], s) for s in "AB"])
             facts.append(f"{stem}\tcrop {label}: detail "
                          + " ".join(f"{k} {_detail(v):.2f}" for k, v in cut.items()))
@@ -340,6 +459,8 @@ def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, bac
         files["crops"] = _write_sheets(crop_rows, os.path.join(out_dir, "crops"), _CROP[0])
     with open(os.path.join(out_dir, "facts.txt"), "w") as fh:  # safe to read before the verdicts
         fh.write("\n".join(facts) + "\n")
+    with open(os.path.join(out_dir, "distances.json"), "w") as fh:
+        json.dump(distances, fh, indent=2, allow_nan=False)
     with open(os.path.join(out_dir, "key.json"), "w") as fh:  # read only after the verdicts
         json.dump(key, fh, indent=1)
     for name in files["blind"] + files.get("crops", []):
@@ -382,6 +503,9 @@ def main() -> int:
     ap.add_argument("--style", help="panel mode: render both arms with this style (default: the dirs' own)")
     ap.add_argument("--best-style", dest="best_style",
                     help="panel mode: style for the --best arm only (e.g. natural vs a style of one dir)")
+    ap.add_argument("--require-cached-masks", action="store_true", help="fail if a needed SAM mask has not already been computed")
+    ap.add_argument("--render-max-px", type=int, help="explicit display-size render; full native resolution is the default")
+    ap.add_argument("--cached-only", action="store_true", help="assemble completed native renders without starting a segmenter")
     ap.add_argument("--cache", help="render/mask cache (default: cache/ next to the panel file)")
     ap.add_argument("--tally", metavar="VERDICTS", help="score a verdicts.txt against its key.json")
     args = ap.parse_args()
@@ -392,7 +516,7 @@ def main() -> int:
         if not (args.best and args.candidate and args.out_dir):
             ap.error("--panel needs --best, --candidate and --out-dir")
         build_panel(args.panel, args.best, args.candidate, args.out_dir, args.backend, args.crops,
-                    args.seed, args.cache, args.pick, args.style, args.best_style)
+                    args.seed, args.cache, args.pick, args.style, args.best_style, args.cached_only, args.require_cached_masks, args.render_max_px)
         return 0
     if not args.raw_dir:
         ap.error("give RAW_DIR, --panel or --tally")

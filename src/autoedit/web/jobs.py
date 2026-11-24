@@ -39,6 +39,8 @@ class Item:
     ms: float = 0.0
     quality_warn: str = ""
     object_checks: dict[str, bool] = field(default_factory=dict)
+    ai_status: str = ""
+    ai_reason: str = ""
 
 
 @dataclass
@@ -176,7 +178,7 @@ def _check_photo_options(value, srcs, opts, configs_dir, profile, table=None):
     if not isinstance(value, dict) or len(value) > MAX_PHOTO_EDITS:
         raise ValueError("photo_options must be an object with at most 10000 photos")
     known = {os.path.abspath(s) for s in srcs}
-    allowed = {"look", "intensity", "neutral", "reference", "reference_strength", "photo_settings", "photo_base", "hide", "hide_method",
+    allowed = {"style", "look", "intensity", "neutral", "reference", "reference_strength", "photo_settings", "photo_base", "hide", "hide_method",
                "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps"}
     checked, change_notes = {}, {}
     for path, req in value.items():
@@ -206,12 +208,80 @@ def _check_photo_options(value, srcs, opts, configs_dir, profile, table=None):
     return checked, change_notes
 
 
+@dataclass
+class _AutomaticAI:
+    """Private to one worker. The registry, export config and sidecars never receive its key."""
+
+    style: str
+    prompt: str
+    api_key: str = field(repr=False)
+    unavailable: str = ""
+
+    @classmethod
+    def from_request(cls, request, local_only):
+        from .ai_styles import prompt_for
+        if not isinstance(request, dict) or request.keys() - {"style", "allow_cloud", "gemini_api_key"}:
+            raise ValueError("ai_edit must specify a style, preview-sharing permission and optionally a Gemini key")
+        if request.get("allow_cloud") is not True or local_only is not False:
+            raise ValueError("AI editing requires explicit preview-sharing permission and local_only must be false")
+        key = request.get("gemini_api_key", "")
+        if not isinstance(key, str) or len(key) > 512:
+            raise ValueError("invalid Gemini API key")
+        style = request.get("style", "standard")
+        return cls(style, prompt_for(style), key)
+
+    def refine(self, path, options, table, configs_dir, profile):
+        """Ask about this photo's current local edit and add accepted deltas exactly once."""
+        from . import assist
+
+        reason = self.unavailable
+        if options.get("local_only"):
+            reason = "This photo is set to local editing only."
+        if not reason:
+            try:
+                request = {**options, "allow_cloud": True, "assist_prompt": self.prompt, "gemini_api_key": self.api_key}
+                answer = assist.suggest(path, request, configs_dir, profile)
+                if answer["status"] == "ok":
+                    if answer.get("budget", {}).get("remaining_calls") == 0:
+                        self.unavailable = "The Gemini session request limit was reached."
+                    return self._apply(options, answer["proposal"]["changes"], table)
+                reason = answer["message"]
+                if answer["reason"] in ("budget", "missing_key"):
+                    self.unavailable = reason  # avoid preparing more thumbnails for this job
+            except Exception:
+                reason = "Gemini could not prepare a usable edit."
+        return options, "fallback", reason, []
+
+    @staticmethod
+    def _apply(options, changes, table):
+        steps = []
+        for i, change in enumerate(changes):
+            target, ops = change["target"], change["ops"]
+            steps.append({"id": f"gemini-{i}", "label": change["label"], "origin": "suggested",
+                          "on": True, "amount": 1, "global": ops if target == "photo" else {},
+                          "regions": {} if target == "photo" else {target: ops}})
+        updated, limited = edit_steps.fold({**options, "edit_steps": steps}, table)
+        changed = any((updated.get(k) or {}) != (options.get(k) or {}) for k in ("photo_settings", "region_settings"))
+        notes = edit_steps.notes(steps, limited)
+        notes.extend(f"{c['label']}: {c['why']}" for c in changes if c["why"])
+        return updated, "applied" if changed else "unchanged", "", notes
+
+
 def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo_edits=None,
           photo_marks=None, photo_hide=None, photo_options=None) -> Job:
     # An omitted selection means scan the folder; an explicit [] means no photos selected.
     srcs = list(files) if files is not None else _list_images(input_dir)
     if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
         raise ValueError("no supported images found to process")
+    opts = dict(opts)
+    ai = None
+    opts.pop("gemini_api_key", None)
+    opts.pop("assist_prompt", None)
+    if "ai_edit" in opts:
+        ai = _AutomaticAI.from_request(opts.pop("ai_edit"), opts.get("local_only", False))
+        # Only the explicit suggestion call may use a cloud service in this mode.
+        opts.pop("api_key", None)
+        opts.update(decider="rules", allow_cloud=False, translator="off")
     # Reject invalid options and unapproved reference/LUT paths before a worker is started.
     from .service import editor_sliders, make_cfg
     table, _ = editor_sliders()
@@ -235,7 +305,7 @@ def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo
     with _LOCK:
         _JOBS[job.id] = job
         _prune_locked()
-    threading.Thread(target=_run, args=(job, configs_dir, profile), daemon=True).start()
+    threading.Thread(target=_run, args=(job, configs_dir, profile, ai), daemon=True).start()
     return job
 
 
@@ -251,9 +321,9 @@ def _note_input_dir(out_dir: str, srcs: list[str]) -> None:
         json.dump({"input_dir": dirs.pop(), "written_by": "autoedit ui"}, fh, indent=2)
 
 
-def _run(job: Job, configs_dir, profile=None) -> None:
+def _run(job: Job, configs_dir, profile=None, ai=None) -> None:
     try:
-        from . import photo_base
+        from . import photo_base, projects
         from .service import INFERENCE_LOCK, build_pipeline, make_cfg, mark_adjustments, photo_adjustments, settings_adjustments, region_adjustments  # local import avoids a cycle
 
         cfg = make_cfg(job.opts, configs_dir, profile)
@@ -261,6 +331,9 @@ def _run(job: Job, configs_dir, profile=None) -> None:
         _note_input_dir(job.out_dir, [it.src for it in job.items])
         pipe = build_pipeline(cfg)       # resident model, shared with the preview endpoint
         pipe.use_mask_cache(job.out_dir)
+        if ai:
+            from .service import editor_sliders
+            table, _ = editor_sliders()
 
         # Shoot consistency (default on): same plan as the CLI batch path.
         consistent = bool(job.opts.get("consistent", True))
@@ -287,6 +360,9 @@ def _run(job: Job, configs_dir, profile=None) -> None:
         durs: list[float] = []
         taken: set[str] = set()          # de-dupe same-stem outputs across the job's source list
         sources = emit.source_ids(it.src for it in job.items)   # no export may land on an input
+        manual = set()
+        for folder in {os.path.dirname(os.path.abspath(it.src)) for it in job.items}:
+            manual.update(projects.manual_sources(folder, profile))
         for i, item in enumerate(job.items):
             if job.cancelled:
                 job.status = "cancelled"
@@ -300,28 +376,53 @@ def _run(job: Job, configs_dir, profile=None) -> None:
             item.status = "editing"
             t0 = time.time()
             try:
+                projects.require_automatic_export(item.src, manual)
                 bias = biases.get(item.src, consistency.Bias())
                 key = os.path.abspath(item.src)
                 pipe_i, cfg_i = own(key)
-                base = photo_base.check((job.photo_options or {}).get(key, {}).get("photo_base", job.opts.get("photo_base")))
+                opts = {**job.opts, **(job.photo_options or {}).get(key, {}), **(job.photo_hide or {}).get(key, {})}
+                base = photo_base.check(opts.get("photo_base"))
                 photo_adjs, _ = photo_adjustments(pipe_i, (job.photo_edits or {}).get(key))
                 photo_adjs = photo_base.adjustments(base) + photo_adjs
                 photo_adjs += mark_adjustments(pipe_i, (job.photo_marks or {}).get(key, []))[0]
-                photo_adjs += settings_adjustments((job.photo_options or {}).get(key, {}).get("photo_settings", job.opts.get("photo_settings")))
-                region_offsets = (job.photo_options or {}).get(key, {}).get("region_settings", job.opts.get("region_settings")) or {}
+                ai_status, ai_reason, ai_notes = "", "", []
+                if ai:
+                    # Match the exact current photo, including its own overrides and shoot bias.
+                    preview = {**opts, "photo_edit": (job.photo_edits or {}).get(key),
+                               "photo_marks": (job.photo_marks or {}).get(key, []),
+                               "photo_base": {"exposure_bias": bias.exposure, "wb_bias": [bias.temp, bias.tint], **base}}
+                    opts, ai_status, ai_reason, ai_notes = ai.refine(item.src, preview, table, configs_dir, profile)
+                    if job.cancelled:
+                        item.status, job.status = "waiting", "cancelled"
+                        return
+                photo_adjs += settings_adjustments(opts.get("photo_settings"))
+                region_offsets = opts.get("region_settings") or {}
                 photo_adjs += region_adjustments(region_offsets)
                 with INFERENCE_LOCK:
                     out_rgb, result = pipe_i.process_one(item.src, do_apply=True, exposure_bias=base.get("exposure_bias", bias.exposure),
                                                        batch_group=bias.group, wb_bias=tuple(base.get("wb_bias", (bias.temp, bias.tint))),
                                                        adjustments=photo_adjs or None)
+                if ai:
+                    if ai_status == "applied" and (opts.get("photo_settings") or {}) == (preview.get("photo_settings") or {}):
+                        prior = preview.get("region_settings") or {}
+                        changed_regions = {target for target in prior.keys() | region_offsets.keys()
+                                           if prior.get(target) != region_offsets.get(target)}
+                        blocked = {adj.target for adj in result.adjustments if adj.resolved_only
+                                   and adj.status in ("blocked", "not_found")}
+                        if changed_regions <= blocked:
+                            ai_status = "unchanged"
+                    decision = f"used the local edit. {ai_reason}" if ai_status == "fallback" else ai_status
+                    ai_notes.insert(0, f"Gemini ({ai.style}): {decision}")
+                    result.audit["gemini_edit"] = {"style": ai.style, "status": ai_status}
                 image_out, sidecar = emit.output_paths(
                     job.out_dir, item.src, cfg_i.out_format, taken, name=cfg_i.out_name,
                     subdir=cfg_i.out_subdir, fields={"style": cfg_i.style, "n": i + 1},
                     sources=sources)
-                change_notes = (job.photo_change_notes or {}).get(key, job.default_change_notes)
+                change_notes = [*(job.photo_change_notes or {}).get(key, job.default_change_notes), *ai_notes]
                 result.notes.extend(change_notes)
                 emit.write_outputs(out_rgb, result, image_out, sidecar, cfg_i, item.src)
                 item.out, item.scene = image_out, result.scene
+                item.ai_status, item.ai_reason = ai_status, ai_reason
                 item.status, item.quality_warn = _safety(result)
                 item.warn = item.quality_warn
                 if change_notes:
@@ -378,5 +479,7 @@ def snapshot(job: Job) -> dict:
         "current": job.cur, "eta_s": eta,
         "items": [{"name": i.name, "status": i.status, "src": i.src, "out": i.out,
                    "scene": i.scene, "warn": i.warn, "quality_warn": i.quality_warn,
-                   "object_checks": i.object_checks, "error": i.error} for i in job.items],
+                   "object_checks": i.object_checks, "error": i.error,
+                   **({"ai_status": i.ai_status} if i.ai_status else {}),
+                   **({"ai_reason": i.ai_reason} if i.ai_reason else {})} for i in job.items],
     }

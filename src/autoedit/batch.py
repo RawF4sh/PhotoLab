@@ -124,6 +124,8 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
         consistent: bool = True, workers: int | None = None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     images = list_images(input_dir)
+    from .web.projects import manual_sources, require_automatic_export
+    manual = manual_sources(input_dir, cfg.profile_dir) if do_apply else set()
     pipeline = Pipeline.build(cfg)
     cfg = pipeline.cfg   # "auto" is resolved to the backend that actually runs
     n_workers, why = _effective_workers(cfg, cfg.workers if workers is None else workers)
@@ -210,6 +212,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
     try:
         for i, path in enumerate(images, start=1):
             try:
+                require_automatic_export(path, manual)
                 image_out, sidecar = emit.output_paths(
                     out_dir, path, cfg.out_format, taken, name=cfg.out_name, subdir=cfg.out_subdir,
                     fields={"style": cfg.style, "n": i}, sources=sources)

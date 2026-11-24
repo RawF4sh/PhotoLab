@@ -1,6 +1,7 @@
 // Photo screen: preview, hold to compare, marks, chips, Masks, How it was done, Try it yourself, Save this photo.
 // Ported from the Lab (lab.html, F38); request bodies are the Lab's. Text is never parsed as markup.
-import { el, api, state, store, nice, thumbUrl, go, toast, getSchema, setBar, backButton, gearButton, openSheet } from './main.js';
+import { el, api, state, store, nice, thumbUrl, loadPhotoPath, go, toast, getSchema, setBar, backButton, gearButton, openSheet } from './main.js';
+import { createEditorSidebar } from './editor_sidebar.js';
 import { runOptions } from './settings.js';
 import { runTool } from './tools.js';
 import { exportsDir } from './share.js';
@@ -29,7 +30,7 @@ const button = (text, on, attrs) => el('button', { type: 'button', ...attrs, on:
 
 function fmtVal(op, x) {
   if (typeof x !== 'number' || !isFinite(x)) return x == null ? '' : String(x);
-  if (op === 'exposure' || op === 'shadows_ev') return (x < 0 ? '-' : '+') + Math.abs(x).toFixed(2) + ' EV';
+  if (['exposure','shadows_ev','burn_ev'].includes(op)) return (x < 0 ? '-' : '+') + Math.abs(x).toFixed(2) + ' EV';
   return (x < 0 ? '-' : '+') + Math.abs(x).toFixed(1).replace(/\.0$/, '');
 }
 const pct = x => { const n = (+x || 0) * 100; return (n < 10 && n !== 0 ? n.toFixed(1).replace(/\.0$/, '') : Math.round(n)) + ' %'; };
@@ -68,6 +69,8 @@ function saveEntries() { updatePhoto(v.file.path, { entries: v.list }); }
 /* ---- the request ----------------------------------------------------------------------------- */
 function options() {   // the Folder's merge, then this photo's own look and strength
   const o = runOptions(), p = getPhoto(v.file.path);
+  if (p.style) o.style = p.style;
+  if (v.primary) Object.assign(o, {local_only: true, decider: 'rules', allow_cloud: false, translator: 'off'});
   if (p.look !== undefined) { if (p.look) o.look = p.look; else delete o.look; }
   if (p.intensity !== undefined) o.intensity = p.intensity;
   if (p.reference !== undefined) { if (p.reference) o.reference = p.reference; else delete o.reference; }
@@ -100,11 +103,11 @@ function previewBody() {
 const BODIES = {
   edit: () => ({ ...previewBody(), ...(v.unframed ? { preview_unframed: true } : {}) }),
   how: () => ({ ...previewBody(), steps: true }),
-  try: () => ({ ...previewBody(), try: { sliders: { ...v.sliders }, compare: v.compare } }),
+  try: () => v.primary && v.practice ? practiceRequest() : ({ ...previewBody(), try: { sliders: { ...v.sliders }, compare: v.compare } }),
 };
 const SHOW = {
   edit: j => { v.answer = j; if (v.view === 'edit') paintEdit(); },
-  how: j => { v.how = j; v.step = 0; if (v.view === 'how') paintHow(); paintMasks(); },
+  how: j => { v.how = j; if (v.view === 'how') paintHow(); paintMasks(); },
   try: j => { v.tried = j; if (v.view === 'try') paintTry(); },
 };
 async function once(kind) {   // cancel obsolete client work; never paint a response for an old edit/photo
@@ -177,7 +180,32 @@ function fit() {
   frame.style.width = Math.max(1, Math.floor(w * s)) + 'px'; frame.style.height = Math.max(1, Math.floor(h * s)) + 'px';
 }
 function setImg(img, s) { const p = pic(s); if (p) img.src = p; }
-function setThumbs() { const t = thumbUrl(v.file.path, 1600); v.u.before.src = t; v.u.after.src = t; }
+function setThumbs() {
+  const me = v, {before, after, opening} = me.u;
+  if (!me.primary || !me.file.isRaw) {
+    const t = thumbUrl(me.file.path,1600); before.src = t; after.src = t; return;
+  }
+  const decode = Object.fromEntries(Object.entries(runOptions()).filter(([key]) => key.startsWith('raw_')));
+  const key = JSON.stringify(decode);
+  if (me.originalKey === key) {
+    if (me.original) before.src = after.src = me.original;
+    return;
+  }
+  me.originalAbort?.abort();
+  const controller = me.originalAbort = new AbortController();
+  me.originalKey = key; me.original = null; opening.hidden = false; opening.textContent = 'Opening RAW…';
+  api('/editor/source-preview', {path:me.file.path,options:decode}, {signal:controller.signal}).then(result => {
+    if (v !== me || controller.signal.aborted) return;
+    if (!pic(result.before)) throw Error('The source decoder did not return an image.');
+    me.original = result.before; opening.hidden = true;
+    if (result.working_copy) me.u.title.title = me.file.name + ' · decoded working preview' +
+      (result.source_bits ? ' · ' + result.source_bits + '-bit source' : '');
+    if (!me.editing || !curAnswer()) before.src = after.src = me.original;
+  }).catch(error => {
+    if (v !== me || controller.signal.aborted || (me.editing && curAnswer())) return;
+    opening.hidden = false; opening.textContent = error.message;
+  });
+}
 function showing() {
   const engine = v.view === 'try' && v.compare && v.which === 'engine' && v.tried && v.tried.compare;
   const s = !v.editing || v.hold ? 'before' : engine ? 'engine' : 'after', u = v.u;
@@ -190,6 +218,11 @@ function showing() {
   u.splitControl.setAttribute('aria-valuetext', v.splitAt + '% before, ' + (100 - v.splitAt) + '% after');
   u.split.setAttribute('aria-pressed', String(v.split));
   u.split.disabled = !curAnswer() || !!engine;
+  if (v.primary) {
+    u.split.hidden = !curAnswer();
+    u.splitBefore.textContent = v.view === 'how' ? 'Before this step' : 'Original';
+    u.splitAfter.textContent = v.view === 'how' ? 'After this step' : v.view === 'try' ? 'Practice edit' : 'Current edit';
+  }
   u.tag.hidden = !v.editing || s === 'after';
   u.tag.textContent = s === 'before' ? (v.view === 'how' ? 'Before this step' : 'Original') : "AutoEdit's edit";
   u.orig.setAttribute('aria-pressed', String(v.hold));
@@ -387,11 +420,13 @@ function drawChips() {
 function setView(name) {
   if (name !== 'edit' && v.tools) v.tools.setMode('none');
   const prev = v.view; v.view = name; setHold(false);
+  if (v.primary && name !== 'try' && prev === 'try') { v.sliders = {}; uResetPractice(); }
   const u = v.u;
   u.which.hidden = name !== 'try' || !(v.tried && v.tried.compare);
-  u.panels.edit.hidden = name !== 'edit'; u.panels.how.hidden = name !== 'how'; u.panels.try.hidden = name !== 'try';
+  if (!v.primary) u.panels.edit.hidden = name !== 'edit'; u.panels.how.hidden = name !== 'how'; u.panels.try.hidden = name !== 'try';
   if (name === 'edit') paintEdit(); else if (name === 'how') paintHow(); else paintTry();
-  (name === 'edit' ? u.navs[prev] || u.say : u.panels[name].querySelector('h2')).focus(); showing(); refresh();
+  if (!v.primary) (name === 'edit' ? u.navs[prev] || u.say : u.panels[name].querySelector('h2')).focus();
+  showing(); refresh();
 }
 function paintEdit() {
   const j = v.answer, u = v.u;
@@ -465,13 +500,30 @@ function paintHow() {
     });
     ch.append(li);
   });
-  (j.steps || []).forEach((s, i) => st.append(el('li', null, button((i + 1) + '. ' + (s.title || s.kind), () => chooseStep(i)))));
+  if (v.primary) {
+    const p = getPhoto(v.file.path);
+    if (!walk.length) ch.replaceChildren();
+    for (const step of p.edit_steps || []) {
+      ch.append(el('li', null, (step.origin === 'recipe' ? 'Recipe' : 'Gemini') + ' · ' + step.label +
+        (step.on ? ' · ' + pct(step.amount) : ' · Off'), step.reason ? el('p',null, step.reason) : null));
+    }
+    for (const [target, values] of [['Whole photo', p.sliders || {}], ...Object.entries(p.region_settings || {})]) {
+      for (const [op, value] of Object.entries(values)) ch.append(el('li',null, 'Manual · ' + target + ' · ' + nice(op) + ' ' + fmtVal(op, value)));
+    }
+    if (p.manual) {
+      const row = el('li', null, 'Manual · LightCraft'); ch.append(row);
+      api('/editor/manual?path=' + encodeURIComponent(v.file.path)).then(stage => {
+        if (stage.manual?.sha256 === p.manual.sha256) row.textContent = 'Manual · ' + ((stage.changed || []).map(nice).join(', ') || 'LightCraft');
+      }).catch(() => {});
+    }
+  }
+  (j.steps || []).forEach((s, i) => st.append(el('li', null, button((v.primary ? 'Local · ' : '') + (i + 1) + '. ' + (s.title || s.kind), () => chooseStep(i)))));
   chooseStep(Math.min(v.step, Math.max(0, (j.steps || []).length - 1)));
 }
 function chooseStep(i) {
   const j = v.how, steps = (j && j.steps) || []; if (!steps.length) return;
   v.step = Math.max(0, Math.min(steps.length - 1, i)); const s = steps[v.step], u = v.u;
-  setImg(u.after, s.after); setImg(u.before, (steps[v.step - 1] || s).after);
+  setImg(u.after, s.after); setImg(u.before, steps[v.step - 1]?.after || j.before);
   u.after.alt = 'Step ' + (v.step + 1); u.before.alt = 'Before step ' + (v.step + 1);
   [...u.hSteps.querySelectorAll('button')].forEach((b, k) => { if (k === v.step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
   say('Step ' + (v.step + 1) + ' of ' + steps.length + ' · ' + (s.title || s.kind));
@@ -489,24 +541,69 @@ function chooseStep(i) {
     if (labs.length) d.append(el('p', null, 'Your changes here: ' + labs.join(', ')));
   }
   (s.notes || []).forEach(n => d.append(el('p', null, n)));
+  if (v.primary) {
+    d.append(button('Compare this step', () => { v.split = !v.split; showing(); }, {class:'line'}));
+    const areas = (s.where || []).filter(w => w.tools?.length && s.kind === 'regions');
+    for (const area of areas) d.append(button('Try it yourself · ' + nice(area.target),
+      () => beginPractice(s, area.target, area.tools), {class:'line'}));
+    if (!areas.length && (s.tools || []).length) d.append(button('Try it yourself', () => beginPractice(s, '', s.tools), {class:'line'}));
+  }
   if (s.moved != null) d.append(el('p', null, 'Moved ' + Math.round(s.moved * 10) / 10 + ' levels of 255 on average'));
   showing();
 }
 
 /* ---- try it yourself ------------------------------------------------------------------------- */
+function beginPractice(step, target, tools) {
+  const body = previewBody(), defs = v.how?.editor?.sliders || [];
+  const supported = tools.filter(t => defs.some(d => d.op === t.op));
+  if (!supported.length) { say('This step uses a tool outside the practice sliders.'); return; }
+  const offsets = target ? body.region_settings?.[target] || {} : body.photo_settings || {};
+  v.practice = {target, offsets, tools:supported, signature:JSON.stringify(body)};
+  v.sliders = Object.fromEntries(supported.map(t => [t.op,t.value]));
+  v.u.practiceTitle.textContent = (target ? nice(target) + ' · ' : '') + (step.title || step.kind);
+  v.u.tSliders.replaceChildren(); v.u.tLesson.replaceChildren(); v.tried = null;
+  setView('try');
+}
+function practiceOffsets() {
+  const {offsets, tools} = v.practice, values = {...offsets}, defs = v.how.editor.sliders;
+  for (const {op,value} of tools) {
+    const d = defs.find(x => x.op === op), offset = (offsets[op] || 0) + (v.sliders[op] ?? value) - value;
+    values[op] = Number(Math.max(d.min, Math.min(d.max, offset)).toFixed(4));
+    if (!values[op]) delete values[op];
+  }
+  return values;
+}
+function practiceRequest() {
+  const body = previewBody(), {target} = v.practice, values = practiceOffsets();
+  if (target) body.region_settings = {...body.region_settings, [target]:values};
+  else body.photo_settings = values;
+  return body;
+}
+function applyPractice() {
+  const p = v.practice;
+  if (!p || p.signature !== JSON.stringify(previewBody())) { say('Your photo changed. Reopen this step to practice on the current edit.'); return; }
+  const values = practiceOffsets(), patch = p.target ? {region_settings:{...getPhoto(v.file.path).region_settings,[p.target]:values}} : {sliders:values};
+  setView('how'); updatePhoto(v.file.path, patch);
+}
+function uResetPractice() {
+  v.u.tSliders?.replaceChildren(); v.practice = null; v.tried = null;
+  const flight = v.flights.try;
+  if (flight) { flight.controller?.abort(); delete v.flights.try; }
+}
 function paintTry() {
   const j = v.tried, u = v.u;
   if (!j) { setThumbs(); drawChips(); showing(); return; }
   setImg(u.before, j.before); setImg(u.after, j.after); u.after.alt = 'Edited photo'; u.before.alt = 'Original'; tint([]);
   const box = u.tSliders;
-  if (!box.childNodes.length) ((j.try || {}).sliders || []).forEach(s => {
+  const sliders = v.practice ? (j.editor?.sliders || []).filter(d => v.practice.tools.some(t => t.op === d.op)) : (j.try || {}).sliders || [];
+  if (!box.childNodes.length) sliders.forEach(s => {
     const id = 'sl_' + s.op, val = el('span', { class: 'num' }), r = el('input', { type: 'range', id, min: s.min, max: s.max, step: s.step });
     r.dataset.op = s.op;
     const set = x => { const t = fmtVal(s.op, +x); val.textContent = t; r.setAttribute('aria-valuetext', t); };
     r.value = v.sliders[s.op] || 0; set(r.value);
     const teach = () => { const L = u.tLesson; L.replaceChildren(el('strong', null, s.name || s.op)); lines(L, s); };
     r.addEventListener('input', () => set(r.value)); r.addEventListener('focus', teach); r.addEventListener('pointerdown', teach);
-    r.addEventListener('change', () => { const n = +r.value; if (n) v.sliders[s.op] = n; else delete v.sliders[s.op]; set(r.value); refresh(); });
+    r.addEventListener('change', () => { const n = +r.value; if (v.practice || n) v.sliders[s.op] = n; else delete v.sliders[s.op]; set(r.value); refresh(); });
     box.append(el('div', { class: 'sl' }, el('div', { class: 'row' }, el('label', { htmlFor: id }, s.name || s.op), val), r));
   });
   const c = j.compare;
@@ -536,18 +633,48 @@ function paintCompare(c) {
 }
 
 /* ---- save ------------------------------------------------------------------------------------ */
+function linkBrowserDrop(me, drop) {
+  openSheet('Link original photo', (body, close) => {
+    const status = el('p', {role:'status'});
+    const pick = button('Choose original', async () => {
+      pick.disabled = true;
+      try {
+        const {path} = await api('/pick?kind=file', {});
+        if (!path || v !== me) return;
+        await api('/editor/import', {path, expected_drop:drop.sha256});
+        if (v !== me) return;
+        const edits = getPhoto(me.file.path);
+        if (edits.manual) { status.textContent = 'Export this manual version in Fine-tune before opening another original.'; return; }
+        const {history, future, manual, ...local} = edits;
+        const opened = await loadPhotoPath(path);
+        if (!opened) return;
+        const prior = getPhoto(path);
+        const hasPrior = Object.keys(prior).some(k => !['history','future'].includes(k));
+        if (Object.keys(local).length && !hasPrior) updatePhoto(path, local);
+        close();
+        toast(hasPrior && Object.keys(local).length ? 'Opened the original with its saved edit. The browser copy keeps its own changes.' :
+          'Original linked. Exports go beside this photo.');
+      } catch (error) { status.textContent = error.message; }
+      finally { pick.disabled = false; }
+    }, {class:'primary'});
+    body.append(el('p', null, 'Choose the same file on disk to keep the project and its exports beside the original.'), pick, status);
+  });
+}
 async function openInEditor(edited) {
   const me = v, path = edited ? me.file.exported : me.file.path;
   if (!path || (edited && me.file.dirty)) return;
   try {
     if (await persistProject() === false || v !== me || (edited && me.file.dirty)) return;
     sessionStorage.setItem('autoedit.editor.open', path);
-    location.assign('/editor/');
+    if (me.primary && me.editing && !edited) sessionStorage.setItem('autoedit.editor.options', JSON.stringify(previewBody()));
+    else sessionStorage.removeItem?.('autoedit.editor.options');
+    location.assign('/editor/fine-tune/');
   } catch (error) { toast('Could not open the photo editor. ' + error.message); }
 }
 async function save() {
   if (!v?.editing) return;
   if (v.draftSliders) { const sliders = Object.fromEntries(Object.entries(v.draftSliders).filter(([, value]) => value)); v.draftSliders = null; updatePhoto(v.file.path, { sliders }); }
+  if (v.primary && getPhoto(v.file.path).manual) { await openInEditor(false); return; }
   const me = v, b = previewBody(), u = me.u, savedState = JSON.stringify({ photo: getPhoto(v.file.path), run: runOptions() }); if (u.save.disabled) return;
   u.save.disabled = true; u.saved.className = 'fine'; u.saved.textContent = 'Saving…'; u.saved.removeAttribute('title');
   try {
@@ -556,7 +683,8 @@ async function save() {
     me.file.exported = out; me.file.status = (j.result || {}).needs_review ? 'review' : 'finished';
     me.file.dirty = savedState !== JSON.stringify({ photo: getPhoto(me.file.path), run: runOptions() });
     await persistProject(); if (v === me) copyState();
-    if (v === me) { u.saved.textContent = me.file.dirty ? 'Saved the earlier version. New changes still need saving.' : 'Saved to ' + (out || 'AutoEdit Exports'); u.saved.title = out; }
+    if (v === me) { u.saved.textContent = me.file.dirty ? 'Saved the earlier version. New changes still need saving.' : 'Saved to ' + (out || 'AutoEdit Exports'); u.saved.title = out;
+      if (me.primary && out) u.saved.append(button('Show export', () => runTool('reveal', {path:out}).catch(e => toast(e.message)), {class:'link'})); }
   } catch (e) { if (v === me) { u.saved.className = 'bad'; u.saved.textContent = e.message; } else toast(e.message); }
   if (v === me) u.save.disabled = false;
 }
@@ -567,6 +695,7 @@ async function save() {
 function copyState() {
   const ready = !!v.file.exported && !v.file.dirty;
   for (const button of [v.u.copy, v.u.openEdited]) {
+    if (!button) continue;
     button.disabled = !ready; button.title = ready ? '' : 'Save this photo’s current changes first';
   }
 }
@@ -674,6 +803,7 @@ async function copyNow(target, selection = {}) {
 function syncEditControls() {
   if (!v) return;
   const p = getPhoto(v.file.path), u = v.u;
+  if (u.style && p.style && [...u.style.options].some(o => o.value === p.style)) u.style.value = p.style;
   if (u.look) u.look.value = p.look === undefined ? state.look : p.look;
   if (u.strength) { u.strength.value = p.intensity === undefined ? (state.strength === null ? u.defaultStrength : state.strength) : p.intensity; u.paintStrength(); }
   for (const [op, c] of Object.entries(u.manualInputs || {})) { c.input.value = (p.sliders === undefined ? state.folderSliders || {} : p.sliders)[op] || 0; c.paint(); }
@@ -814,9 +944,7 @@ function editPanel() {
   };
   const both = [rate('Good', 'keep'), rate('Not good', 'reject')];
   u.review = el('div', { class: 'field', hidden: !store.get('labels', false) }, el('h3', null, 'Is this edit good?'), el('div', { class: 'btnrow' }, ...both));
-  return el('div', { class: 'panel' },
-    history,
-    button('Recipes', () => openPhotoPresets({
+  const recipes = button('Recipes', () => openPhotoPresets({
       file: v.file,
       getOptions: () => ({ look: options().look || '', intensity: options().intensity ?? u.defaultStrength }),
       getOffsets: () => {
@@ -824,7 +952,20 @@ function editPanel() {
         return { photo_settings: own.sliders ?? state.folderSliders ?? {}, region_settings: own.region_settings || {},
           edit_steps: own.edit_steps || [] };
       },
-    }), { class: 'line' }),
+    }), { class: 'line' });
+  if (v.primary) {
+    const [changes, objects, framing, assist] = v.tools.panels;
+    objects.open = assist.open = true;
+    u.sidebar.panel('adjust').replaceChildren(u.tune, framing);
+    u.sidebar.panel('isolate').replaceChildren(objects, el('label', {class:'check'}, u.masksBox, 'Show all masks'));
+    u.sidebar.panel('gemini').replaceChildren(assist);
+    return el('div', {class:'panel'}, history, changes,
+      el('div', {class:'field'}, el('div', {class:'row'}, el('label', {htmlFor:'strength'}, 'Strength'), out, reset), range),
+      el('details', {class:'editor-tool'}, el('summary', null, 'Whole photo adjustments'), u.copiedChip, u.manual, u.grey, u.greyChip),
+      el('details', {class:'editor-tool'}, el('summary', null, 'Looks & references'), lookSel, button('Compare looks…', chooseLooks, {class:'line'}), referencePanel(), recipes),
+      u.changes, u.probs, u.check, u.copy, u.copyRes, u.review, u.saved);
+  }
+  return el('div', { class: 'panel' }, history, recipes,
     el('div', { class: 'field' }, el('label', { htmlFor: 'look' }, 'Look'), lookSel, button('Compare looks…', chooseLooks, { class: 'line' })),
     el('div', { class: 'field' }, el('div', { class: 'row' }, el('label', { htmlFor: 'strength' }, 'Strength'), out, reset), range),
     el('details', { class: 'editor-tool' }, el('summary', null, 'Whole photo adjustments'), u.copiedChip, u.manual),
@@ -841,6 +982,8 @@ function editPanel() {
 function howPanel() {
   const u = v.u;
   u.hChanges = el('ol', { class: 'plist' }); u.hSteps = el('ol', { class: 'plist' }); u.hDetail = el('div', { class: 'detail' });
+  if (v.primary) return el('div', {class:'panel', hidden:true},
+    el('h3', null, 'What changed'), u.hSteps, u.hDetail, u.hChanges);
   return el('div', { class: 'panel', hidden: true },
     button('← Back', () => setView('edit'), { class: 'link back' }),
     el('h2', { tabIndex: -1 }, 'How it was done'),
@@ -852,6 +995,9 @@ function tryPanel() {
   u.tFacts = el('ul', { class: 'plist' }); u.tBody = el('tbody'); u.tSaid = el('p');
   u.tTable = el('table', { hidden: true }, el('thead', null, el('tr', null, el('th', { scope: 'col' }, 'Tool'),
     el('th', { scope: 'col', class: 'n' }, 'Yours'), el('th', { scope: 'col', class: 'n' }, 'AutoEdit'))), u.tBody);
+  if (v.primary) return el('div', {class:'panel', hidden:true}, el('h3',null,'Try it yourself'),
+    u.practiceTitle = el('p'), u.tSliders, u.tLesson,
+    button('Apply practice edit', applyPractice, {class:'primary'}), button('Discard practice', () => setView('how'), {class:'line'}));
   const cmp = el('button', { type: 'button', 'aria-pressed': 'false', on: { click: () => {
     v.compare = !v.compare; cmp.setAttribute('aria-pressed', String(v.compare)); refresh(); } } }, 'Compare with AutoEdit');
   return el('div', { class: 'panel', hidden: true },
@@ -879,7 +1025,7 @@ function filmstrip() {
 function compareTools(begin) {
   const u = v.u;
   u.begin = button(v.file.dirty || v.file.exported || canUndo(v.file.path) ? 'Resume guided edit' : 'Preview AutoEdit', begin, { class: 'primary' });
-  u.split = button('Before / after', () => {
+  u.split = button(v.primary ? 'Before / After' : 'Before / after', () => {
     if (!v.split && v.tools.mode !== 'none') v.tools.setMode('none');
     setHold(false); v.split = !v.split; showing();
     if (v.split) u.splitControl.focus({ preventScroll: true });
@@ -888,6 +1034,10 @@ function compareTools(begin) {
     v.zoom = !v.zoom; u.zoom.textContent = v.zoom ? 'Fit photo' : '100% preview'; u.zoom.setAttribute('aria-pressed', String(v.zoom)); fit();
     if (v.zoom) { u.canvas.scrollLeft = (u.canvas.scrollWidth - u.canvas.clientWidth) / 2; u.canvas.scrollTop = (u.canvas.scrollHeight - u.canvas.clientHeight) / 2; }
   }, { class: 'line', 'aria-pressed': 'false', title: 'Inspect preview pixels. Drag to pan, or use the scrollbars.' });
+  if (v.primary) {
+    u.editActions = el('div', {class: 'editor-action-group'}, u.split);
+    return el('div', {class: 'editor-compare'}, u.editActions, u.zoom, u.sidebar.drawer);
+  }
   u.editActions = el('div', { class: 'editor-action-group', hidden: true }, u.split,
     button('Targeted edits', () => { if (v.view !== 'edit') setView('edit'); v.tools.openObjects(); }, { class: 'line' }));
   return el('div', { class: 'editor-compare' }, u.begin, u.editActions, u.zoom,
@@ -902,24 +1052,27 @@ const neighbourIndex = d => {
 const neighbour = d => { const i = neighbourIndex(d); if (i >= 0) go('photo', { index: i }); };
 
 export const screen = {
-  mount(root, { index }) {
+  mount(root, { index, editor = false }) {
     const file = state.files[index];
     if (!file) {
       setBar(backButton('Folder', 'folder'), el('span', { class: 'grow' }), gearButton());
       root.append(el('p', { class: 'fine pv-gone' }, 'That photo is not in this folder.')); return;
     }
-    const u = {}, me = v = { index, file, u, editing: false, view: 'edit', list: [], flights: {}, answer: null, how: null, tried: null,
+    const u = {}, me = v = { index, file, u, primary: editor, editing: false, view: 'edit', list: [], flights: {}, answer: null, how: null, tried: null,
       step: 0, sliders: {}, compare: false, which: 'yours', hold: false, marking: false, picking: false, pending: null, masks: false,
       busy: 0, scene: '', busyTimer: 0, busyFrom: 0, previewTimer: 0, draftSliders: null, unframed: false, split: false, splitAt: 50, zoom: false };
     u.owner = me;
     u.title = el('span', { class: 'title' });
     u.orig = el('button', { type: 'button', hidden: true, 'aria-pressed': 'false', title: 'Hold B to see the original', on: { click: () => setHold(!v.hold) } }, 'Original');
-    setBar(backButton('Folder', 'folder'), u.title, el('span', { class: 'grow' }),
+    if (editor) setBar(backButton('Library', 'folder'), u.title, el('span', {class:'grow'}),
+      u.exportButton = button('Export', () => getPhoto(file.path).manual || !me.editing ? openInEditor(false) : save(), {class:'primary'}));
+    else setBar(backButton('Folder', 'folder'), u.title, el('span', { class: 'grow' }),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Previous photo to review' : 'Previous photo', disabled: neighbourIndex(-1) < 0, on: { click: () => neighbour(-1) } }, '‹'),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Next photo to review' : 'Next photo', disabled: neighbourIndex(1) < 0, on: { click: () => neighbour(1) } }, '›'),
       state.reviewQueue ? button('Review queue', () => { state.reviewQueue = false; go('photo', { index }); }, { class: 'line', title: 'Leave the review queue and browse every photo' }) : null, u.orig, gearButton());
     title();
 
+    u.opening = el('div', {class:'editor-opening',role:'status',hidden:!editor}, file.isRaw ? 'Opening RAW…' : 'Opening photo…');
     u.busy = el('div', { class: 'pv-busy', hidden: true });
     u.before = el('img', { alt: 'Original' }); u.after = el('img', { alt: 'Edited photo' }); u.engine = el('img', { alt: "AutoEdit's edit" });
     u.tint = el('div', { class: 'pv-tint' });
@@ -931,7 +1084,7 @@ export const screen = {
       title: 'Drag to compare, or use the arrow keys' }, el('span', { 'aria-hidden': 'true' }, '‹ ›'));
     u.frame = el('div', { class: 'pv-frame', role: 'group', tabIndex: 0, 'aria-label': 'Original photo', data: { showing: 'before' } },
       u.before, u.after, u.engine, u.tint, el('div', { class: 'pv-ovals' }, u.ghost, u.pend, u.greyDot), u.tag,
-      u.splitControl, el('div', { class: 'editor-split-labels', 'aria-hidden': 'true' }, el('span', null, 'Before'), el('span', null, 'After')));
+      u.splitControl, el('div', { class: 'editor-split-labels', 'aria-hidden': 'true' }, u.splitBefore = el('span', null, editor ? 'Original' : 'Before'), u.splitAfter = el('span', null, editor ? 'Current edit' : 'After')));
     u.canvas = el('div', { class: 'pv-canvas' }, u.frame);
     u.status = el('div', { class: 'pv-status', role: 'status' });
     u.mark = el('button', { type: 'button', class: 'line', 'aria-pressed': 'false', title: 'Draw an oval, then say what changes in it (M)',
@@ -943,10 +1096,49 @@ export const screen = {
       u.whichEngine = button("AutoEdit's", () => { v.which = 'engine'; syncWhich(); showing(); }, { 'aria-pressed': 'false' }));
     const form = el('form', { class: 'pv-say', on: { submit: submitSay } }, u.mark, u.markTag, u.say);
     const under = el('div', { class: 'pv-under', hidden: true }, el('div', { class: 'pv-line' }, u.status, u.which), form);
-    const side = el('aside', { class: 'side pv-side', hidden: true, 'aria-label': 'Edit this photo' });
-    const workspace = el('div', { class: 'pv is-viewing' },
-      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas), compareTools(startEditing), under, u.strip = filmstrip()), side);
+    if (editor) {
+      u.sidebar = createEditorSidebar(el, selectSection);
+      u.style = el('select', {id: 'photo-local-style', 'aria-label': 'Local style'}, el('option', {value:'standard'}, 'Standard'));
+      api('/local-styles').then(({styles}) => {
+        if (v !== me) return;
+        u.style.replaceChildren(...styles.map(s => el('option', {value:s.id}, s.label)));
+        u.style.value = getPhoto(file.path).style || 'standard';
+      }).catch(() => {});
+      u.run = button('Run AI Edit', () => {
+        updatePhoto(file.path, {style:u.style.value || 'standard', ai_enabled:true});
+        if (!me.editing) startEditing(); else refresh();
+      }, {class:'primary'});
+      u.aiActions = el('div', {class:'field'}, el('label',{htmlFor:'photo-local-style'},'Local style'), u.style, u.run);
+      const drops = store.get('browserDrops', []), drop = Array.isArray(drops) && drops.find(x => x.path === file.path);
+      if (drop) u.aiActions.prepend(el('div',{class:'drop-source'}, el('span',null,'Browser copy'),
+        button('Link original', () => linkBrowserDrop(me, drop), {class:'link'})));
+      u.sidebar.panel('ai').append(u.aiActions);
+      if (canUndo(file.path) || canRedo(file.path)) {
+        u.originalHistory = el('div', {class:'editor-history'},
+          button('Undo', () => { if (undoPhoto(file.path)) go('photo',{index}); }, {class:'line',disabled:!canUndo(file.path)}),
+          button('Redo', () => { if (redoPhoto(file.path)) go('photo',{index}); }, {class:'line',disabled:!canRedo(file.path)}));
+        u.aiActions.append(u.originalHistory);
+      }
+      u.tune = button(getPhoto(file.path).manual ? 'Resume fine-tuning in LightCraft' : 'Fine-tune in LightCraft', () => openInEditor(false), {class:'line'});
+      u.sidebar.panel('adjust').append(u.tune);
+      if (getPhoto(file.path).manual) u.aiActions.prepend(el('div',{class:'field'}, el('span',null,'Viewing the local stage'),
+        button('View finished manual edit', () => openInEditor(false), {class:'line'})));
+      for (const [id,label] of [['isolate','Find objects'],['learn','Show local editing steps'],['gemini','Prepare photo']]) {
+        u.sidebar.panel(id).append(button(label, () => { startEditing(); selectSection(id); }, {class:'line'}));
+      }
+    }
+    const side = editor ? u.sidebar.aside : el('aside', { class: 'side pv-side', hidden: true, 'aria-label': 'Edit this photo' });
+    const workspace = el('div', { class: editor ? 'pv unified-editor' : 'pv is-viewing' },
+      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas, u.opening), compareTools(startEditing), under, u.strip = filmstrip()), side);
     root.append(workspace);
+    function selectSection(id) {
+      if (!me.editing) return;
+      if (id !== 'isolate' && me.tools.mode !== 'none') me.tools.setMode('none');
+      const view = id === 'learn' ? 'how' : 'edit';
+      if (me.view !== view) setView(view);
+      if (id === 'isolate') me.tools.openObjects();
+      if (id === 'learn') { u.panels.how.hidden = false; once('how'); }
+    }
     function startEditing() {
       if (v !== me || me.editing) return;
       me.editing = true; me.list = loadEntries(file.path);
@@ -961,18 +1153,32 @@ export const screen = {
         },
       });
       u.panels = { edit: editPanel(), how: howPanel(), try: tryPanel() };
-      side.append(u.panels.edit, u.panels.how, u.panels.try); under.prepend(me.tools.sourceNote);
+      if (editor) {
+        if (u.originalHistory) u.originalHistory.hidden = true;
+        u.sidebar.panel('learn').replaceChildren(u.panels.how, u.panels.try);
+        u.sidebar.panel('ai').append(u.panels.edit);
+        selectSection(u.sidebar.active());
+      } else side.append(u.panels.edit, u.panels.how, u.panels.try); under.prepend(me.tools.sourceNote);
       u.editActions.append(me.tools.detailButton());
       u.begin.hidden = true; u.orig.hidden = u.editActions.hidden = under.hidden = side.hidden = false;
       workspace.classList.remove('is-viewing');
       u.frame.setAttribute('aria-label', 'Photo preview. Hold B for the original. With Mark on, Enter places an oval.');
       drawChips(); showing(); paintNeutral(); copyState(); syncEditControls(); me.tools.sync();
-      u.frame.focus({ preventScroll: true }); refresh();
+      if (!editor) u.frame.focus({ preventScroll: true }); refresh();
     }
+    u.before.addEventListener('load', () => { u.opening.hidden = true; });
+    u.before.addEventListener('error', () => {
+      if (v !== me || !editor) return;
+      u.opening.hidden = false; u.opening.textContent = 'Could not open this preview.';
+      api('/editor/import', {path:file.path}).catch(error => { if (v === me) u.opening.textContent = error.message; });
+    });
     wireFrame(); setThumbs(); showing();
     const active = u.strip.querySelector('[aria-current=true]'); if (active) u.strip.scrollLeft = active.offsetLeft - u.strip.offsetLeft - u.strip.clientWidth / 2 + active.clientWidth / 2;
     me.unsubscribe = subscribeProject(event => {
       if (v !== me || !me.editing || !me.tools || !['change', 'undo', 'redo', 'load'].includes(event.type) || (event.path && event.path !== me.file.path)) return;
+      if (editor && event.type === 'undo' && !getPhoto(file.path).ai_enabled && !canUndo(file.path)) {
+        go('photo', {index}); return;
+      }
       me.draftSliders = null; me.list = loadEntries(me.file.path); if (event.type !== 'load') me.file.dirty = true;
       syncEditControls(); drawChips(); paintNeutral(); copyState(); me.tools.sync();
       u.saved.textContent = 'Changes ready. Save to update the exported photo.'; schedulePreview();
@@ -981,7 +1187,9 @@ export const screen = {
     me.ro = new ResizeObserver(fit); me.ro.observe(u.canvas);
     me.settingsKey = JSON.stringify(runOptions());
     me.sheetClose = () => {
-      if (v !== me || !me.editing) return; me.tools.sync(); const key = JSON.stringify(runOptions());
+      if (v !== me) return;
+      if (!me.editing) { setThumbs(); return; }
+      me.tools.sync(); const key = JSON.stringify(runOptions());
       if (key !== me.settingsKey) { me.settingsKey = key; syncEditControls(); paintNeutral(); copyState(); schedulePreview(); }
     };
     document.getElementById('sheet').addEventListener('close', me.sheetClose);
@@ -989,13 +1197,17 @@ export const screen = {
     me.blur = () => setHold(false);
     document.addEventListener('keyup', me.up); window.addEventListener('blur', me.blur);
     // A photo that waits for a look opens on its edit and the reason, as the Review queue steps through them.
-    if (state.reviewQueue || file.recipeReview || ['review', 'failed'].includes(file.status)) startEditing();
+    const existing = getPhoto(file.path);
+    const hasStage = existing.ai_enabled || ['look','intensity','base','edit_steps','sliders','region_settings','mask_refinements','entries','photo_geometry'].some(k =>
+      existing[k] !== undefined && (typeof existing[k] !== 'object' || Object.keys(existing[k] || {}).length));
+    if ((editor && hasStage) || state.reviewQueue || file.recipeReview || ['review', 'failed'].includes(file.status)) startEditing();
   },
   focus() { if (v) v.u.frame.focus({ preventScroll: true }); },
   unmount() {
     if (!v) return;
     clearTimeout(v.previewTimer); clearInterval(v.busyTimer);
     for (const f of Object.values(v.flights)) if (f.controller) f.controller.abort();
+    v.originalAbort?.abort();
     if (v.lookController) v.lookController.abort();
     if (v.unsubscribe) v.unsubscribe();
     if (v.tools) v.tools.dispose();
@@ -1006,6 +1218,7 @@ export const screen = {
   },
   key(e) {
     if (!v || !v.u.say) return false;
+    if (e.key === 'Escape' && v.primary && v.u.sidebar.closeDrawer()) return true;
     if (!v.editing) {
       if (e.metaKey || e.ctrlKey || e.altKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return false;
       neighbour(e.key === 'ArrowRight' ? 1 : -1); return true;

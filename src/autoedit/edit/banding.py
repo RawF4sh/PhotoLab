@@ -24,7 +24,7 @@ DEFAULTS = {"warning": 0.12, "reduce_ops": 0.22, "hard_fail": 0.35, "min_coverag
 # Luma-stretch operations that can spread a small number of source levels into visible gaps.
 # Keep this centralized so the detector and pipeline remediation cannot silently drift apart.
 STRETCH_OPS = (
-    "exposure", "shadows_ev", "highlights", "shadows", "whites", "blacks",
+    "exposure", "shadows_ev", "burn_ev", "highlights", "shadows", "whites", "blacks",
     "dehaze", "contrast", "curve", "clarity", "sharpen",
     "black_point", "white_point",   # F5: the toe of the levels curve has a slope of up to 1.6
 )

@@ -1,4 +1,4 @@
-// Automatic jobs use the same local editing pipeline as the guided workspace with their own output folder.
+// Automatic exports use the same local pipeline as Run AI Edit in the photo editor.
 import { el, api, go, state, setBar, backButton, gearButton, baseName, joinPath, thumbUrl, toast } from './main.js';
 import { runTool } from './tools.js';
 
@@ -11,8 +11,8 @@ export const home = {
     root.append(el('section', { class: 'mode-home' }, el('h1', null, 'How would you like to edit?'),
       el('nav', { class: 'mode-choices', 'aria-label': 'Editing mode' },
         el('a', { href: '#/automatic', class: 'mode-choice auto-choice' },
-          el('span', { class: 'mode-glyph', 'aria-hidden': 'true' }, '✦'), 'Automatic'),
-        el('a', { href: '/editor/', class: 'mode-choice' },
+          el('span', { class: 'mode-glyph', 'aria-hidden': 'true' }, '✦'), 'Automatic edit'),
+        el('a', { href: '#/editor', class: 'mode-choice' },
           el('span', { class: 'mode-glyph manual-glyph', 'aria-hidden': 'true' }, '◩'), 'Photo editor'))));
   },
 };
@@ -22,6 +22,7 @@ let jobId;
 try { jobId = sessionStorage.getItem(receiptKey); } catch (_) { /* Storage is optional. */ }
 let panel = null, selection = null, snapshot = null, pending = '', error = '', timer = 0, generation = 0;
 let cancelling = false;
+let styles = [], style = 'standard', styleRequest = null, styleError = '';
 const finished = s => s && ['done', 'error', 'cancelled'].includes(s.status);
 const photoCount = n => n + (n === 1 ? ' photo' : ' photos');
 
@@ -33,13 +34,47 @@ function remember(id) {
   } catch (_) { /* The current page can still track the export. */ }
 }
 
-function thumbnail(path, name) {
-  return el('img', { src: thumbUrl(path, 320), alt: name, title: name, loading: 'lazy' });
+function previewStrip(rows, original = false) {
+  const single = original && rows.length === 1;
+  return el('div', { class: 'automatic-thumbs' + (single ? ' single-original' : '') },
+    ...rows.slice(0, 6).map(row => el('img', {
+      src: thumbUrl(row.thumb || row.path, single ? 960 : 320),
+      alt: (original ? 'Original ' : 'Edited ') + baseName(row.path), loading: 'lazy' })));
 }
 
-function previewStrip(rows) {
-  return el('div', { class: 'automatic-thumbs' },
-    ...rows.slice(0, 6).map(row => thumbnail(row.thumb || row.path, baseName(row.path))));
+function referenceFor(entry) {
+  return entry.reference ?? state.settings.reference;
+}
+
+async function chooseReference() {
+  if (!selection || pending || jobId) return;
+  const entry = selection, turn = generation;
+  entry.referenceOpen = true;
+  pending = 'Choosing reference…'; error = ''; paint();
+  try {
+    const { path } = await api('/pick?kind=file', {});
+    if (path && entry === selection && generation === turn) entry.reference = path;
+  } catch (err) { if (entry === selection && generation === turn) error = err.message; }
+  finally { pending = ''; paint(); }
+}
+
+function referenceControl(entry) {
+  const path = referenceFor(entry);
+  const filename = el('span', { class: 'automatic-reference-name' }, path ? ' · ' + baseName(path) : '');
+  const remove = button('Remove reference', () => {
+    entry.reference = ''; entry.referenceOpen = true; paint();
+  }, 'link', !!pending);
+  remove.hidden = !path;
+  return el('details', { class: 'automatic-reference', open: entry.referenceOpen,
+    on: { toggle: e => {
+      if (!e.currentTarget.isConnected) return;
+      entry.referenceOpen = e.currentTarget.open;
+      const current = referenceFor(entry);
+      filename.textContent = current ? ' · ' + baseName(current) : '';
+      remove.hidden = !current;
+    } } },
+    el('summary', null, 'Match a reference photo', filename),
+    el('div', { class: 'automatic-actions' }, button('Choose reference', chooseReference, 'line', !!pending), remove));
 }
 
 async function choose(kind) {
@@ -58,6 +93,7 @@ async function choose(kind) {
       selection = files.length ? { label: baseName(path), dir: path, files } : null;
       if (!files.length) error = 'There are no supported photos in this folder.';
     }
+    loadStyles();
   } catch (err) { error = err.message; }
   finally { pending = ''; paint(); }
 }
@@ -68,10 +104,13 @@ async function startJob() {
   try {
     const stamp = new Date().toISOString().replaceAll(':', '-');
     const out = joinPath(selection.dir, 'AutoEdit Exports/Automatic ' + stamp + ' ' + crypto.getRandomValues(new Uint32Array(1))[0].toString(16));
-    // What the Settings sheet shows applies here too: the region finder, RAW, quality and export choices.
-    // A Guided folder's own look, strength and sentence do not, and nothing is sent to a cloud model.
-    snapshot = await api('/jobs', { ...state.settings, backend: state.finder, input_dir: selection.dir,
-      files: selection.files.map(f => f.path), out_dir: out, local_only: true, translator: 'off' });
+    const options = { consistent:false, ...state.settings, backend: state.finder, input_dir: selection.dir,
+      files: selection.files.map(f => f.path), out_dir: out, local_only: true, style,
+      translator: 'off', decider: 'rules', allow_cloud: false };
+    const reference = referenceFor(selection);
+    if (reference) options.reference = reference;
+    else delete options.reference;
+    snapshot = await api('/jobs', options);
     remember(snapshot.id);
   } catch (err) { error = err.message; }
   finally { pending = ''; paint(); }
@@ -116,6 +155,46 @@ async function cancelJob() {
 function reset() {
   clearTimeout(timer); generation++; remember(null);
   snapshot = null; selection = null; cancelling = false; error = ''; paint();
+  loadStyles();
+}
+
+async function loadStyles() {
+  if (styleRequest) return;
+  styleError = '';
+  try {
+    styleRequest = api('/local-styles');
+    const catalog = await styleRequest;
+    if (!catalog.styles?.some(entry => entry.id === 'standard')) throw new Error();
+    styles = catalog.styles;
+    if (!styles.some(entry => entry.id === style)) style = 'standard';
+  } catch (_) { styles = []; style = 'standard'; styleError = 'AI edit styles could not be loaded.'; }
+  finally { styleRequest = null; paint(); }
+}
+
+function exportControls() {
+  const count = selection?.files.length || 0;
+  const select = el('select', { id: 'automatic-style', disabled: !!pending || !styles.length,
+    on: { change: e => { style = e.target.value; } } },
+    ...styles.map(entry => el('option', { value: entry.id }, entry.label)));
+  select.value = style;
+  return el('div', { class: 'automatic-controls' },
+    styles.length ? el('label', { class: 'automatic-style', htmlFor: select.id }, 'Local style', select) :
+      styleError ? el('div', { role: 'status' }, 'Standard is available. ', button('Reload styles', loadStyles, 'link')) :
+        el('span', { role: 'status' }, 'Loading local styles…'),
+    selection ? referenceControl(selection) : null,
+    button('Run AI Edit & export', startJob, 'primary', !count || !!pending));
+}
+
+function aiReceipt(items) {
+  const exported = items.filter(i => i.out && i.ai_status);
+  if (!exported.length) return null;
+  const counts = {};
+  for (const item of exported) counts[item.ai_status] = (counts[item.ai_status] || 0) + 1;
+  const labels = { applied: 'AI adjusted', unchanged: 'AI kept local edit', fallback: 'Used local fallback' };
+  const summary = Object.entries(labels).filter(([key]) => counts[key]).map(([key, label]) => label + ' · ' + counts[key]);
+  return el('details', { class: 'automatic-issues' }, el('summary', null, summary.join(' / ')),
+    el('ul', null, ...exported.map(i => el('li', null, el('strong', null, i.name + ' — '),
+      labels[i.ai_status], i.ai_reason ? '. ' + i.ai_reason : ''))));
 }
 
 function drawJob() {
@@ -131,6 +210,7 @@ function drawJob() {
   return el('div', { class: 'automatic-result' },
     el('h2', { role: 'status' }, s.status === 'cancelled' ? 'Export stopped' : exported ? 'Export complete' : 'Export failed'),
     el('p', null, photoCount(exported) + ' exported' + (s.failed ? ' · ' + s.failed + ' failed' : '')),
+    aiReceipt(s.items),
     exported ? el('p', { class: 'automatic-path' }, s.out_dir) : null,
     exported ? previewStrip(s.items.filter(i => i.out).slice(0, 6).map(i => ({ path: i.out }))) : null,
     issues.length ? el('details', { class: 'automatic-issues' }, el('summary', null, 'Review ' + photoCount(issues.length)),
@@ -145,12 +225,12 @@ function paint() {
   const pick = !jobId && el('div', { class: 'automatic-actions' },
     button('Choose photo', () => choose('file'), 'line', !!pending),
     button('Choose folder', () => choose('folder'), 'line', !!pending));
-  const children = [el('h1', null, 'Automatic'), pick,
+  const children = [el('h1', null, 'Automatic edit'), pick,
     !jobId && selection ? el('div', { class: 'automatic-selection' },
       el('h2', null, selection.label), el('p', null, photoCount(selection.files.length)),
-      previewStrip(selection.files),
-      button('Edit and export', startJob, 'primary', !!pending)) : null,
+      previewStrip(selection.files, true)) : null,
     !jobId && !selection ? button('Try a sample set', () => choose('sample'), 'link', !!pending) : null,
+    !jobId ? exportControls() : null,
     jobId ? drawJob() : null,
     pending ? el('p', { role: 'status' }, pending) : null,
     error ? el('p', { role: 'status', class: 'automatic-message' }, error) : null];
@@ -162,6 +242,7 @@ export const automatic = {
     setBar(backButton('Start', 'start'), el('span', { class: 'title grow' }, 'AutoEdit'), gearButton());
     panel = el('section', { class: 'automatic-panel' });
     root.append(panel); paint();
+    if (!jobId) loadStyles();
     if (jobId && !finished(snapshot)) refresh();
   },
   unmount() { panel = null; generation++; clearTimeout(timer); },

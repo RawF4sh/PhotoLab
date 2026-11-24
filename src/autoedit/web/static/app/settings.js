@@ -13,13 +13,14 @@ const GROUP_NOTE = { llm: 'Off by default. When on, only a small preview and mea
 const assistantSession = { api_key: '', allow_cloud: false };
 export const assistantOptions = () => ({ ...assistantSession });
 export const setAssistantConsent = allowed => { assistantSession.allow_cloud = allowed === true; };
+export const setAssistantKey = key => { assistantSession.api_key = key.trim(); };
 
 function assistantSection() {
   const enabled = el('input', { type: 'checkbox', id: 'assistant-enabled', checked: assistantSession.allow_cloud,
     on: { change: e => { assistantSession.allow_cloud = e.target.checked; } } });
   const key = el('input', { type: 'password', id: 'assistant-key', value: assistantSession.api_key, maxLength: 256,
     autocomplete: 'off', placeholder: 'Use a server key, or paste your key for this session',
-    on: { input: e => { assistantSession.api_key = e.target.value.trim(); } } });
+    on: { input: e => setAssistantKey(e.target.value) } });
   return el('details', { class: 'settings-section' }, el('summary', null, 'Gemini suggestions'),
     el('label', { htmlFor: 'assistant-enabled', class: 'assistant-consent' }, enabled, ' Allow a small preview and editing measurements to be sent to Google when I request a suggestion'),
     el('label', { htmlFor: 'assistant-key' }, 'Gemini API key'), key,

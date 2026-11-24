@@ -1,9 +1,11 @@
 // The shell: helpers, shared state, hash router, sheets, toast, keys. No framework; text is never parsed as markup.
-import { screen as workspace, openFolderDialog, loadFolderPath, loadPhotoPath, folder } from './folder.js';
+import { screen as workspace, openFolderDialog, loadFolderPath, loadPhotoPath, dropped, folder } from './folder.js';
 import { automatic, home } from './modes.js';
 import { screen as photo } from './photo.js';
 import { openSettings, applySurround } from './settings.js';
 import { rememberPhoto } from './project.js';
+
+export { loadPhotoPath };
 
 const KEY = 'autoedit.app.v1';
 export const store = {
@@ -103,6 +105,7 @@ export const gearButton = () =>
   el('button', { type: 'button', title: 'Settings', 'aria-label': 'Settings', on: { click: openSettings } }, '⚙');
 
 export function go(name, params) {
+  if (name === 'photo' && state.editorMode) name = 'edit';
   const h = '#/' + name + (params && params.index !== undefined ? '/' + params.index : '');
   if (location.hash === h) render(); else location.hash = h;
 }
@@ -110,12 +113,21 @@ export function go(name, params) {
 function render() {
   const [, name = 'start', idx] = location.hash.split('/');
   let target = screens[name] ? name : 'start';
-  if (!['start', 'automatic', 'workspace'].includes(target) && !state.dir) target = 'start';
+  if (!['start', 'automatic', 'workspace', 'editor'].includes(target) && !state.dir)
+    target = target === 'edit' ? 'editor' : 'start';
   if (current && current.unmount) current.unmount();
   const root = $('#view'); root.replaceChildren(); setBar();
   current = screens[target];
-  if (target === 'photo') rememberPhoto(idx === undefined ? 0 : Number(idx) || 0);
-  current.mount(root, { index: idx === undefined ? 0 : Number(idx) || 0 });
+  if (target === 'editor' || target === 'edit') state.editorMode = true;
+  else if (['start', 'workspace', 'photo'].includes(target)) state.editorMode = false;
+  if (target === 'edit' || target === 'photo') {
+    const index = Number(idx) || 0;
+    rememberPhoto(index);
+    if (target === 'edit' && state.files[index]) {
+      try { sessionStorage.setItem('autoedit.editor.last', JSON.stringify({index,path:state.files[index].path})); } catch (_) {}
+    }
+  }
+  current.mount(root, { editor: !!state.editorMode, index: idx === undefined ? 0 : Number(idx) || 0 });
   if (current.focus) current.focus();
   document.title = 'AutoEdit';
 }
@@ -140,25 +152,38 @@ document.addEventListener('keydown', e => {
   if (typing(e)) { if (e.key === 'Escape') e.target.blur(); return; }
   if (e.key === '?') showKeys();
   else if (e.key === 'Escape') {
-    if (location.hash.startsWith('#/photo') || location.hash === '#/tools') go('folder'); else if (location.hash === '#/folder') go('workspace');
-    else if (['#/workspace', '#/automatic'].includes(location.hash)) go('start');
+    if (location.hash.startsWith('#/edit/') || location.hash.startsWith('#/photo') || location.hash === '#/tools') go('folder'); else if (location.hash === '#/folder') go(state.editorMode ? 'editor' : 'workspace');
+    else if (['#/workspace', '#/editor', '#/automatic'].includes(location.hash)) go('start');
   }
 });
 
 /* ---- start ----------------------------------------------------------------------------------- */
 register('start', home);
 register('workspace', workspace);
+register('editor', workspace);
+register('edit', photo);
 register('automatic', automatic);
 register('folder', folder);
 register('photo', photo);
 window.addEventListener('hashchange', render);
+const editorFileDrop = event => !event.defaultPrevented && location.hash !== '#/automatic' &&
+  Array.from(event.dataTransfer?.types || []).includes('Files');
+window.addEventListener('dragover', event => { if (editorFileDrop(event)) event.preventDefault(); });
+window.addEventListener('drop', event => { if (editorFileDrop(event)) dropped(event); });
 window.autoedit = { loadFolderPath, go, state };
 applySurround();
 render();
-if (location.hash === '#/workspace') {
+if (location.hash === '#/workspace' || location.hash === '#/editor') {
   try {
     const path = sessionStorage.getItem('autoedit.guided.open');
     sessionStorage.removeItem('autoedit.guided.open');
     if (path) loadPhotoPath(path).catch(error => toast(error.message));
   } catch (_) { /* The ordinary folder and file pickers are also available. */ }
+}
+
+if (location.hash.startsWith('#/edit/') && !state.dir) {
+  try {
+    const last = JSON.parse(sessionStorage.getItem('autoedit.editor.last') || 'null');
+    if (last?.index === Number(location.hash.split('/')[2]) && typeof last.path === 'string') loadPhotoPath(last.path).catch(error => toast(error.message));
+  } catch (_) { /* The picker remains available in a new browser session. */ }
 }

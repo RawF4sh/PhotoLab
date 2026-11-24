@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 async function check() {
   const requests = [], timers = new Map(), nodes = [], stored = new Map();
-  let timer = 0, projectEvent, destination = '', pointerCapture;
+  let activePhoto = {sliders:{exposure:0.4}}, timer = 0, projectEvent, destination = '', pointerCapture;
   const files = [{ path: '/photos/first.raw', thumb: '/photos/first.jpg', name: 'first.raw' },
     { path: '/photos/next.jpg', thumb: '/photos/next.jpg', name: 'next.jpg' }];
   function el(tag, attrs, ...children) {
@@ -15,7 +15,7 @@ async function check() {
       dataset: {}, classList: { toggle() {}, remove() {} }, append(...kids) { this.children.push(...kids); },
       prepend(...kids) { this.children.unshift(...kids); }, replaceChildren(...kids) { this.children = kids; },
       setAttribute(key, value) { this[key] = String(value); }, removeAttribute(key) { delete this[key]; },
-      get lastChild() { return this.children.at(-1); }, addEventListener(name, fn) { (events[name] ||= []).push(fn); },
+      get options() { return this.children; }, get lastChild() { return this.children.at(-1); }, addEventListener(name, fn) { (events[name] ||= []).push(fn); },
       removeEventListener(name, fn) { events[name] = (events[name] || []).filter(f => f !== fn); },
       async fire(name, props = {}) {
         const event = { target: this, preventDefault() {}, stopPropagation() {}, ...props };
@@ -39,18 +39,21 @@ async function check() {
     location: { assign: value => { destination = value; } },
   });
   const routes = {
-    './main.js': { el, api: async (url, body) => { requests.push([url, body]); return { result: {} }; },
+    './main.js': { el, api: async (url, body) => { requests.push([url, body]); return url === '/local-styles' ? {styles:[{id:'standard',label:'Standard'}]} : {result:{}}; },
       state: { files, settings: {}, folderSliders: {} }, store: { get: (_key, fallback) => fallback }, nice: String,
-      thumbUrl: path => path, go: noop, toast: noop, getSchema: () => pending, setBar: noop, backButton: noop, gearButton: noop, openSheet: noop },
+      thumbUrl: path => path, loadPhotoPath: noop, go: noop, toast: noop, getSchema: () => pending, setBar: noop, backButton: noop, gearButton: noop, openSheet: noop },
     './settings.js': { runOptions: () => ({}) }, './tools.js': { runTool: noop }, './share.js': { exportsDir: noop },
-    './project.js': { getPhoto: () => ({ sliders: { exposure: 0.4 } }), updatePhoto: noop, undoPhoto: noop,
+    './project.js': { getPhoto: () => activePhoto, updatePhoto: (_path, patch) => Object.assign(activePhoto,patch), undoPhoto: noop,
       redoPhoto: noop, canUndo: () => false, canRedo: () => false,
       subscribeProject: fn => { projectEvent = fn; return noop; }, persistProject: async () => true },
-    './photo_tools.js': { createPhotoTools: () => ({ panels: [], mode: 'none', detailButton: () => el('button'),
+    './photo_tools.js': { createPhotoTools: () => ({ panels: Array.from({length:4}, () => el('details')), mode: 'none', detailButton: () => el('button'),
       acceptPreview: noop, sync: noop, dispose: noop }) },
     './presets.js': { openPhotoPresets: noop },
   };
   const module = new vm.SourceTextModule(fs.readFileSync(path.resolve(__dirname, '../../src/autoedit/web/static/app/photo.js'), 'utf8'), { context });
+  const sidebar = new vm.SourceTextModule(fs.readFileSync(path.resolve(__dirname,'../../src/autoedit/web/static/app/editor_sidebar.js'),'utf8'), {context});
+  await sidebar.link(() => {}); await sidebar.evaluate();
+  routes['./editor_sidebar.js'] = sidebar.namespace;
   await module.link(name => new vm.SyntheticModule(Object.keys(routes[name]), function () {
     for (const [key, value] of Object.entries(routes[name])) this.setExport(key, value);
   }, { context }));
@@ -87,7 +90,7 @@ async function check() {
   assert.equal(find(n => n.class === 'pv-frame').dataset.showing, 'before');
   await button('Open original in Photo editor').fire('click');
   assert.equal(stored.get('autoedit.editor.open'), files[1].path);
-  assert.equal(destination, '/editor/');
+  assert.equal(destination, '/editor/fine-tune/');
   screen.unmount();
   // A photo that waits for a look opens on its edit: a review or failed mark, a missing recipe object, the Review queue.
   const shared = routes['./main.js'].state;
@@ -103,5 +106,21 @@ async function check() {
   screen.mount(root, { index: 1 });
   assert.equal(requests.length, 0, 'an unflagged photo still opens on the original');
   screen.unmount();
+  activePhoto = {}; requests.length = 0;
+  screen.mount(root,{index:1,editor:true});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(find(n=>n['aria-label']==='Editing tools').tag, 'aside');
+  const tabs = ['Adjust','AI Edit','Isolate','Learn','Ask Gemini'].map(button);
+  assert(tabs.every(Boolean)); assert.equal(tabs[1]['aria-expanded'],'true');
+  assert(requests.every(([route])=>route==='/local-styles'));
+  assert(button('Before / After').hidden);
+  await button('Run AI Edit').fire('click');
+  const preview = requests.find(([route])=>route==='/preview')[1];
+  assert.equal(preview.local_only,true); assert.equal(preview.allow_cloud,false);
+  assert.equal(preview.style,'standard'); assert.equal(activePhoto.ai_enabled,true);
+  await tabs[0].fire('click');
+  assert.equal(tabs[0]['aria-expanded'],'true'); assert.equal(tabs[1]['aria-expanded'],'false');
+  assert(!requests.some(([route])=>route==='/assist'));
+  screen.unmount();
 }
-check().catch(error => { console.error(error); process.exitCode = 1; });
+check().then(() => console.log('Guided and primary original-first screens, local edit and sidebar controls pass.')).catch(error => { console.error(error); process.exitCode = 1; });

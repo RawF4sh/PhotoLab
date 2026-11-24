@@ -13,6 +13,11 @@
     "query": [],
     "body": false
   },
+  "GET /api/v1/ai-edits": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
   "GET /api/v1/curate/jobs/{job_id}": {
     "path": [
       "job_id"
@@ -32,12 +37,26 @@
     "query": [],
     "body": false
   },
+  "GET /api/v1/editor/manual": {
+    "path": [],
+    "query": [
+      "path"
+    ],
+    "body": false
+  },
   "GET /api/v1/editor/original": {
     "path": [],
     "query": [
       "as_tiff",
       "path"
     ],
+    "body": false
+  },
+  "GET /api/v1/editor/pictures/{key}": {
+    "path": [
+      "key"
+    ],
+    "query": [],
     "body": false
   },
   "GET /api/v1/editor/status": {
@@ -75,6 +94,13 @@
     "path": [],
     "query": [
       "dir"
+    ],
+    "body": false
+  },
+  "GET /api/v1/local-styles": {
+    "path": [],
+    "query": [
+      "candidates"
     ],
     "body": false
   },
@@ -194,12 +220,49 @@
     "query": [],
     "body": true
   },
+  "POST /api/v1/editor/drop": {
+    "path": [],
+    "query": [
+      "name"
+    ],
+    "body": false
+  },
+  "POST /api/v1/editor/export": {
+    "path": [],
+    "query": [
+      "manual",
+      "out_dir",
+      "path",
+      "ticket"
+    ],
+    "body": false
+  },
+  "POST /api/v1/editor/import": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
   "POST /api/v1/editor/install": {
     "path": [],
     "query": [],
     "body": false
   },
+  "POST /api/v1/editor/manual": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
   "POST /api/v1/editor/native": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/editor/source-preview": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/editor/working": {
     "path": [],
     "query": [],
     "body": true

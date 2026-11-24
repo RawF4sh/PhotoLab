@@ -3,17 +3,17 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
-## [Unreleased] — Automatic and Photo editor
+## [Unreleased] — Local photo editor and style evaluation
 
-- Automatic can edit and export one photo or a folder in a single local run.
-- Photo editor opens the LightCraft web workspace with curves, color, crop and masking.
-  Compare the original and the edit with a draggable divider. Gemini can suggest changes
-  to the current photo's sliders for review before applying them.
-- Guided photos open on the original. You can preview AutoEdit on request, adjust an object,
-  and open either the original or a saved export in Photo editor.
-- Fixed after a check of this work: a photo marked for review or as failed, and every photo in the
-  review queue, opens on its edit again. Automatic follows the choices in Settings (it had always
-  used the automatic region finder). Photo editor asks before it downloads LightCraft, about 75 MB.
+- Automatic edit and Photo editor share local development. The editor opens the original,
+  with AI Edit, Isolate, Learn, Adjust and optional Ask Gemini in its sidebar.
+- Open photo develops supported RAWs, including Canon CR2 and CRW. Fine-tune restores
+  LightCraft settings from the project. Manual exports use the full-resolution source, output
+  preset and metadata policy, with spot tools and mask usage recorded in the sidecar.
+- Added opt-in photographic style targets and region-shaped lighting. Standard retains its
+  existing processing. Specialized styles require a passing blind evaluation to enter the menu.
+- Added local tools to assemble licensed evaluation panels, verify file provenance, check
+  decoding, and compare style candidates against a frozen baseline.
 
 ## [Unreleased] — Editable changes and folder recipes (F56)
 

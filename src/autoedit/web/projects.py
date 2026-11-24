@@ -7,6 +7,7 @@ project; atomic replacement keeps the previous version intact if a save is inter
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -19,9 +20,10 @@ from . import edit_steps
 MAX_BYTES = 8 * 1024 * 1024
 MAX_PHOTOS = 10_000
 MAX_HISTORY = 50
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
+_ACTIVE_FILES = set()
 _PHOTO = {"look", "intensity", "neutral", "sliders", "entries", "reference", "reference_strength", "hide", "hideMethod", "base",
-          "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps"}
+          "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps", "manual", "ai_enabled", "style"}
 _FOLDER = {"look", "genre", "strength", "runText", "exportPreset", "settings", "finder", "folderSliders", "recipes"}
 _STATUS = {"", "waiting", "editing", "finished", "review", "failed", "cancelled", "saved"}
 
@@ -46,13 +48,18 @@ def _photo(value, table, history=True):
     from ..segment.refine import check as check_refinements
     from ..geometry import check_manual
     _object(value, _PHOTO | ({"history", "future"} if history else set()), "photo")
-    for key in ("look", "reference", "hideMethod"):
+    if "ai_enabled" in value and type(value["ai_enabled"]) is not bool:
+        raise ValueError("ai_enabled must be true or false")
+    for key in ("style", "look", "reference", "hideMethod"):
         if key in value:
             _text(value[key], key, 4096 if key == "reference" else 200)
     if "intensity" in value:
         _number(value["intensity"], "intensity", 0, 2)
     if "reference_strength" in value:
         _number(value["reference_strength"], "reference_strength", 0, 1)
+    if "manual" in value:
+        from .manual_stage import check_pointer
+        check_pointer(value["manual"])
     if "neutral" in value and value["neutral"] is not None:
         n = value["neutral"]
         if not isinstance(n, list) or len(n) != 2:
@@ -192,9 +199,61 @@ def _location(folder, profile):
     ensure_allowed(folder)
     if not os.path.isdir(folder):
         raise ValueError("project folder does not exist")
+    return _project_file(folder, profile or paths.profile_dir() or paths.default_profile_dir())
+
+
+def _project_file(folder, profile):
     key = hashlib.sha256(os.path.normcase(os.path.realpath(folder)).encode()).hexdigest()
-    base = profile or paths.profile_dir() or paths.default_profile_dir()
-    return os.path.join(base, "projects", key + ".json")
+    return os.path.join(profile, "projects", key + ".json")
+
+
+@contextmanager
+def transaction(folder, profile):
+    """Serialize compare-and-save across the desktop and browser servers on one profile."""
+    file = _location(folder, profile)
+    with _LOCK:
+        if file in _ACTIVE_FILES:
+            yield
+            return
+        os.makedirs(os.path.dirname(file), exist_ok=True)
+        with open(file + ".lock", "a+b") as lock:
+            if os.name == "nt":
+                import msvcrt
+                if lock.tell() == 0:
+                    lock.write(b"0")
+                    lock.flush()
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            _ACTIVE_FILES.add(file)
+            try:
+                yield
+            finally:
+                _ACTIVE_FILES.remove(file)
+                # Closing the descriptor releases the advisory lock on both platforms.
+
+
+def manual_sources(folder, profile=None):
+    """Read only this folder's saved manual markers, including for command-line exports."""
+    profile = profile or paths.profile_dir()
+    if not profile:
+        return set()
+    file = _project_file(folder, profile)
+    try:
+        with open(file, "rb") as stream:
+            data = stream.read(MAX_BYTES + 1)
+    except (FileNotFoundError, NotADirectoryError):
+        return set()
+    if len(data) > MAX_BYTES:
+        raise ValueError("Saved photo project exceeds its size limit.")
+    return {os.path.realpath(p) for p, state in json.loads(data).get("photos", {}).items() if state.get("manual")}
+
+
+def require_automatic_export(path, manual):
+    if os.path.realpath(path) in manual:
+        raise ValueError("Finish in Photo editor to include the saved manual adjustments.")
 
 
 def _photo_paths(folder, project, *, canonical):
@@ -233,11 +292,46 @@ def load(folder, profile=None):
     return _photo_paths(folder, data, canonical=False)
 
 
-def save(folder, project, profile=None):
+def save(folder, project, profile=None, *, manual_update=False, manual_expected=None):
     file = _location(folder, profile)
     check_project(folder, project)
-    encoded = check_project(folder, _photo_paths(folder, project, canonical=True))
-    with _LOCK:
+    canonical = _photo_paths(folder, project, canonical=True)
+    with transaction(folder, profile):
+        # The manual-stage endpoint uses a checksum precondition. A concurrent autosave
+        # from Guided (including an older client) must not roll back that pointer.
+        if not manual_update:
+            from . import manual_stage
+            current = load(folder, profile)
+            incoming = canonical.get("photos", {})
+            existing = _photo_paths(folder, current, canonical=True).get("photos", {}) if current else {}
+            if manual_expected is None:
+                manual_expected = {}
+            if not isinstance(manual_expected, dict) or len(manual_expected) > MAX_PHOTOS:
+                raise ValueError("Invalid manual undo request.")
+            expected = {os.path.realpath(p): value for p, value in manual_expected.items()}
+            if expected.keys() - incoming.keys():
+                raise ValueError("Manual undo must name an edited project photo.")
+            for path in incoming.keys() | existing.keys():
+                old = existing.get(path, {})
+                pointer = old.get("manual")
+                wanted = incoming.get(path, {}).get("manual")
+                if path in expected:
+                    if (pointer or {}).get("sha256") != expected[path] and wanted != pointer:
+                        raise ValueError("The manual edit changed in another window. Reopen before undoing.")
+                    if wanted:
+                        manual_stage._read(folder, path, wanted, profile)
+                    continue
+                if pointer != wanted:
+                    # A Guided window opened before a Fine-tune save still has its old undo stack.
+                    incoming[path] = {**incoming.get(path, {}), "history": old.get("history", []),
+                                      "future": old.get("future", [])}
+                if pointer:
+                    incoming[path] = {**incoming.get(path, {}), "manual": pointer}
+                elif path in incoming and "manual" in incoming[path]:
+                    incoming[path] = {k: v for k, v in incoming[path].items() if k != "manual"}
+            if incoming:
+                canonical["photos"] = incoming
+        encoded = check_project(folder, canonical)
         os.makedirs(os.path.dirname(file), exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=".project-", dir=os.path.dirname(file))
         try:

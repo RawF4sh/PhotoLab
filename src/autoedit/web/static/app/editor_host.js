@@ -1,5 +1,5 @@
-// The upstream editor owns the catalog, edits and history. The host only opens originals,
-// forwards explicit actions and receives the files the editor asks to save.
+// Native fine-tuning for the current AutoEdit project photo.
+import { nativeStage } from './editor_native.js';
 import { setupEditorAssist } from './editor_assist.js';
 import { comparePhoto, thumbnail } from './editor_compare.js';
 
@@ -15,7 +15,7 @@ let downloadAllowed = false;   // set by "Download and open", for this page only
 let filter = localStorage.getItem('autoedit.lightcraft.filter') || '';
 const outstanding = new Set();
 const approvedPaths = new Map();
-const photoActions = ['auto', 'ask-gemini', 'mask', 'compare', 'export'];
+const photoActions = ['export', 'ask-gemini', 'compare', 'detail'];
 
 function lockPhotoActions(locked) {
   for (const id of photoActions) $(id).disabled = locked;
@@ -26,7 +26,8 @@ async function catalogMatch(key) {
   if (!record) return null;
   try {
     const photo = await command('photo.inspect', {id:record.id});
-    return !photo.deleted && photo.source.path === record.source ? photo : null;
+    return !photo.deleted && photo.source.path === record.source ?
+      {...photo, managed:true, hostOwned:record.hostOwned === true} : null;
   } catch { return null; }
 }
 
@@ -113,7 +114,7 @@ function act(id, action) {
     try { await action(); }
     catch (error) { tell(error.message || String(error)); }
     finally {
-      button.disabled = !ready && (photoActions.includes(id) || id === 'open' || id === 'open-tiff');
+      button.disabled = !ready && (photoActions.includes(id) || id === 'open');
     }
   });
 }
@@ -142,74 +143,93 @@ async function activeSource() {
   return {photo, link:approvedPaths.get(photo.source.path)};
 }
 
-async function openPhoto(path, asTiff = false, isolate = false) {
-  lockPhotoActions(true);
-  $('open').disabled = $('open-tiff').disabled = true;
-  const name = path.split(/[/\\]/).pop() + (asTiff ? '.tif' : '');
-  if (asTiff) tell('Preparing full-resolution TIFF…', true);
-  try {
-    // A RAW that the browser cannot decode can also stop its neighboring thumbnails.
-    // Open its working copy in the library's ordinary filename search.
-    if (isolate || filter) await focusFilter(name);
-    const query = new URLSearchParams({path});
-    if (asTiff) query.set('as_tiff', 'true');
-    const response = await fetch('/api/v1/editor/original?' + query);
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.error || 'Could not open the selected photo.');
-    }
-    const bytes = await response.arrayBuffer();
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-    const key = 'autoedit.lightcraft.' + Array.from(digest, b => b.toString(16).padStart(2, '0')).join('');
-    const size = bytes.byteLength;
-    const existing = await catalogMatch(key) || await findOriginal(name, size, digest);
-    if (existing) {
-      localStorage.setItem(key, JSON.stringify({id:existing.id, source:existing.source.path}));
-      approvedPaths.set(existing.source.path, {path, raw:asTiff || existing.kind === 'raw'});
-      if (isolate || filter) await focusFilter(name);
-      await showPhoto(existing.id);
-      tell('');
-      return;
-    }
-
-    const previous = (await command('library.state')).selection.active;
-    frame.contentWindow.postMessage({type:'lightcraft:open', name, bytes}, location.origin, [bytes]);
-    frame.focus();
-    // LightCraft imports on its next free frame and selects the newly added photo.
-    // Keep edit actions locked while its first-run notice or a large RAW delays import.
-    const start = Date.now();
-    while (Date.now() - start < 45000) {
-      const {selection} = await command('library.state');
-      if (selection.active != null && selection.active !== previous) {
-        const photo = await command('photo.inspect', {id:selection.active});
-        if (photo.file_name === name && photo.file_size === size) {
-          localStorage.setItem(key, JSON.stringify({id:photo.id, source:photo.source.path}));
-          approvedPaths.set(photo.source.path, {path, raw:asTiff || photo.kind === 'raw'});
-          if (isolate || filter) await focusFilter(name);
-          await showPhoto(photo.id);
-          tell('');
-          return;
-        }
+async function importPicture(source) {
+  const {name, path} = source;
+  const response = await fetch(source.url);
+  if (!response.ok) throw new Error('Could not read the working picture. Reopen the original.');
+  const bytes = await response.arrayBuffer();
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const key = 'autoedit.lightcraft.' + Array.from(hash, b => b.toString(16).padStart(2, '0')).join('');
+  const size = bytes.byteLength;
+  const existing = await catalogMatch(key) || await findOriginal(name, size, hash);
+  if (existing) {
+    await showPhoto(existing.id);
+    approvedPaths.set(existing.source.path, {path});
+    return existing;
+  }
+  const previous = (await command('library.state')).selection.active;
+  if (filter || source.working_copy) await focusFilter(name);
+  frame.contentWindow.postMessage({type:'lightcraft:open', name, bytes}, location.origin, [bytes]);
+  frame.focus();
+  const start = Date.now();
+  while (Date.now() - start < 90000) {
+    const {selection} = await command('library.state');
+    if (selection.active != null && selection.active !== previous) {
+      const photo = await command('photo.inspect', {id:selection.active});
+      if (photo.file_name === name && photo.file_size === size) {
+        photo.hostOwned = !!source.working_copy;
+        photo.managed = true;
+        localStorage.setItem(key, JSON.stringify({id:photo.id, source:photo.source.path, hostOwned:photo.hostOwned}));
+        approvedPaths.set(photo.source.path, {path});
+        await showPhoto(photo.id);
+        return photo;
       }
-      await new Promise(resolve => setTimeout(resolve, 400));
     }
-    tell('Select the photo in the library. If an editor dialog is open, close it to finish importing.');
-  } finally {
-    lockPhotoActions(!ready);
-    $('open').disabled = $('open-tiff').disabled = !ready;
+    await new Promise(resolve => setTimeout(resolve, 140));
+  }
+  if (previous != null) await showPhoto(previous);
+  throw new Error('The editor could not open the picture. Your previous photo is still selected.');
+}
+
+async function removePicture(photo) {
+  if (!photo.hostOwned || !photo.content_hash) return;
+  await command('photo.delete', {ids:[photo.id]});
+  await command('photo.deletePermanently', {ids:[photo.id]});
+  const hash = photo.content_hash;
+  // Only delete stored pixels after checking the entire catalog for another user of that hash.
+  const catalog = await command('catalog.query', {limit:10000});
+  if ((catalog.total ?? catalog.photos.length) >= 10000) return;
+  for (const row of catalog.photos) {
+    const other = await command('photo.inspect', {id:row.id});
+    if (other.content_hash === hash) return;
+  }
+  const {storage} = await command('web.stats');
+  if (storage === 'opfs') {
+    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('originals');
+    await dir.removeEntry(hash).catch(() => {});
+  } else if (storage === 'idb') {
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open('lightcraft');
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result, tx = db.transaction('files','readwrite');
+        tx.objectStore('files').delete('originals/' + hash);
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+      };
+    });
   }
 }
 
-function deliverFile({name, bytes}) {
-  if (typeof name !== 'string' || !(bytes instanceof ArrayBuffer)) return;
-  const url = URL.createObjectURL(new Blob([bytes]));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = name.split(/[/\\]/).pop() || 'LightCraft export';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+const stage = nativeStage({command,api,tell,importPicture,removePicture});
+function localOptions() {
+  try { return JSON.parse(localStorage.getItem('autoedit.app.v1') || '{}').settings || {}; }
+  catch { return {}; }
+}
+async function openPhoto(path, options = localOptions(), useAI = false) {
+  options = Object.fromEntries(Object.entries(options).filter(([key]) =>
+    !/password|credential|api.?key|token|secret/i.test(key)));
+  lockPhotoActions(true);
+  $('open').disabled = true;
+  tell(/\.(?:cr[23]|nef|arw|raf|dng|rw2|orf|pef|srw)$/i.test(path) ? 'Opening RAW…' : 'Opening photo…', true);
+  try {
+    await stage.open(path, options, useAI);
+    $('filename').textContent = path.split(/[/\\]/).pop();
+    tell('');
+  } finally {
+    $('open').disabled = !ready;
+    lockPhotoActions(!ready || !stage.current);
+  }
 }
 
 function showBoot(title, message = '', retry = false) {
@@ -232,6 +252,7 @@ function watchEditor() {
   clearInterval(monitor);
   monitor = setInterval(async () => {
     const message = frame.contentDocument?.getElementById('lightcraft_blocking')?.textContent || '';
+    if (ready) stage.tick();
     if (message.startsWith('LightCraft stopped')) {
       clearInterval(monitor);
       ready = false;
@@ -239,7 +260,7 @@ function watchEditor() {
       recovery = true;
       for (const cancel of outstanding) cancel(new Error('The photo editor stopped.'));
       lockPhotoActions(true);
-      $('open').disabled = $('open-tiff').disabled = true;
+      $('open').disabled = true;
       $('retry').textContent = 'Recover photo editor';
       showBoot('Photo editor stopped', 'Recover to open the library with only TIFF copies visible. Your saved edits are kept.', true);
     } else if (filter && !checking) {
@@ -299,30 +320,37 @@ window.addEventListener('message', async ({source, origin, data}) => {
       const library = await command('library.state');
       displayFilter(library.filter.text === filter ? filter : '');
     }
-    $('open').disabled = $('open-tiff').disabled = false;
-    lockPhotoActions(false);
-    const path = sessionStorage.getItem('autoedit.editor.open');
+    $('open').disabled = false;
+    lockPhotoActions(true);
+    const handed = sessionStorage.getItem('autoedit.editor.open');
+    const path = handed || sessionStorage.getItem('autoedit.finetune.source');
     if (path) {
-      try { await openPhoto(path); sessionStorage.removeItem('autoedit.editor.open'); }
-      catch (error) { tell(error.message); }
+      try {
+        const options = handed ? JSON.parse(sessionStorage.getItem('autoedit.editor.options') || 'null') :
+          JSON.parse(sessionStorage.getItem('autoedit.finetune.stage') || 'null');
+        await openPhoto(path, handed ? options || localOptions() : options?.options || localOptions(),
+          handed ? !!options : !!options?.useAI);
+        sessionStorage.removeItem('autoedit.editor.open');
+        sessionStorage.removeItem('autoedit.editor.options');
+      } catch (error) { tell(error.message, true); }
     }
   } else if (data.type === 'lightcraft:dirty') {
     dirty = Boolean(data.dirty);
   } else if (data.type === 'lightcraft:failed') {
     if (ready) tell(data.error); else failed(data.error);
   } else if (data.type === 'lightcraft:save') {
-    deliverFile(data);
+    if (!stage.receive(data)) tell('Use Export above the photo to save the picture and its AutoEdit sidecar.', true);
   }
 });
 
 window.addEventListener('beforeunload', event => {
-  if (dirty) { event.preventDefault(); event.returnValue = ''; }
+  if (dirty || stage.busy) { event.preventDefault(); event.returnValue = ''; }
 });
 
-setupEditorAssist({command, renderThumbnail: async id => {
-  const photo = await command('photo.inspect', {id});
-  return thumbnail(frame, photo, await command('web.stats'));
-}});
+setupEditorAssist({command, onApplied: () => {
+  tell('Gemini edit applied. Adjust the sliders, compare with the original, or undo.');
+  frame.focus();
+}, renderThumbnail: async photo => thumbnail(frame, photo, await command('web.stats'))});
 
 act('retry', start);
 act('install', () => { downloadAllowed = true; return start(); });
@@ -330,25 +358,19 @@ act('open', async () => {
   const {path} = await api('/pick?kind=file', {});
   if (path) await openPhoto(path);
 });
-act('open-tiff', async () => {
-  const linked = await activeSource();
-  const path = linked?.link?.raw ? linked.link.path : (await api('/pick?kind=file', {})).path;
-  if (path) await openPhoto(path, true, linked?.photo?.kind === 'raw');
-});
-act('auto', async () => {
-  await active();
-  await command('view.detail');
-  await command('develop.auto');
-  frame.focus();
-});
-act('mask', async () => {
-  await active();
-  await command('panel.masking');
+act('detail', async () => {
+  tell('Opening full-resolution detail…', true);
+  await stage.inspectDetail();
+  tell('Full resolution · 100%');
   frame.focus();
 });
 act('compare', async () => {
-  const id = await active();
-  await comparePhoto(frame, await command('photo.inspect', {id}), await command('web.stats'));
+  const source = await activeSource();
+  if (!source) return;
+  const stats = await command('web.stats');
+  if (source.photo.id === stage.current?.id) {
+    await stage.compareOriginal(original => comparePhoto(frame, source.photo, stats, original));
+  } else await comparePhoto(frame, source.photo, stats);
 });
 act('native-split', async () => {
   $('comparison').close();
@@ -357,9 +379,9 @@ act('native-split', async () => {
   frame.focus();
 });
 act('export', async () => {
-  await active();
-  await command('dialog.export');
-  frame.focus();
+  tell('Preparing full-size export…', true);
+  const result = await stage.exportPhoto();
+  if (result) tell('Saved ' + result.image_out, true);
 });
 act('all-photos', () => focusFilter(''));
 act('native', async () => {
@@ -370,7 +392,9 @@ document.querySelector('a.tools').addEventListener('click', async event => {
   if (!ready || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
   // An unsupported file can stall LightCraft. Guided must still open in that case.
+  if (stage.busy) return;
   const link = event.currentTarget.href;
+  try { await stage.flush(); } catch (error) { tell(error.message,true); return; }
   try {
     const source = await Promise.race([activeSource().catch(() => null), new Promise(resolve => setTimeout(resolve, 600))]);
     if (source?.link) sessionStorage.setItem('autoedit.guided.open', source.link.path);

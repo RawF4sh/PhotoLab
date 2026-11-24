@@ -4,7 +4,7 @@
 # Order: groups as listed under [groups], settings in this file's order inside their group.
 
 # Not for a person: config file paths, the API key (never shown) and a fixed internal value.
-hidden = ["rules_path", "looks_path", "concepts_path", "styles_path", "compose_path", "intents_path",
+hidden = ["rules_path", "looks_path", "concepts_path", "styles_path", "targets_path", "compose_path", "intents_path",
           "palettes_path", "instructions_path", "exports_path", "reveal_path", "api_key", "emit", "profile_dir", "rule_sets",
           "mask_refinements", "photo_geometry", "selected_regions"]
 

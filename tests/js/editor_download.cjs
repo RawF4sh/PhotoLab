@@ -29,7 +29,7 @@ const vm = require('node:vm');
   const source = fs.readFileSync(path.resolve(__dirname, '../../src/autoedit/web/static/app/editor_host.js'), 'utf8');
   const module = new vm.SourceTextModule(source, { context });
   await module.link(name => {
-    const names = name === './editor_assist.js' ? ['setupEditorAssist'] : ['comparePhoto', 'thumbnail'];
+    const names = name === './editor_native.js' ? ['nativeStage'] : name === './editor_assist.js' ? ['setupEditorAssist'] : ['comparePhoto', 'thumbnail'];
     return new vm.SyntheticModule(names, function () { for (const key of names) this.setExport(key, () => {}); }, { context });
   });
   await module.evaluate();

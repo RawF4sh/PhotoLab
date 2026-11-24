@@ -125,28 +125,24 @@ does not teach the editor how to transform an original into an edit; it acts as 
 for culling huge folders, filtering generated/reference edits, prioritizing human review, and
 choosing the best variants from a batch.
 
-Open the interface with `pip install -e '.[ui]'` and `autoedit ui` (a browser tab on
-`127.0.0.1:8765`), or as a desktop window with `pip install -e '.[app]'` and `autoedit app` (on
-Linux it needs a GTK or Qt web view). Choose a mode on the start screen.
+Install the local app with `pip install -e '.[app]'`. Run `autoedit ui` for a browser tab
+at `127.0.0.1:8765`, or `autoedit app` for a desktop window.
 
-- **Automatic** processes a single photo or a folder with local rules. Review the originals,
-  click **Edit and export**, and open the finished images and decision sidecars in `AutoEdit Exports`.
-  It follows the choices in **Settings**, such as the region finder and the export format.
-- **Photo editor** opens Brandon Thomas's LightCraft web editor with curves, color controls,
-  cropping and local masks. Import the original, make adjustments yourself or click **Auto adjust**.
-  For a camera RAW the web editor cannot develop, **Open RAW as TIFF** opens a full-resolution
-  16-bit working copy using the local `accel` extra.
-  The first launch asks before it downloads LightCraft v0.21.1 (about 75 MB) and verifies it.
-  Later launches use the local cache.
-  Desktop-only features such as JPEG XL export are available in a separately installed native
-  LightCraft. See [LightCraft's web support](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
+- **Automatic edit** shows the originals in a photo or folder. Choose **Run AI Edit & export**
+  to apply Standard locally and save the finished photos with their decision sidecars.
+- **Photo editor** opens the original first. Choose **AI Edit → Run AI Edit** for the same local
+  development, then drag the **Before / After** divider. Use **Isolate** for one object and
+  **Learn** to inspect changes. **Ask Gemini** is a separate, optional command with preview-sharing
+  consent. Bookmarked Guided folders, recipes and existing edits remain accessible.
+- **Adjust → Fine-tune in LightCraft** opens curves, color mixing, crop, masks and retouching
+  for that photo. The ordinary photo picker develops Canon CR2 and other supported RAWs into
+  16-bit working pictures. The original stays linked. AutoEdit saves manual settings beside
+  the project and uses full-size pixels for export. The first Fine-tune launch offers a verified
+  download of LightCraft 0.21.1 (about 75 MB). [App guide](APP_GUIDE.md)
 
-**Guided workspace** keeps AutoEdit's recipes, editable Gemini suggestions, teaching tools and
-batch review together. A photo opens on its original, and a photo marked for review opens on its
-edit. Choose **Preview AutoEdit** to begin, select
-**Targeted edits** to adjust an object, or drag the **Before / after** divider to compare the result.
-You can send the original or a saved, flattened export to Photo editor. The guided project retains
-its editable settings and history. See the [app guide](APP_GUIDE.md).
+Standard is the default. Blue hour, Sunset glow, Moody landscape and Natural portrait are
+local style candidates. A specialized style enters the normal menu after its blind photo
+evaluation passes. [Local style plan](docs/plans/F59-local-styles.md)
 
 Run without installing:
 ```bash

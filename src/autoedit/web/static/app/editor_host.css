@@ -40,3 +40,7 @@ canvas { display: block; width: 100%; height: 100%; }
 #filtered { display:flex; align-items:center; justify-content:center; gap:.75rem; background:#27302b; padding:.12rem .65rem; }
 #filtered-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #all-photos { white-space:nowrap; text-decoration:underline; }
+
+header .tools { margin-left: 0; }
+header h1 { flex: 1; min-width: 0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+.fine-tools { flex: 0 0 auto; padding: .25rem .65rem; justify-content: center; border-top: 1px solid #3c3d40; }

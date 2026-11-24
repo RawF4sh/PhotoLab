@@ -45,7 +45,7 @@ async function render(frame, photo, store, settings, size, signal) {
       timeout = setTimeout(() => reject(new Error('Photo preview timed out. Try a smaller image or reopen the editor.')), 90000);
       worker.onerror = event => {
         if (/unreachable|out of memory/i.test(event.message)) {
-          const error = new Error('LightCraft could not render this photo in the browser. For a camera RAW, use Open RAW as TIFF.');
+          const error = new Error('LightCraft could not render this photo. Reopen its original through Open photo.');
           error.name = 'PhotoRenderError';
           reject(error);
         } else reject(new Error(event.message || 'Could not start the photo renderer.'));
@@ -112,7 +112,7 @@ dialog.addEventListener('close', () => {
   for (const id of ['before', 'edited']) $(id).width = 1;
 });
 
-export async function comparePhoto(frame, photo, stats) {
+export async function comparePhoto(frame, photo, stats, original = null) {
   current?.abort();
   const controller = new AbortController();
   current = controller;
@@ -123,7 +123,11 @@ export async function comparePhoto(frame, photo, stats) {
   dialog.showModal();
   try {
     const size = Math.min(1536, Math.max(512, area.clientWidth, area.clientHeight));
-    const frames = await render(frame, photo, stats.storage, [importSettings(photo), photo.develop], size, controller.signal);
+    const before = importSettings(photo);
+    const frames = original && original.id !== photo.id
+      ? [...await render(frame, original, stats.storage, [before], size, controller.signal),
+         ...await render(frame, photo, stats.storage, [photo.develop], size, controller.signal)]
+      : await render(frame, photo, stats.storage, [before, photo.develop], size, controller.signal);
     if (controller.signal.aborted || !dialog.open) return;
     frames.forEach((image, i) => {
       const canvas = $(i ? 'edited' : 'before');

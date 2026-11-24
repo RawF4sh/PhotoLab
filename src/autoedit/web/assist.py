@@ -63,7 +63,7 @@ def _context(render, opts, bounds):
 
 
 def suggest(image_path, opts, configs_dir=None, profile=None):
-    """Called only by POST /assist with explicit consent and a bounded assist_prompt.
+    """Suggest edits for a Guided preview or an explicitly opted-in automatic export.
 
     The provider receives a re-encoded 512px JPEG, the user's request, actual object labels and
     whitelisted numeric measurements/controls. No full result/config, EXIF, source or reference
@@ -74,6 +74,9 @@ def suggest(image_path, opts, configs_dir=None, profile=None):
     if not isinstance(opts, dict):
         raise ValueError("assistant options must be an object")
     prompt = opts.get("assist_prompt")
+    if "assist_style" in opts:
+        from . import ai_styles
+        prompt = ai_styles.prompt_for(opts["assist_style"], prompt or "")
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > gemini.MAX_PROMPT:
         raise ValueError("assist_prompt must contain 1 to 1200 characters")
     try:
@@ -91,7 +94,7 @@ def suggest(image_path, opts, configs_dir=None, profile=None):
         from . import edit_steps
         opts, _ = edit_steps.fold(opts, bounds)
         service.check_photo_settings(opts.get("photo_settings"))
-        local = {k: v for k, v in opts.items() if k not in _PRIVATE_KEYS}
+        local = {k: v for k, v in opts.items() if k not in _PRIVATE_KEYS and k != "assist_style"}
         local.update(decider="rules", allow_cloud=False, translator="off", preview_edge=640)
         try:
             render = service._edit(image_path, local, configs_dir, profile)

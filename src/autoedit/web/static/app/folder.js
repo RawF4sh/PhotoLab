@@ -44,7 +44,12 @@ export async function loadFolderPath(path, { photo } = {}) {
       stopStream();
       Object.assign(state, { dir: path, job: null, reviewQueue: false, look: '', genre: '', strength: null, runText: '', exportPreset: '', folderSliders: {}, recipes: [] });
       state.files = g.map(x => ({ name: x.raw || x.pixel, path: joinPath(path, x.raw || x.pixel),
-        thumb: joinPath(path, x.pixel || x.raw), checked: true, status: '', captureTime: x.capture_time }));
+        thumb: joinPath(path, x.pixel || x.raw), isRaw: Boolean(x.raw), checked: true, status: '', captureTime: x.capture_time }));
+      // A library tile represents the RAW pair. An explicitly picked companion JPEG has its own pixels and project.
+      if (photo && state.editorMode) {
+        const pair = state.files.find(f => f.thumb === photo && f.path !== photo);
+        if (pair) state.files.push({name:baseName(photo), path:photo, thumb:photo, isRaw:false, checked:false, status:'', captureTime:pair.captureTime});
+      }
     } }); }
     catch (error) { toast('This project could not be opened: ' + error.message); return; }
     const last = Number.isInteger(saved.last_index) ? Math.min(saved.last_index, state.files.length - 1) : -1;
@@ -61,7 +66,8 @@ export async function loadFolderPath(path, { photo } = {}) {
       ...recents().filter(r => r.path !== path)].slice(0, MAX_RECENT));
     scheduleProjectSave();
     if (photo) {
-      const index = state.files.findIndex(f => f.path === photo || f.thumb === photo);
+      const exact = state.files.findIndex(f => f.path === photo);
+      const index = exact >= 0 ? exact : state.files.findIndex(f => f.thumb === photo);
       if (index >= 0) { view.last = index; go('photo', { index }); return true; }
     }
     go('folder');
@@ -72,7 +78,7 @@ export async function loadFolderPath(path, { photo } = {}) {
 export async function loadPhotoPath(path) {
   const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   if (slash < 0) { toast('Choose a photo using Open photo.'); return; }
-  await loadFolderPath(path.slice(0, slash) || '/', { photo: path });
+  return loadFolderPath(path.slice(0, slash) || '/', { photo: path });
 }
 
 function reopenFolder(path, photo) {
@@ -116,12 +122,28 @@ async function openSample(event) {
   finally { button.disabled = false; }
 }
 
-function dropped(event) {
-  event.preventDefault(); event.currentTarget.classList.remove('dragging');
+export async function dropped(event) {
+  event.preventDefault(); event.currentTarget.classList?.remove('dragging');
+  if (['', '#/start'].includes(location.hash)) state.editorMode = true;
   const file = event.dataTransfer?.files?.[0];
   // Some desktop hosts expose an actual local path; browsers deliberately do not.
-  if (file && typeof file.path === 'string' && file.path) { loadPhotoPath(file.path); return; }
-  toast('Use Open photo or Open folder to choose files on this computer.');
+  if (file?.path) {
+    try { await api('/editor/import', {path:file.path}); await loadPhotoPath(file.path); return; }
+    catch (error) { if (error.status !== 403) { toast(error.message); return; } }
+  }
+  if (!file) return;
+  if (picking) return;
+  picking = true;
+  try {
+    const r = await fetch('/api/v1/editor/drop?name=' + encodeURIComponent(file.name), { method: 'POST', body: file });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Could not open the dropped photo.');
+    const drops = store.get('browserDrops', []);
+    store.set('browserDrops', [...(Array.isArray(drops) ? drops.filter(x => x.path !== data.path) : []),
+      {path:data.path, sha256:data.sha256}].slice(-64));
+    await loadPhotoPath(data.path);
+  } catch (error) { toast(error.message); }
+  finally { picking = false; }
 }
 
 const recents = () => {   // whatever is stored, only well-formed rows
@@ -134,17 +156,17 @@ const ago = ms => {
 };
 
 export const screen = {   // Start
-  mount(root) {
-    setBar(backButton('Start', 'start'), el('span', { class: 'title grow' }, 'Guided workspace'), gearButton());
+  mount(root, { editor = false } = {}) {
+    setBar(backButton('Start', 'start'), el('span', { class: 'title grow' }, editor ? 'Photo editor' : 'Guided workspace'), gearButton());
     const recent = recents();
     root.append(el('div', { class: 'start' },
-      el('h1', null, 'A better edit, ready to make your own'),
-      workflowSteps('open'),
+      el('h1', null, editor ? 'Open a photo' : 'Guided workspace'),
+      editor ? null : workflowSteps('open'),
       el('div', { class: 'start-actions', on: { dragover: e => { e.preventDefault(); e.currentTarget.classList.add('dragging'); }, dragleave: e => e.currentTarget.classList.remove('dragging'), drop: dropped } },
         el('button', { type: 'button', class: 'primary', on: { click: openPhotoDialog } }, 'Open photo'),
         el('button', { type: 'button', class: 'line', on: { click: openFolderDialog } }, 'Open folder')),
       el('button', { type: 'button', class: 'link', on: { click: openSample } }, 'Try a sample set'),
-      readinessCard(openSettings),
+      editor ? null : readinessCard(openSettings),
       recent.length ? el('div', { class: 'recent' }, el('h3', null, 'Recent'),
         ...recent.map(r => el('button', { type: 'button', on: { click: () => loadFolderPath(r.path) } },
           r.name, el('small', null, r.count + ' photos · opened ' + ago(r.at))))) : null));
@@ -253,7 +275,7 @@ async function editPhotos() {
       if (m.length) photo_marks[f.path] = m;
       if (h) photo_hide[f.path] = h;
       const own = getPhoto(f.path), options = {};
-      ['look', 'intensity', 'neutral', 'reference', 'reference_strength'].forEach(k => { if (own[k] !== undefined) options[k] = own[k]; });
+      ['style', 'look', 'intensity', 'neutral', 'reference', 'reference_strength'].forEach(k => { if (own[k] !== undefined) options[k] = own[k]; });
       const sliders = own.sliders === undefined ? state.folderSliders : own.sliders;
       if (sliders && Object.keys(sliders).length) options.photo_settings = sliders;
       if (own.base !== undefined) options.photo_base = own.base;
@@ -318,7 +340,8 @@ function paintAll() {
     if (!f.dot) return;
     if (visibleStatus(f)) f.dot.dataset.status = visibleStatus(f); else delete f.dot.dataset.status;
     f.box.checked = f.checked;
-    const names = (getPhoto(f.path).edit_steps || []).filter(step => step.origin === 'recipe' && step.on).map(step => step.label);
+    const photo = getPhoto(f.path), names = (photo.edit_steps || []).filter(step => step.origin === 'recipe' && step.on).map(step => step.label);
+    if (photo.manual) names.unshift('Finish in Photo editor');
     f.recipeLabel.textContent = names.join(', '); f.recipeLabel.hidden = !names.length;
     f.btn.title = [f.recipeReview, f.error].filter(Boolean).join(' · ');
   });
@@ -341,7 +364,7 @@ function paintAll() {
 }
 
 function tile(f, i) {
-  f.btn = el('button', { type: 'button', 'aria-label': 'Open ' + f.name, on: { click: () => { view.last = i; state.reviewQueue = false; go('photo', { index: i }); } } },
+  f.btn = el('button', { type: 'button', 'aria-label': 'Open ' + f.name, on: { click: () => { view.last = i; state.reviewQueue = false; go(getPhoto(f.path).manual ? 'edit' : 'photo', { index: i }); } } },
     el('img', { src: thumbUrl(f.thumb, 320), alt: '', loading: 'lazy' }));
   f.box = el('input', { type: 'checkbox', checked: f.checked, 'aria-label': 'Include ' + f.name,
     on: { click: e => {

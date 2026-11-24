@@ -872,10 +872,10 @@ def _cmd_presets(args) -> int:
 
 
 def _cmd_styles(args) -> int:
-    from .styles import load_styles
+    from .styles import load_styles, offered_styles
 
     styles = load_styles(paths.config_paths(args.configs_dir, args.profile)["styles_path"])
-    for name, s in styles.items():
+    for name, s in offered_styles(styles).items():
         print(f"{name}  (look={s.look})\n    {s.brief}")
     return 0
 
@@ -1086,7 +1086,7 @@ def _cmd_lens_profile(args) -> int:
         if not os.path.isdir(d):
             print(f"folder not found: {d}", file=sys.stderr)
             return 2
-        files += sorted(os.path.join(d, n) for n in os.listdir(d) if is_raw(n) and os.path.isfile(os.path.join(d, n)))
+        files += sorted(os.path.join(d, n) for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)) and is_raw(os.path.join(d, n)))
     if not files:
         print("no RAW files in the folders", file=sys.stderr)
         return 1

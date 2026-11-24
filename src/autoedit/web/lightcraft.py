@@ -93,26 +93,40 @@ def native_app():
 def suggest_adjustments(payload):
     """Ask about a rendered manual edit using the same consent, thumbnail and spending limits as Guided."""
     from ..decide import gemini
-    from . import assist, service
+    from . import ai_styles, assist, service
 
-    allowed = ("light.exposure", "light.contrast", "light.highlights", "light.shadows", "color.saturation")
     try:
         if payload.get("allow_cloud") is not True:
             raise gemini.Unavailable("consent", "Allow a small preview to be sent before asking Gemini.")
         encoded = payload.get("thumbnail")
         if not isinstance(encoded, str) or len(encoded) > 4 * ((gemini.MAX_THUMB_BYTES + 2) // 3):
             raise ValueError("Supply a JPEG preview of at most 512 pixels.")
-        slider_bounds, _ = service.editor_sliders()
+        slider_bounds, lessons = service.editor_sliders()
+        native = ("light.exposure", "light.contrast", "light.highlights", "light.shadows", "color.saturation")
+        allowed = {name: slider_bounds[name.split(".")[1]] for name in native}
+        limits = lessons.get("try", {})
+        allowed.update(limits.get("lightcraft_deltas", {}))
+        bands = ("red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta")
+        mixer = {f"mixer.{band}.{axis}": delta for band in bands
+                 for axis, delta in limits.get("lightcraft_mixer_deltas", {}).items()}
         controls = payload.get("controls")
         if not isinstance(controls, dict):
             raise ValueError("Current slider values are required.")
         current = assist._numbers(controls, allowed)
-        if not current:
+        colors = assist._numbers(controls, mixer)
+        if not current and not colors:
             raise ValueError("The photo has no supported adjustments.")
-        bounds = {key: slider_bounds[key.split(".")[1]] for key in current}
+        bounds = {**{key: allowed[key] for key in current}, **{key: mixer[key] for key in colors}}
+        context = {"current_controls": current}
+        if colors:
+            context["current_color_mixer"] = colors
+        # Older clients can still supply a complete request. In the editor, the look is
+        # sufficient on its own and the typed direction is optional.
+        prompt = (ai_styles.prompt_for(payload["style"], payload.get("prompt", ""))
+                  if "style" in payload else payload.get("prompt"))
         return assist._CLIENT.suggest(
-            thumbnail=base64.b64decode(encoded, validate=True), prompt=payload.get("prompt"),
-            context={"current_controls": current}, names=[], bounds=bounds,
+            thumbnail=base64.b64decode(encoded, validate=True), prompt=prompt,
+            context=context, names=[], bounds=bounds,
             api_key=payload.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY", ""), allow_cloud=True)
     except gemini.Unavailable as exc:
         return {"status": "unavailable", "reason": exc.reason, "message": str(exc)}
@@ -126,6 +140,7 @@ def register(app, api, guard):
 
     static = Path(__file__).parent / "static" / "app"
 
+    @app.get("/editor/fine-tune/", include_in_schema=False)
     @app.get("/editor/", include_in_schema=False)
     def editor():
         csp = ("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "

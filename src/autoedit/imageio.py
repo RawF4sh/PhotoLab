@@ -23,8 +23,8 @@ from PIL import Image as PILImage
 from PIL import ImageOps
 
 # Camera RAW formats — decoded via rawpy/libraw (the `accel` extra) at 16-bit.
-_RAW_EXT = {".dng", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".sr2", ".srf", ".raf",
-            ".orf", ".rw2", ".pef", ".srw", ".raw", ".3fr", ".mrw", ".dcr", ".kdc"}
+_RAW_EXT = {".dng", ".crw", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".sr2", ".srf", ".raf",
+            ".orf", ".rw2", ".pef", ".srw", ".raw", ".3fr", ".mrw", ".dcr", ".kdc", ".erf", ".fff", ".mos", ".iiq", ".rwl"}
 _HEIF_EXT = {".heic", ".heif"}
 _PIXEL_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp", ".avif"} | _HEIF_EXT
 _heif_ready = False
@@ -69,10 +69,41 @@ def is_supported(path: str) -> bool:
     return any(path.lower().endswith(ext) for ext in _SUPPORTED)
 
 
+@functools.lru_cache(maxsize=256)
+def _camera_tiff(path, device, inode, size, modified):
+    """Recognize sensor data in a TIFF container without decoding its embedded thumbnail."""
+    try:
+        with open(path, "rb") as stream:
+            header = stream.read(16)
+        if header[:4] not in (b"II*\x00", b"MM\x00*"):
+            return False
+        # Early Canon EOS-1D TIFF RAW and Phase One IIQ have private container signatures.
+        if header[8:12] == bytes.fromhex("ba b0 ac bb") or header[8:16] in (b"IIIICwaR", b"MMMMRawC"):
+            return True
+        with PILImage.open(path) as image:
+            tags = image.tag_v2
+            if tags.get(262) in (32803, 34892):  # CFA or LinearRaw, not a developed RGB TIFF
+                return True
+            # Kodak DCS RAWs expose a reduced first IFD and proprietary sensor metadata.
+            if not (int(tags.get(254, 0)) & 1 and str(tags.get(271, "")).strip().lower()=="kodak"):
+                return False
+            return 33405 in tags and any(tag in tags for tag in (33423,37398,65535))
+    except (AttributeError, OSError, ValueError, TypeError, PILImage.DecompressionBombError):
+        return False
+
+
 def is_raw(path: str) -> bool:
-    """True for a camera-RAW path (.dng/.cr2/.nef/.arw/…) — used to pair RAW+JPEG and to
-    prefer the RAW as the edit source (more bit depth / latitude)."""
-    return path.lower().endswith(tuple(_RAW_EXT))
+    """Recognize camera RAW suffixes and camera originals saved in TIFF containers."""
+    path = os.fspath(path)
+    if path.lower().endswith(tuple(_RAW_EXT)):
+        return True
+    if not path.lower().endswith((".tif", ".tiff")):
+        return False
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return _camera_tiff(os.path.abspath(path), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
 
 def _to_unit(arr: np.ndarray, top: float) -> np.ndarray:
@@ -278,6 +309,8 @@ def _preview_rgb(raw, max_px: int = 1024) -> np.ndarray | None:
                 bitmap = np.rint(bitmap.astype(np.float32) / 257.0).astype(np.uint8)
             if bitmap.ndim not in (2, 3):
                 return None
+            if bitmap.ndim == 3 and bitmap.shape[-1] == 1:
+                bitmap = bitmap[..., 0]
             pil = PILImage.fromarray(bitmap).convert("RGB")
         else:
             return None
@@ -441,6 +474,9 @@ def _recover(raw, rgb, common: dict, info: dict):
     clipped = rgb.max(axis=-1) >= 1.0
     share = float(clipped.mean())
     info.update(highlight="clip", recover_clipped=round(share, 4))
+    if getattr(raw, "num_colors", 3) == 1:
+        info["recover_skipped"] = "the monochrome sensor has no independent color channels"
+        return rgb
     if share < _RECOVER_MIN_SHARE:
         info["recover_skipped"] = f"{share * 100:.2f}% of the frame is clipped, less than {_RECOVER_MIN_SHARE * 100:g}%"
         return rgb
@@ -462,13 +498,22 @@ def _mark_half(info: dict, common: dict, raw, rgb) -> None:
         info["half_size"] = True
 
 
+def _raw_rgb(samples: np.ndarray) -> np.ndarray:
+    """LibRaw returns one channel for monochrome sensors and film scans."""
+    if samples.ndim == 2:
+        samples = samples[..., None]
+    if samples.shape[-1] == 1:
+        return np.broadcast_to(samples, samples.shape[:2] + (3,))
+    return samples
+
+
 def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None):
     """Demosaic a camera RAW to 16-bit via rawpy/libraw. Returns (rgb[0,1], 16, decode_ev) or
     None when the path isn't a RAW. Camera white balance always. `opts` = RunConfig raw_* fields
     (see RAW_MODES); an extra `half_size` key is a benchmark speed knob (quarter-res demosaic).
     "none" reproduces the historical render byte-for-byte; the lifting modes decode LINEAR, apply
     `develop_ev` stops, then encode with the sRGB curve (our working space)."""
-    if not path.lower().endswith(tuple(_RAW_EXT)):
+    if not is_raw(path):
         return None
     try:
         import rawpy
@@ -496,12 +541,12 @@ def _decode_raw(path: str, opts: dict | None = None, report: dict | None = None)
                 gamma=(2.222, 4.5),                # sRGB-ish tone curve → our gamma working space
                 **common,
             )
-            rgb = _to_unit(rgb16, 65535.0)
+            rgb = _to_unit(_raw_rgb(rgb16), 65535.0)
             _mark_half(info, common, raw, rgb)
             if o["raw_recover"] and mode == "none":
                 rgb = _recover(raw, rgb, common, info)   # F44: a second decode of the open file
             return rgb, 16, 0.0
-        lin16 = raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common)
+        lin16 = _raw_rgb(raw.postprocess(no_auto_bright=True, gamma=(1.0, 1.0), **common))
         lin = _to_unit(lin16, 65535.0)
         _mark_half(info, common, raw, lin)
         cam = _preview_rgb(raw) if mode.startswith("preview") else None

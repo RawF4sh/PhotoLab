@@ -26,7 +26,7 @@ from ..contract import Adjustment, RunConfig
 from ..imageio import analysis_opts, downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
 from ..pipeline import Pipeline
 from ..segment.base import parse_mark
-from ..styles import load_styles
+from ..styles import load_styles, offered_styles
 from . import edit_steps, photo_base
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
@@ -171,7 +171,7 @@ def build_pipeline(cfg: RunConfig) -> Pipeline:
 def list_styles(configs_dir: str | None = None, profile: str | None = None) -> list[dict]:
     styles = load_styles(paths.config_paths(configs_dir, profile)["styles_path"])
     return [{"name": s.name, "look": s.look, "brief": s.brief, "concepts": s.concepts}
-            for s in styles.values()]
+            for s in offered_styles(styles).values()]
 
 
 def list_presets(configs_dir: str | None = None, profile: str | None = None) -> dict[str, list[str]]:
@@ -209,7 +209,7 @@ def group_images(folder: str) -> list[dict]:
         if key not in by_stem:
             by_stem[key] = []
             order.append(key)
-        by_stem[key].append({"name": f, "kind": "raw" if is_raw(f) else "pixel"})
+        by_stem[key].append({"name": f, "kind": "raw" if is_raw(os.path.join(folder, f)) else "pixel"})
 
     def _entry(members: list[dict]) -> dict:
         from ..consistency import capture_time
@@ -907,6 +907,8 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
             profile: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)
+    from . import projects
+    projects.require_automatic_export(image_path, projects.manual_sources(os.path.dirname(os.path.abspath(image_path)), profile))
     entries, limited = opts.get("edit_steps", []), []
     if "edit_steps" in opts:
         opts, limited = edit_steps.fold(opts, editor_sliders()[0])
@@ -986,8 +988,10 @@ def _pick_native(kind: str = "folder") -> str | None:
             verb = 'choose folder with prompt "Select a folder for AutoEdit"'
         elif kind == "json":
             verb = 'choose file with prompt "Select an AutoEdit aesthetic model JSON"'
-        else:  # restrict to images so users can't pick sidecars (.xmp) etc.
-            verb = 'choose file of type {"public.image"} with prompt "Select a photo for AutoEdit"'
+        else:
+            from ..imageio import picker_extensions
+            extensions = ", ".join(json.dumps(pattern[2:]) for pattern in picker_extensions())
+            verb = 'choose file of type {' + extensions + '} with prompt "Select a photo for AutoEdit"'
         try:
             r = subprocess.run(["osascript", "-e", f"POSIX path of ({verb})"],
                                capture_output=True, text=True)

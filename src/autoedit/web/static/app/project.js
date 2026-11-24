@@ -2,11 +2,13 @@
 // Imports are circular with main.js; access shared state only from functions/events.
 import { api, state, toast } from './main.js';
 
-const PHOTO_KEYS = ['look', 'intensity', 'neutral', 'sliders', 'entries', 'hide', 'hideMethod', 'reference', 'reference_strength', 'base', 'region_settings', 'mask_refinements', 'photo_geometry', 'local_only', 'edit_steps'];
+const PHOTO_KEYS = ['style', 'ai_enabled', 'manual', 'look', 'intensity', 'neutral', 'sliders', 'entries', 'hide', 'hideMethod', 'reference', 'reference_strength', 'base', 'region_settings', 'mask_refinements', 'photo_geometry', 'local_only', 'edit_steps'];
 const FOLDER_KEYS = ['look', 'genre', 'strength', 'runText', 'exportPreset', 'finder', 'folderSliders', 'recipes'];
 const HISTORY_LIMIT = 30;
 let activeDir = '', project = fresh(), timer = 0, saving = Promise.resolve(), revision = 0, lastSaved = '';
 let warned = false;
+// The server owns the native blob. Only an explicit history move can change its pointer.
+let manualMoves = new Map(), confirmedManual = new Map();
 const listeners = new Set();
 const clone = value => JSON.parse(JSON.stringify(value));
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -72,6 +74,10 @@ function travel(path, undo) {
   const current = getPhoto(path), from = undo ? 'history' : 'future', to = undo ? 'future' : 'history';
   if (!current[from]?.length) return false;
   const source = current[from].slice(), next = source.pop();
+  if ((next.manual?.sha256 || null) !== (current.manual?.sha256 || null)) {
+    if (!confirmedManual.has(path)) confirmedManual.set(path, current.manual?.sha256 || null);
+    manualMoves.set(path, next.manual?.sha256 || null);
+  }
   project.photos[path] = { ...photoValues(next), [from]: source,
     [to]: [...(current[to] || []), photoValues(current)].slice(-HISTORY_LIMIT) };
   const file = state.files.find(f => f.path === path); if (file?.exported) file.dirty = true;
@@ -103,7 +109,7 @@ function snapshot() {
       ...(f.recipeReview ? { recipeReview: f.recipeReview } : {}),
       ...(f.exported ? { out: f.exported } : {}),
     }]));
-    const match = location.hash.match(/^#\/photo\/(\d+)/);
+    const match = location.hash.match(/^#\/(?:photo|edit)\/(\d+)/);
     if (match) result.last_index = Number(match[1]);
   }
   return result;
@@ -121,11 +127,18 @@ export async function persistProject() {
   // Keep the last workspace snapshot when the caller starts opening another folder. A second
   // flush after state.dir changes must not replace it with the original load-time values.
   Object.assign(project, { folder: current.folder, files: current.files, last_index: current.last_index });
-  if (encoded === lastSaved) return saving;
+  if (encoded === lastSaved && !manualMoves.size) return saving;
+  const moves = new Map(manualMoves), confirmed = confirmedManual;
   // A request is captured before joining the queue: switching folders cannot redirect it.
   saving = saving.catch(() => {}).then(async () => {
     try {
-      await api('/project', { dir, project: current });
+      const expected = Object.fromEntries([...moves].filter(([path, desired]) => confirmed.get(path) !== desired)
+        .map(([path]) => [path,confirmed.get(path)]));
+      await api('/project', {dir, project:current, ...(Object.keys(expected).length ? {manual_expected:expected} : {})});
+      for (const [path, desired] of moves) {
+        confirmed.set(path,desired);
+        if (confirmed === confirmedManual && manualMoves.get(path) === desired) manualMoves.delete(path);
+      }
       if (dir === activeDir && seq === revision) { lastSaved = encoded; warned = false; emit(null, 'saved'); }
       return true;
     } catch (error) {
@@ -152,6 +165,7 @@ export async function loadProject(dir, { initialize } = {}) {
       history: (Array.isArray(photo.history) ? photo.history : []).slice(-HISTORY_LIMIT).map(photoValues),
       future: (Array.isArray(photo.future) ? photo.future : []).slice(-HISTORY_LIMIT).map(photoValues) };
   }
+  manualMoves = new Map(); confirmedManual = new Map();
   activeDir = dir; lastSaved = ''; warned = false; revision++;
   const folder = object(project.folder) ? project.folder : {};
   FOLDER_KEYS.forEach(key => { if (folder[key] !== undefined) state[key] = folder[key]; });
@@ -175,7 +189,8 @@ export async function loadProject(dir, { initialize } = {}) {
 // saved continuously; this is a last-chance flush, not the only persistence mechanism.
 window.addEventListener('pagehide', () => {
   if (!activeDir) return;
-  const body = JSON.stringify({ dir: activeDir, project: snapshot() });
+  const expected = Object.fromEntries([...manualMoves.keys()].map(path => [path,confirmedManual.get(path)]));
+  const body = JSON.stringify({dir:activeDir, project:snapshot(), ...(Object.keys(expected).length ? {manual_expected:expected} : {})});
   fetch('/api/v1/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
 });
 window.addEventListener('hashchange', scheduleProjectSave);

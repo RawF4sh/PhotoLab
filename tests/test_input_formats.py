@@ -27,6 +27,16 @@ def test_extensions_are_supported():
         assert not imageio.is_raw(name)
 
 
+def test_legacy_camera_raws_are_openable_in_the_picker_and_batch(tmp_path):
+    for suffix in ("crw", "erf", "fff", "mos", "iiq", "rwl"):
+        path = tmp_path / f"camera.{suffix.upper()}"
+        path.touch()
+        assert imageio.is_raw(str(path))
+        assert imageio.is_supported(str(path))
+        assert f"*.{suffix}" in imageio.picker_extensions()
+        assert str(path) in batch.list_images(str(tmp_path))
+
+
 def test_avif_roundtrip(tmp_path):
     if not features.check("avif"):
         print("skipped: this Pillow has no AVIF support")

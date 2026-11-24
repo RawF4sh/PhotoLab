@@ -71,6 +71,7 @@ async function fixture() {
         return answer(200, [{ pixel: 'first.jpg' }, { pixel: 'second.jpg' }]);
       }
       if (route.pathname.endsWith('/pick')) { if (picked) approved = true; return answer(200, { path: picked }); }
+      if (route.pathname.endsWith('/local-styles')) return answer(200, { styles: [{ id: 'standard', label: 'Standard' }] });
       if (route.pathname.endsWith('/project')) {
         assert(approved, 'reading/writing a saved project must wait for the picker');
         if (opts.method === 'POST') return answer(200, { saved: true });
@@ -92,7 +93,7 @@ async function fixture() {
   });
   const node = () => new Element('div');
   const stubs = {
-    './settings.js': { openSettings() {}, applySurround() {}, runOptions: () => ({}) },
+    './settings.js': { openSettings() {}, applySurround() {}, runOptions: () => ({}), assistantOptions: () => ({}), setAssistantKey() {} },
     './photo.js': { screen: { mount() {} }, loadEntries: () => [], textOf: () => '', marksOf: () => [], hideRequest: () => null },
     './tools.js': { runTool: async () => ({}) }, './share.js': { openShare() {}, exportsDir: () => folderPath + '/AutoEdit Exports' },
     './presets.js': { openPhotoPresets() {} }, './workflow.js': { workflowSteps: node, readinessCard: node },
@@ -122,15 +123,15 @@ async function fixture() {
   for (const single of [true, false]) {
     const mode = await fixture();
     assert(mode.view.find(e => e.href === '#/automatic'));
-    assert(mode.view.find(e => e.href === '/editor/'));
+    assert(mode.view.find(e => e.href === '#/editor'));
     mode.navigate('automatic');
     const button = text => mode.view.find(e => e.tagName === 'BUTTON' && e.textContent === text);
     await button(single ? 'Choose photo' : 'Choose folder').click();
-    assert(!button('Edit and export'), 'cancelling the picker keeps the job idle');
+    assert(button('Run AI Edit & export').disabled, 'cancelling the picker keeps the job idle');
     mode.pick(single ? mode.photoPath : mode.folderPath);
     await button(single ? 'Choose photo' : 'Choose folder').click();
     assert(!mode.requests.some(r => r.route.endsWith('/jobs')), 'opening photos only shows the originals');
-    const start = button('Edit and export');
+    const start = button('Run AI Edit & export');
     await Promise.all([start.click(), start.click()]);
     const posts = mode.requests.filter(r => r.route.endsWith('/jobs'));
     assert.equal(posts.length, 1);

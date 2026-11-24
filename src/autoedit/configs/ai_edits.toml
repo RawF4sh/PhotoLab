@@ -1,0 +1,21 @@
+# Photographic intentions shared by Automatic and the LightCraft editor. Each
+# request is relative to the preview and limited to the supplied editor controls.
+[standard]
+label = "Standard"
+prompt = "Give this photo a natural finished edit. Identify the subject and the direction of light. Balance exposure and white balance for the scene, open important shadow detail and preserve texture in bright areas. Keep intentional silhouettes and the original mood. If it already looks finished, leave it alone."
+
+[sunset]
+label = "Sunset glow"
+prompt = "Bring out warm light already present in the sky, clouds and their reflections. Keep luminous areas textured, and let shaded snow, trees and water retain their cooler color. Lift foreground detail only where it helps the subject. Use separate color or region controls when available. Avoid adding a uniform orange cast."
+
+[blue_hour]
+label = "Blue hour"
+prompt = "Preserve the blue-hour feel in the sky and water while keeping lamps, lit stone and their reflections distinctly warm. Open structural detail in dark architecture or terrain. Hold back the brightest lamps and preserve deep anchor shadows. Prefer selective controls when available to maintain the separation between warm and cool light."
+
+[moody_landscape]
+label = "Moody landscape"
+prompt = "Shape depth between foreground, middle distance and sky. Give textured clouds definition, preserve existing haze and reflections, and keep a clear subject against the darker terrain. Watch the ridge line for halos, retain shadow detail and keep the color of snow believable. Work with the weather and light already visible."
+
+[portrait]
+label = "Natural portrait"
+prompt = "Identify the person and the light on their face. Prioritize believable skin color, gentle midtone separation and recoverable facial shadow detail. Protect highlights on skin and keep the background subordinate. Use a person or skin region when available and retain the character and texture of the face."

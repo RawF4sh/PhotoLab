@@ -82,7 +82,7 @@ def test_manual_gemini_uses_current_thumbnail_and_only_supported_sliders():
     import json
     from PIL import Image
     from autoedit.decide import gemini
-    from autoedit.web import assist
+    from autoedit.web import ai_styles, assist
 
     image = io.BytesIO()
     Image.new('RGB', (8, 12), 'gray').save(image, 'JPEG')
@@ -104,6 +104,19 @@ def test_manual_gemini_uses_current_thumbnail_and_only_supported_sliders():
         sent = json.dumps(calls[0])
         assert 'light.exposure' in sent and 'private-label' not in sent and 'test-only' not in sent
 
+        controls = {'light.exposure': 0.25, 'color.vibrance': 2, 'effects.clarity': 3,
+                    'mixer.orange.sat': 0, 'mixer.blue.lum': -2, 'mixer.secret.lum': 1,
+                    'wb.tempRel': 0, 'wb.tint': 0}
+        style_payload = {**payload, 'controls': controls, 'allow_cloud': True, 'style': 'blue_hour', 'prompt': ''}
+        changes[0]['ops'] = {'mixer.orange.sat': 8, 'mixer.blue.lum': -6, 'wb.tempRel': 5, 'wb.tint': 1}
+        assert lightcraft.suggest_adjustments(style_payload)['proposal']['changes'] == changes
+        part = calls[-1]['contents'][0]['parts'][0]['text']
+        assert ai_styles.prompt_for('blue_hour') in part and 'mixer.secret.lum' not in part
+        assert 'mixer.orange.sat' in part and 'effects.clarity' in part
+
+        changes[0]['ops']['mixer.orange.sat'] = 10000
+        assert lightcraft.suggest_adjustments(style_payload)['reason'] == 'invalid_response'
+
 
 def test_raw_compatibility_copy_is_explicit_full_resolution_and_16_bit(tmp_path):
     try:
@@ -120,7 +133,7 @@ def test_raw_compatibility_copy_is_explicit_full_resolution_and_16_bit(tmp_path)
     raw.write_bytes(b'raw fixture')
     rgb = np.full((40, 60, 3), .125, dtype=np.float32)
     client = TestClient(app.create_app(), base_url='http://localhost')
-    with patch.object(service, '_ALLOWED_ROOTS', {str(tmp_path)}), \
+    with patch.object(service, '_ALLOWED_ROOTS', {str(tmp_path.resolve())}), \
             patch.object(imageio, 'load_image', return_value=imageio.Image(rgb, 16)) as decoder:
         url = '/api/v1/editor/original'
         assert client.get(url, params={'path': str(raw)}).content == raw.read_bytes()

@@ -34,7 +34,7 @@ accel = ["opencv-python>=4.9", "tifffile>=2024.1", "rawpy>=0.19"]
 heif = ["pillow-heif>=0.16"]
 # Local web app (FastAPI + browser UI): `autoedit ui`.
 ui = ["fastapi>=0.110", "uvicorn>=0.27"]
-app = ["pywebview>=5", "fastapi>=0.110", "uvicorn>=0.27"]
+app = ["pywebview>=5", "fastapi>=0.110", "uvicorn>=0.27", "rawpy>=0.19", "tifffile>=2024.1"]
 dev = ["pytest>=8"]
 
 [project.scripts]

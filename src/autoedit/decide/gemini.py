@@ -233,7 +233,8 @@ class Gemini:
             raise ValueError("invalid region name")
         numeric = _numeric_context(context)
         clean = _thumb(thumbnail)
-        text = ("Suggest small photographic adjustments to the CURRENT EDITED thumbnail. Return JSON only. "
+        text = ("Develop the CURRENT EDITED thumbnail to the requested photographic finish. "
+                "Choose the strength each change needs within the supplied bounds. Return JSON only. "
                 "Values are DELTAS to ADD to the user's existing sliders, not final values. Only use "
                 "the operations and actual region names in the schema. Exposure is in EV; other "
                 "controls are editor units. Preserve natural skin, highlight detail and intentional "

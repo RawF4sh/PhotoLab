@@ -33,6 +33,7 @@ from autoedit import batch, tonemetrics as tm  # noqa: E402
 from autoedit.contract import GlobalStatsModel, RegionStatsModel, RunConfig  # noqa: E402
 from autoedit.imageio import RAW_MODES, camera_preview, downscale_long_edge, load_image, raw_opts_from, analysis_opts, resize_to  # noqa: E402
 from autoedit.quality import assess_pixels, load_quality_config  # noqa: E402
+from autoedit.quality_runner import style_thresholds  # noqa: E402
 
 
 def _hash(path):
@@ -281,7 +282,8 @@ def rows_from_sidecars(src_dir: str, out_dir: str, camera: bool = True, thr: dic
                     raise ValueError("missing or corrupt mask provenance")
                 with np.load(masks_path, allow_pickle=False) as archive:
                     masks = {name: archive[name] for name in archive.files}
-            assessment = assess_pixels(source_rgb, exported, masks=masks, thresholds=thr)
+            thresholds = style_thresholds(saved_audit, thr, d.get("style"))
+            assessment = assess_pixels(source_rgb, exported, masks=masks, thresholds=thresholds)
             if _hash(p) != before_hash:
                 raise ValueError("source-file modification during assessment")
             for selected_path, selected_hash in selected_files:
@@ -290,6 +292,8 @@ def rows_from_sidecars(src_dir: str, out_dir: str, camera: bool = True, thr: dic
             src = assessment["metrics"].get("source", tm.from_global(pre))
             out = assessment["metrics"].get("output", tm.from_global(post))
             row = tm.row_for(os.path.basename(p), src, out, _cam(p, camera), **(thr or {}))
+            if thresholds.get("preserve_exposure") and row["dark_made_darker"]:
+                row.update(declared_darker=True, dark_made_darker=False)
             row.update(decode_ev=float(d.get("decode_ev", 0.0)), quality_score=d.get("quality_score"),
                        needs_review=d.get("needs_review"),
                        exposure=float((d.get("global_settings") or {}).get("exposure", 0.0)),
@@ -341,12 +345,15 @@ def rows_by_render(src_dir: str, cfg: RunConfig, limit: int | None = None, max_p
             else:
                 from autoedit.quality_runner import render_safe
                 rgb, res = render_safe(p, cfg, image=work, common_source=common, engine=engine)
-            assessment = assess_pixels(common, rgb, masks=getattr(engine, "last_masks", {}), thresholds=thr)
+            thresholds = style_thresholds(res.audit, thr, res.style)
+            assessment = assess_pixels(common, rgb, masks=getattr(engine, "last_masks", {}), thresholds=thresholds)
             if _hash(p) != before_hash:
                 raise ValueError("source-file modification during render")
             src = tm.from_global(res.global_stats)
             out = tm.from_global(res.post_edit_stats)
             row = tm.row_for(os.path.basename(p), src, out, _cam(p, camera), **(thr or {}))
+            if thresholds.get("preserve_exposure") and row["dark_made_darker"]:
+                row.update(declared_darker=True, dark_made_darker=False)
             row.update(decode_ev=float(res.decode_ev), quality_score=res.quality_score,
                        needs_review=res.needs_review,
                        exposure=float(res.global_settings.get("exposure", 0.0)),
@@ -358,7 +365,10 @@ def rows_by_render(src_dir: str, cfg: RunConfig, limit: int | None = None, max_p
                        stage_timings_ms=res.stage_timings_ms, region_stats=[r.model_dump() for r in res.region_stats],
                        post_region_stats=[r.model_dump() for r in res.post_region_stats],
                        metrics_scope="floating render proxy; native exports require --out",
-                       safety_fallback=res.audit.get("remediation_factor", 1.0))
+                       safety_fallback=res.audit.get("remediation_factor", 1.0),
+                       requested_backend=res.audit.get("requested_backend"),
+                       actual_backend=res.audit.get("actual_backend"),
+                       backend_fallback=res.audit.get("backend_fallback"))
         except Exception as e:  # one bad photo never aborts the report
             _record_error(p, e, errors)
             continue
@@ -466,7 +476,8 @@ def main() -> int:
     else:
         ap.error("give --out OUT_DIR (read sidecars) or --render")
     summary = tm.summarize(rows)
-    summary.update(expected=metadata.get("expected", len(rows) + len(errors)),
+    summary.update(declared_darker=sum(bool(r.get("declared_darker")) for r in rows),
+                   expected=metadata.get("expected", len(rows) + len(errors)),
                    errors=len(errors), complete=bool(rows) and not errors)
     if metadata.get("mode") == "manifest":
         metadata["manifest_integrity"] = "complete" if summary["complete"] else "incomplete"

@@ -64,6 +64,16 @@
 .automatic-selection h2, .automatic-result h2 { overflow-wrap: anywhere; }
 .automatic-thumbs { display: flex; flex-wrap: wrap; gap: .4rem; }
 .automatic-thumbs img { width: 72px; height: 72px; object-fit: cover; background: var(--raised); border-radius: var(--r-s); }
+.automatic-thumbs.single-original { width: 100%; }
+.single-original img { width: 100%; height: auto; max-height: 36vh; object-fit: contain; }
+.automatic-controls { display: grid; width: 100%; justify-items: start; gap: .85rem; }
+.automatic-style, .automatic-key label { display: grid; gap: .35rem; }
+.automatic-consent { display: flex; align-items: flex-start; gap: .5rem; cursor: pointer; }
+.automatic-consent input { flex: none; margin-block-start: .22em; }
+.automatic-key summary, .automatic-reference summary { color: var(--text-2); cursor: pointer; }
+.automatic-reference { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.automatic-reference .automatic-actions { margin-top: .5rem; }
+.automatic-key label { margin-top: .55rem; }
 .automatic-panel progress { width: min(100%, 22rem); accent-color: var(--accent); }
 .automatic-issues summary { cursor: pointer; padding-block: .5rem; }
 .automatic-issues li { overflow-wrap: anywhere; margin-bottom: .4rem; }

@@ -2,9 +2,9 @@
 
 AutoEdit is a **local-first, open-vocabulary batch photo editor** with a full photography workflow
 built around it: cull a shoot, edit it, review/label the results, build a training set, and learn
-your own look — all on your machine. The editing is **non-generative**: it only moves bounded,
-explainable photographic sliders (exposure, tone, white balance, dehaze, region grades…). It never
-invents or replaces content.
+your own look — all on your machine. Local AI Edit adjusts exposure, tone, white balance and
+individual regions. In Photo editor you can refine those decisions, draw masks or retouch a spot
+yourself. AutoEdit records manual retouching in the exported sidecar.
 
 - **UI:** one local interface — `autoedit ui` in the browser at `http://127.0.0.1:8765/`, or `autoedit app` in a desktop window.
 - **CLI:** `autoedit run/curate/dataset/rank-variants/train-recipe/train-aesthetic/…`.
@@ -20,8 +20,8 @@ invents or replaces content.
 
 | Principle | What it means |
 |---|---|
-| **Local-first** | Automatic editing and both local editors work on-device. The optional LLM decider and Gemini assistant can send a thumbnail and measurements with consent. |
-| **Non-generative** | No object generation, inpainting, sky replacement, or invented pixels. The system only adjusts bounded parametric edits, then re-measures and rejects unsafe results. |
+| **Local-first** | Run AI Edit and export work on-device. Ask Gemini sends a small preview and editing measurements after you allow it. |
+| **Non-generative automatic edits** | The local engine adjusts bounded photographic controls, then measures the result and rejects unsafe changes. Heal and Clone are available as manual tools in Fine-tune. |
 | **Explainable** | Every photo gets a sidecar JSON with a human-readable "why" list: which rules fired, which gates acted, which intent/palette/reference applied. |
 | **Copy-only** | Culling and dataset building never move, rename, or delete your originals — they copy. |
 | **Rules are data** | Tuning lives in TOML (`configs/`), not Python. Add a stat in code, map it in config. |
@@ -384,35 +384,49 @@ arrow (top left) go back one screen.
 
 #### Start
 
-Choose **Automatic** to finish a photo or a folder in one pass. Choose **Photo editor** to work on individual images. **Guided workspace** opens AutoEdit's folder, recipe, review and learning tools.
+Choose **Automatic edit** for finished files in one pass, or **Photo editor** to review and
+change an individual image. Both use the same local development engine.
 
-#### Automatic
+#### Automatic edit
 
-Use **Choose photo** or **Choose folder**. The selection shows the originals and the photo count.
-**Edit and export** runs AutoEdit's local rules and writes finished files and decision sidecars into
-a new dated folder inside `AutoEdit Exports`. You can follow progress, stop the run, see which files
-need attention and use **Show exports** to open the results. The run follows what **Settings** (the
-gear) shows, such as the region finder, the RAW choices and the export format. A Guided folder's
-own look, strength and sentence do not apply here.
+Choose a photo or folder, review the originals, then select **Run AI Edit & export**.
+The result screen links to the saved files. The gear controls the region finder, RAW development
+and output settings. Use **Match a reference photo** when you have a finished image you want to
+aim for. For a before/after screenshot use only the finished rendition. A photo with a saved
+LightCraft stage must finish in Photo editor so its manual work appears in the export.
 
 #### Photo editor
 
-The manual workspace embeds Brandon Thomas's LightCraft web editor, pinned to version 0.21.1.
-On first use, AutoEdit asks before it downloads the official release (about 75 MB). **Download and
-open** starts it. AutoEdit then checks the SHA-256 digest and caches the editor locally.
-Opening photos and using develop controls then work offline. The editor needs a browser or desktop
-web view with WebGL 2. See [LightCraft's web edition](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
+Open a photo or a folder. A new photo opens on its original. Select a section in the sidebar,
+or use **Tools** on a narrow screen.
 
-- **Open photo** imports the original into LightCraft's local library. Set exposure, adjust the tone curve or color mixer, crop and straighten, or use **Masking** to limit a change to part of the picture. **Auto adjust** runs LightCraft's automatic development on request.
-- **Open RAW as TIFF** opens a full-resolution 16-bit copy using AutoEdit's local RAW decoder (the `accel` extra). Use it for a camera file that LightCraft can only display as a thumbnail. White balance and demosaicing are baked into this copy. Your RAW stays on disk.
-- If an unsupported RAW has stopped the editor, choose **Recover photo editor**, then **Open RAW as TIFF**. Recovery can filter the library to the TIFF to avoid reloading the failed RAW thumbnail. **Show all photos** clears that search.
-- **Guided tools** opens the original selected through AutoEdit in the Guided workspace. That workspace keeps its own adjustments. Photos added directly inside LightCraft can be selected with the Guided file picker.
-- **Compare** opens a before/after view with a draggable divider. Use the arrow keys to fine-tune its position. **Export** saves the developed image through the browser or desktop window.
-- **Ask Gemini** lets you review suggested whole-photo adjustments and apply supported values to LightCraft's editable controls. The guided workspace also supports named-region suggestions and recipes.
-- LightCraft keeps its catalog and adjustment history in local storage for this browser and app address. Clearing site data removes that catalog. The native LightCraft app has additional capabilities including JPEG XL export. **Open desktop editor** is available when AutoEdit finds an installed copy.
-- **Guided tools** opens the AutoEdit workspace. In a guided photo, **Open original in Photo editor** imports the source file. After saving, **Open saved copy in Photo editor** imports the rendered pixels as a new starting point. The editable AutoEdit steps stay in the guided project.
+- **AI Edit** runs Standard on this computer. Choose **Run AI Edit** to see the result.
+  Drag **Before / After** across the photo or use the arrow keys on the divider. An individual
+  change can be adjusted, turned off or undone.
+- **Isolate** lets you select a detected object and adjust it. The overlay shows the affected
+  area. Refine a selection with the brush or place an area on the photo.
+- **Learn** explains the measured changes on this photo. **Ask Gemini** sends a small preview
+  only after explicit permission and lets you review the proposed changes.
+- **Adjust → Fine-tune in LightCraft** opens the native develop controls, including the tone
+  curve, mixer, color wheels, crop, masks and spot tools. The first visit offers a verified
+  download of the pinned web editor (about 75 MB). Later use works offline.
+- In Fine-tune, **Inspect at 100%** opens the original at full resolution with the current
+  edits. Use it to check an eyelash, a mask boundary or shadow noise before export.
+- **Open photo** accepts a Canon CR2 directly. AutoEdit develops RAW files at preview size
+  for interaction and develops them again at full resolution for export. Your RAW stays on disk.
+  If a browser copy is cleared, pick the same original and the saved manual stage is restored.
+- In Fine-tune, **Before / After** compares the photo and **Export** writes the developed file
+  and its decision sidecar to AutoEdit Exports. The sidecar records changed controls, masks and
+  spot tools. The automated image checks cover the local AI stage. **Back to Photo editor**
+  returns to the linked photo.
 
-#### Guided workspace
+Standard is available by default. A specialized local style appears in the normal menu after
+the blind evaluation passes. To try the experimental landscape edits on your own photos,
+use `autoedit run ./photos ./style-preview --backend sam3 --style moody_landscape`.
+The other preview choices are `blue_hour` and `sunset_glow`. Gemini's photographic briefs
+are available separately.
+
+#### Folder workspace
 
 **Open photo**, **Open folder**, **Try a sample set**, and recent folders. The samples are generated
 landscapes made locally without a download. Your photos stay on this computer. Reopening a folder
@@ -586,6 +600,9 @@ route list is pinned by `tests/snapshots/api_v1.json`.
 | `POST /api/v1/assist` | Explicit opt-in Gemini proposal; does not apply or save adjustments. |
 | `GET /api/v1/editor/status`, `POST /api/v1/editor/install` | Check or install the pinned local LightCraft release. |
 | `GET /api/v1/editor/original?path=`, `POST /api/v1/editor/native` | Open a picker-approved original or launch the installed desktop editor. |
+| `GET /api/v1/local-styles` | Locally available photographic styles. |
+| `POST /api/v1/editor/import`, `POST …/drop`, `POST …/working` | Open an approved source, import a browser drop or render the local AI stage. |
+| `GET /api/v1/editor/manual`, `POST …/manual`, `POST …/export` | Restore or save versioned develop settings and export a full-size manual render. |
 | `POST /api/v1/editor/assist` | Request whole-photo changes for a rendered LightCraft preview with explicit Gemini consent. |
 | `GET /api/v1/edit-presets`, `POST /api/v1/edit-presets`, `DELETE …/{id}` | Local portable creative presets; separate from concept presets. |
 | `POST /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST …/control` | Background edit batch + live progress. |

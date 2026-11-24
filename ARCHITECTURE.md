@@ -647,6 +647,21 @@ cache). It warns when the digest of the config files differs from the batch's, a
 
 ## 15. The web app (`web/`)
 
+Automatic edit and Photo editor call the same local pipeline. The latter opens an original
+first, then keeps the comparison canvas in place across AI Edit, Adjust, Isolate, Learn and Ask
+Gemini. Fine-tune hands the current uncropped working picture to the pinned LightCraft renderer.
+`web/editor_files.py` prepares an upright 16-bit sRGB TIFF for non-browser formats or an edited
+stage. `web/manual_stage.py` stores versioned native settings by content checksum beside the photo
+project. An export receipt ties the native full-size render to its source, manual edit and preview
+revision. AutoEdit applies final output settings and writes the sidecar. Automatic batch and CLI
+exports direct photos with manual edits to Photo editor.
+
+Explicit local styles can fit bounded, named adjustments to whole-frame or per-object target
+ranges in `targets.toml`. Named compose moves can be clipped to a feathered object mask or placed
+at a trusted horizon. Intent flags apply to relative brightness and color judgments for the
+selected style. The existing clipping, banding and halo checks still run. The catalog exposes a
+specialized style after its visual evaluation passes.
+
 A local FastAPI app (`web/app.py`) over framework-agnostic logic (`web/service.py`), plus a small
 front end in `static/app/` served at `/`: `index.html`, two stylesheets and plain ES modules, no
 build step. Screens: Start, Folder (grid, look, strength, sentence, export, Find, Share, Tools),

@@ -66,6 +66,23 @@ def test_only_the_versioned_api_exists():
     assert not [p for p in client.app.openapi()["paths"] if p.startswith("/api/") and not p.startswith("/api/v1/")]
 
 
+def test_ai_edit_catalog_has_a_prompt_free_standard_and_distinct_briefs():
+    from autoedit.decide.gemini import MAX_PROMPT
+    from autoedit.web import ai_styles
+
+    styles = ai_styles.catalog()
+    assert styles[0] == {"id": "standard", "label": "Standard"}
+    prompts = {ai_styles.prompt_for(style["id"]) for style in styles}
+    assert len(prompts) == len(styles) >= 2
+    for style in styles:
+        direction = ai_styles.prompt_for(style["id"], "Keep the foreground cool.")
+        assert direction.endswith("Keep the foreground cool.") and len(direction) <= MAX_PROMPT
+    client = _client()
+    if client:
+        catalog = client.get("/api/v1/ai-edits").json()
+        assert catalog["styles"] == styles and catalog["remaining_calls"] >= 0
+
+
 def test_error_shape_and_codes(tmp_path):
     client = _client()
     if client is None:

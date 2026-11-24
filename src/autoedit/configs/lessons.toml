@@ -69,6 +69,12 @@ does = "Holds the brightest tones back by the level of the bright area around th
 when = "With the highlight roll-off, on textured bright skies and snow, above all recovered RAW highlights."
 watch = "Acts only with the roll-off. A pixel far brighter or darker than its surroundings is held by its own level, as before."
 
+[op.burn_ev]
+name = "Burn"
+does = "Darkens middle and bright tones while retaining the deepest shadows."
+when = "Shaping a textured sky or the edges of a landscape."
+watch = "Strong burns can make bright areas look subdued."
+
 [op.shadows_ev]
 name = "Shadow lift"
 does = "Brightens the dark tones, counted in stops, and keeps black at black."
@@ -379,3 +385,20 @@ shadows = [-100, 100, 1]
 temp = [-50, 50, 1]
 tint = [-50, 50, 1]
 saturation = [-50, 50, 1]
+
+# Additional LightCraft slider deltas available for a reviewed AI edit. These are
+# changes to the current slider; LightCraft enforces its own final slider limits.
+[try.lightcraft_deltas]
+"light.whites" = [-45, 45, 1]
+"light.blacks" = [-45, 45, 1]
+"color.vibrance" = [-40, 40, 1]
+"wb.tempRel" = [-20, 20, 1]
+"wb.tint" = [-15, 15, 1]
+"effects.clarity" = [-25, 25, 1]
+"effects.texture" = [-25, 25, 1]
+"effects.dehaze" = [-20, 20, 1]
+
+[try.lightcraft_mixer_deltas]
+hue = [-20, 20, 1]
+sat = [-35, 35, 1]
+lum = [-30, 30, 1]

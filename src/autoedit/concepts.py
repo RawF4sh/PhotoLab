@@ -19,6 +19,8 @@ class ConceptMeta:
     forbidden_ops: tuple[str, ...] = ()  # ops dropped entirely on this region (e.g. snow: temp)
     max_ops: dict[str, float] = field(default_factory=dict)  # per-op magnitude caps (abs value)
 
+    words: tuple[str, ...] = ()  # additional segmentation prompts for the same object
+
     def region(self) -> str:
         return self.rule_region or self.name
 
@@ -40,6 +42,7 @@ def load_concepts(path: str) -> tuple[dict[str, list[str]], dict[str, ConceptMet
     for name, body in data.get("concept", {}).items():
         meta[name] = ConceptMeta(
             name=name,
+            words=tuple(body.get("words", ())),
             priority=int(body.get("priority", 50)),
             min_score=float(body.get("min_score", 0.45)),
             min_coverage=float(body.get("min_coverage", 0.02)),

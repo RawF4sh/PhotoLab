@@ -32,3 +32,69 @@ brief = "bold cinematic landscape: deep dramatic sky, dehazed mountains, crisp b
 look = "cinematic_preserved"
 concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock", "subject"]
 brief = "old-cinematic mood with strict Lightroom preservation: dramatic alpine depth, darker sky, strong mountain separation, natural greens, restrained cyan, no generated content"
+
+# Local style candidates. A photographer's held-back vote promotes tested to true.
+[blue_hour]
+label = "Blue hour"
+look = "natural"
+concepts = ["sky", "water", "building", "bridge", "lights", "skin", "snow"]
+target = "blue_hour"
+pull = 0.8
+limits = { exposure = 1.5, shadows_ev = 1.5, lights_ev = 0.7 }
+tested = false
+
+[sunset_glow]
+label = "Sunset glow"
+look = "natural"
+concepts = ["sky", "cloud", "water", "mountain", "snow", "trees", "skin"]
+target = "sunset_glow"
+pull = 0.8
+limits = { exposure = 3.0, shadows_ev = 2.0, chroma = 0.6 }
+intent = ["richer"]
+tested = false
+[sunset_glow.run]
+denoise = true
+
+[moody_landscape]
+label = "Moody landscape"
+look = "natural"
+concepts = ["sky", "cloud", "mountain", "water", "skin", "snow"]
+target = "moody_landscape"
+pull = 0.7
+limits = { exposure = 1.0, shadows_ev = 1.0, chroma = 0.75 }
+intent = ["darker", "richer"]
+tested = false
+[moody_landscape.run]
+palette = "cool_blue"
+palette_strength = 0.45
+[moody_landscape.moves.sky_grad]
+when = "sky"
+within = "sky"
+shape = "linear"
+from = "top"
+coverage = 0.6
+ops = { burn_ev = 0.25 }
+[moody_landscape.moves.far_shore]
+when = "always"
+shape = "band"
+at = "horizon"
+height = 0.12
+feather = 1.0
+ops = { exposure = 0.2 }
+[moody_landscape.moves.frame_vignette]
+when = "always"
+shape = "radial"
+target = "outside"
+radius_scale = 1.1
+feather = 0.45
+ops = { burn_ev = 0.6 }
+
+[natural_portrait]
+label = "Natural portrait"
+look = "soft_portrait"
+concepts = ["skin", "face", "subject", "background"]
+target = "natural_portrait"
+pull = 0.7
+limits = { exposure = 1.0, shadows_ev = 0.75 }
+tested = false
+available = false

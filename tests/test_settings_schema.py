@@ -49,9 +49,9 @@ def test_choices_from_config_files(tmp_path):
     base = paths._packaged()
     s = _by_key(settings_schema.schema(base))
     from autoedit.looks import load as load_looks
-    from autoedit.styles import load_styles
+    from autoedit.styles import load_styles, offered_styles
 
-    assert s["style"]["choices"] == list(load_styles(os.path.join(base, "styles.toml")))
+    assert s["style"]["choices"] == list(offered_styles(load_styles(os.path.join(base, "styles.toml"))))
     assert s["look"]["choices"] == list(load_looks(os.path.join(base, "looks.toml")))
     assert {"auto", "off"} <= set(s["palette"]["choices"])
 

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .contract import Settings
-from .edit import glow_alpha, linear_alpha, radial_alpha
+from .edit import build_alpha, glow_alpha, linear_alpha, radial_alpha
 from .light import Light
 
 
@@ -23,7 +23,7 @@ from .light import Light
 class Move:
     name: str
     when: str
-    shape: str  # "radial" | "linear" | "glow"
+    shape: str  # "radial" | "linear" | "glow" | "band"
     ops: Settings = field(default_factory=dict)
     target: str = "inside"  # radial: inside|outside
     feather: float = 0.18
@@ -33,6 +33,8 @@ class Move:
     min_coverage: float = 0.0  # the `when` concept must cover at least this frame fraction
     at: str = ""  # "light": placed on the light finder's result, fires only when one is found
     requires: str = ""  # RunConfig bool that must be true for the move to exist at all
+    within: str = ""
+    height: float = 0.12  # band width as a share of image height
     min_radius: float = 0.0  # glow: floor of the radius (fraction of the long side)
 
 
@@ -46,22 +48,25 @@ def load_light_config(path: str) -> dict:
         return dict(tomllib.load(fh).get("light", {}))
 
 
-def load_compose(path: str, run=None) -> list[Move]:
+def load_compose(path: str, run=None, overrides=None) -> list[Move]:
     """The moves of compose.toml. A move with `requires` is left out unless that setting is true
     on `run` (a RunConfig); without a `run` every such move is left out."""
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
+    data.update(overrides or {})
     moves: list[Move] = []
     for name, body in data.items():
         if name in _NOT_MOVES:
             continue
         shape = str(body.get("shape", "radial"))
-        if shape not in ("radial", "linear", "glow"):
+        if shape not in ("radial", "linear", "glow", "band"):
             # fail loudly: a typo'd shape would otherwise silently fall into the linear branch
-            raise ValueError(f"compose move {name!r}: unknown shape {shape!r} (radial | linear | glow)")
+            raise ValueError(f"compose move {name!r}: unknown shape {shape!r} (radial | linear | glow | band)")
         at = str(body.get("at", ""))
-        if at not in ("", "light") or (shape == "glow") != (at == "light"):
-            raise ValueError(f"compose move {name!r}: at = {at!r} must be \"light\", and only for a glow")
+        if at != {"glow": "light", "band": "horizon"}.get(shape, ""):
+            raise ValueError(f"compose move {name!r}: at = {at!r} is invalid for shape {shape!r} (glow requires light, band requires horizon)")
+        if shape == "band" and not (0 < body.get("height", .12) <= 1 and 0 < body.get("feather", .18) <= 1):
+            raise ValueError(f"compose move {name!r}: height and feather must be in (0, 1]")
         requires = str(body.get("requires", ""))
         if requires:
             if run is not None and not hasattr(run, requires):
@@ -83,7 +88,7 @@ def load_compose(path: str, run=None) -> list[Move]:
                 frm=frm,
                 coverage=float(body.get("coverage", 0.5)),
                 min_coverage=float(body.get("min_coverage", 0.0)),
-                at=at,
+                at=at, within=str(body.get("within", "")), height=float(body.get("height", .12)),
                 requires=requires,
                 min_radius=float(body.get("min_radius", 0.0)),
             )
@@ -103,10 +108,16 @@ def _bbox_norm(mask: np.ndarray) -> tuple[float, float, float, float]:
     return cx, cy, hx, hy
 
 
-def _triggers(m: Move, union: dict[str, np.ndarray], light: Light | None = None) -> bool:
+def _triggers(m: Move, union: dict[str, np.ndarray], light: Light | None = None, horizon=None, region_masks=None) -> bool:
     """A move fires when its `when` concept is present (covering ≥ `min_coverage` of the frame),
     or unconditionally for `when="always"`. A 3% sliver of sky must not earn a half-frame grad.
     A move placed `at = "light"` also needs a light to have been found."""
+    if m.within:
+        region = (union if region_masks is None else region_masks).get(m.within)
+        if region is None or not region.any():
+            return False
+    if m.at == "horizon" and horizon is None:
+        return False
     if m.at == "light" and light is None:
         return False
     if m.when == "always":
@@ -116,12 +127,12 @@ def _triggers(m: Move, union: dict[str, np.ndarray], light: Light | None = None)
 
 
 def settings_for(moves: list[Move], union: dict[str, np.ndarray], intensity: float,
-                 light: Light | None = None) -> dict[str, Settings]:
+                 light: Light | None = None, horizon=None, region_masks=None) -> dict[str, Settings]:
     """Just the (name -> settings) the moves would apply — cheap, no alpha (for sidecars/dry-run)."""
     return {
         m.name: {k: v * float(intensity) for k, v in m.ops.items()}
         for m in moves
-        if _triggers(m, union, light)
+        if _triggers(m, union, light, horizon, region_masks)
     }
 
 
@@ -131,12 +142,21 @@ def plan(
     full_hw: tuple[int, int],
     intensity: float,
     light: Light | None = None,
+    horizon=None, feather_px=None, guide=None, region_masks=None,
 ) -> list[tuple[str, np.ndarray, Settings]]:
     out: list[tuple[str, np.ndarray, Settings]] = []
     for m in moves:
-        if not _triggers(m, union, light):
+        if not _triggers(m, union, light, horizon, region_masks):
             continue
-        if m.shape == "glow":
+        if m.shape == "band":
+            # The anchor is the fraction of image height at each side of the trusted line.
+            h, w = full_hw
+            line = np.linspace(*horizon, w, dtype=np.float32)
+            distance = np.abs((np.arange(h, dtype=np.float32)[:, None] + .5) / h - line)
+            radius = m.height / 2
+            u = np.clip((radius - distance) / (radius * m.feather), 0, 1)
+            alpha = u * u * (3 - 2 * u)
+        elif m.shape == "glow":
             alpha = glow_alpha(full_hw, light.cx, light.cy, max(m.min_radius, m.radius_scale * light.radius))
         elif m.shape == "radial":
             # frame-centered for an unconditional move; otherwise derive from the region
@@ -147,6 +167,9 @@ def plan(
             )
         else:
             alpha = linear_alpha(full_hw, frm=m.frm, coverage=m.coverage)
+        if m.within:
+            region = (union if region_masks is None else region_masks).get(m.within)
+            alpha *= build_alpha(region, full_hw, (feather_px or {}).get(m.within, 0), guide=guide)
         settings = {k: v * float(intensity) for k, v in m.ops.items()}
         out.append((m.name, alpha, settings))
     return out

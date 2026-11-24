@@ -53,6 +53,10 @@ def test_panel_sheets_are_blind_and_the_key_scores_verdicts(tmp_path):
     assert [fact.split(":")[0] for stem, fact in facts if stem == "one"][1:] == ["crop centre"]
     assert "candidate" not in (out / "facts.txt").read_text()            # facts never unblind
 
+    replay = cs.build_panel(str(tmp_path / "panel.txt"), str(best), str(cand), str(tmp_path / "replay"),
+                            crops_path=str(tmp_path / "crops.txt"), seed=9, cached_only=True)
+    assert len(replay["blind"]) == 1
+
     candidate_side = {}
     for stem, row in key["rows"].items():
         assert {row["A"], row["B"]} == {"best", "candidate"}
@@ -66,3 +70,50 @@ def test_panel_sheets_are_blind_and_the_key_scores_verdicts(tmp_path):
     (out / "verdicts.txt").write_text(
         f"# blind\none {candidate_side['one']} deeper blacks\ntwo {other} flatter\nthree = no visible change\n")
     assert cs.tally(str(out / "verdicts.txt")) == {"Better": 1, "Worse": 1, "Same": 1}
+
+
+def test_reference_distances_use_aligned_cells_and_the_same_region_masks():
+    cs = _module()
+    original = PILImage.new("RGB",(120,120),(120,120,120))
+    shifted = original.copy()
+    shifted.paste((40,65,120),(0,0,60,120))
+    mask = np.zeros((240,240),dtype=bool)
+    mask[:,:120]=True
+    exact = cs.reference_distance(original,original,{"left":mask})
+    worse = cs.reference_distance(shifted,original,{"left":mask,"right":~mask})
+    assert exact["cells_ev"]==0 and exact["hue_degrees"] is None
+    assert worse["cells_ev"]>0 and worse["chroma"]>0
+    assert worse["regions_ev"]["left"] > 0 and worse["regions_ev"]["right"] == 0
+    assert not cs.reference_distance(original.resize((200,60)),original)["comparable"]
+
+
+def test_overlapping_render_workers_publish_one_complete_cache_entry(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import argparse
+    import time
+    from unittest.mock import patch
+    import pytest
+    from PIL import Image
+
+    cs = _module()
+    src = tmp_path / "one.png"
+    Image.new("RGB", (60, 40), "teal").save(src)
+    config = pathlib.Path(__file__).resolve().parents[1] / "src/autoedit/configs"
+    pipe = cs.Pipeline.build(cs.load_run_config(argparse.Namespace(configs_dir=str(config), backend="stub")))
+    real = pipe.process_one
+    runs = []
+
+    def slower(*args, **kw):
+        runs.append(1)
+        time.sleep(.04)
+        return real(*args, **kw)
+
+    cache = tmp_path / "cache"
+    with patch.object(cs.emit, "write_sidecar", side_effect=OSError("interrupted")):
+        with pytest.raises(OSError, match="interrupted"):
+            cs._render(pipe, str(src), str(cache))
+    assert not list(cache.glob("*.jpg")) and not list(cache.glob("*.npz"))
+    with patch.object(pipe, "process_one", side_effect=slower), ThreadPoolExecutor(max_workers=2) as pool:
+        results = [pool.submit(cs._render, pipe, str(src), str(cache)) for _ in range(2)]
+        assert all(pathlib.Path(result.result()[0]).is_file() for result in results)
+    assert len(runs) == 1 and len(list(cache.glob("*.autoedit.json"))) == 1

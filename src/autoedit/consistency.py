@@ -428,7 +428,10 @@ def colour_report(sidecars: list[str], min_confidence: float) -> dict:
             with open(path) as fh:
                 s = json.load(fh)
             name = s["image"]
-            key = (s.get("batch_group") or "all") + (" raw" if is_raw(name) else "")
+            decode = (s.get("audit") or {}).get("decode_info") or {}
+            camera = (decode.get("decoder") == "rawpy/libraw" if name.lower().endswith((".tif", ".tiff"))
+                      else is_raw(name))
+            key = (s.get("batch_group") or "all") + (" raw" if camera else "")
             pe = s.get("post_edit_stats") or {}
             groups.setdefault(key, []).append({
                 "name": name, "lab": ((s.get("audit") or {}).get("subject_colour") or {}).get("lab"),

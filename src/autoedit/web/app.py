@@ -16,13 +16,15 @@ APP_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'se
            "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
-def create_app(configs_dir: str = "configs", local_only: bool = True, profile: str | None = None):
+def create_app(configs_dir: str | None = None, local_only: bool = True, profile: str | None = None):
     from urllib.parse import urlparse
 
     from fastapi import APIRouter, Body, FastAPI, Request, Response
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+    from .. import paths
+    configs_dir = configs_dir or paths.configs_dir()
     app = FastAPI(title="AutoEdit")
     api = APIRouter()
     static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -105,6 +107,13 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         return Response(_page(os.path.join("app", name)), media_type=kind + "; charset=utf-8",
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
+    @api.get("/local-styles")
+    def local_styles(candidates: bool = False):
+        from .. import paths
+        from ..styles import load_styles, local_catalog
+        return guard(lambda: {"styles": local_catalog(load_styles(
+            paths.config_paths(configs_dir, profile)["styles_path"]), candidates)})
+
     @api.get("/styles")
     def styles():
         return guard(lambda: service.list_styles(configs_dir, profile))
@@ -182,7 +191,7 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
         from . import projects
         def go():
             _require(payload, "dir", "project")
-            projects.save(payload["dir"], payload["project"], profile)
+            projects.save(payload["dir"], payload["project"], profile, manual_expected=payload.get("manual_expected"))
             return {"saved": True}
         return guard(go)
 
@@ -228,6 +237,14 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
             return service.detail(path, payload, configs_dir, profile=profile)
         return guard(go)
 
+    @api.get("/ai-edits")
+    def ai_edits():
+        from . import assist
+        from .ai_styles import catalog
+        return guard(lambda: {"styles": catalog(),
+                              "remaining_calls": assist._CLIENT.budget.status()["remaining_calls"],
+                              "has_server_key": bool(os.environ.get("GEMINI_API_KEY"))})
+
     @api.post("/assist")
     def assistant_suggestion(payload: dict = Body(...)):
         from . import assist
@@ -256,10 +273,11 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     @api.post("/run-one")
     def run_one(payload: dict = Body(...)):
         def go():
+            from .editor_files import default_export_path
             file = payload.get("file")
             if not file:
                 raise ValueError("file is required")
-            out_dir = payload.get("out_dir") or os.path.join(os.path.dirname(file), "AutoEdit Exports")
+            out_dir = payload.get("out_dir") or default_export_path(file)
             service.ensure_allowed(file, out_dir)
             return service.run_one(file, out_dir, payload, configs_dir, profile)
         return guard(go)
@@ -438,6 +456,8 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
 
     from . import lightcraft
     lightcraft.register(app, api, guard)
+    from . import editor_routes
+    editor_routes.register(api, guard, configs_dir, profile)
     app.include_router(api, prefix="/api/v1")
     return app
 

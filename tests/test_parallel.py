@@ -69,6 +69,7 @@ def test_steps_list_every_op_once():
 
 def test_a_bundle_can_be_cut_between_any_two_steps():
     bundle = {"temp": 12.0, "tint": -8.0, "exposure": 0.4, "highlight_rolloff": 30.0, "highlight_detail": 60.0, "shadows_ev": 0.5,
+              "burn_ev": 0.35,
               "highlights": -20.0, "shadows": 25.0, "whites": 10.0, "blacks": -10.0, "contrast": 15.0,
               "curve": 20.0, "dehaze": 15.0, "clarity": 25.0, "black_point": 60.0, "white_point": 40.0, "vibrance": 20.0, "saturation": 10.0,
               "hsl_skin_sat": 10.0, "hsl_green_sat": -15.0, "hsl_green_lum": 10.0, "hsl_blue_sat": 20.0,

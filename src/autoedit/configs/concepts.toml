@@ -139,3 +139,12 @@ rule_region = "sky"
 # sky may deepen/dehaze but never drift green/cyan or get a hue cast
 forbidden = ["hsl_green_sat", "hsl_green_lum", "hsl_skin_sat", "grade_shadows_temp", "grade_highlights_temp"]
 max = { saturation = 12, dehaze = 16, hsl_blue_sat = 12, contrast = 10, temp = 4 }
+
+[concept.lights]
+priority = 95
+min_score = 0.45
+min_coverage = 0.00015
+feather_px = 0.0015
+rule_region = "lights"
+words = ["lamp", "street light", "lit window"]
+forbidden = ["temp", "tint", "saturation", "vibrance"]

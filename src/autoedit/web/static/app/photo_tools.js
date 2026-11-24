@@ -2,13 +2,13 @@
 import { el, api, state, nice, openSheet, toast } from './main.js';
 import { getPhoto, updatePhoto } from './project.js';
 import { changesPanel, checkStepCapacity, selectedChanges } from './edit_steps.js';
-import { assistantOptions, setAssistantConsent } from './settings.js';
+import { assistantOptions, setAssistantConsent, setAssistantKey } from './settings.js';
 
 const IMAGE = /^data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/;
 const round = n => Math.round(n * 10000) / 10000;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const button = (label, click, attrs = {}) => el('button', { type: 'button', ...attrs, on: { click } }, label);
-const valueText = (op, value) => value === 0 ? 'No added change' : (value > 0 ? '+' : '') + Number(value.toFixed(2)) + (op === 'exposure' ? ' EV' : '');
+const valueText = (op, value) => value === 0 ? 'No added change' : (value > 0 ? '+' : '') + Number(value.toFixed(2)) + (['exposure','shadows_ev','burn_ev'].includes(op) ? ' EV' : '');
 
 export function createPhotoTools({ path, frame, displayImage, request, alive, onMode, refresh }) {
   let mode = 'none', selected = '', finding = '', answer = null, definitions = [], objects = [], decoded = new Map();
@@ -47,6 +47,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
     if (!selection.hidden && object && IMAGE.test(object.alpha || '')) {
       selection.style.maskImage = selection.style.webkitMaskImage = 'url("' + object.alpha + '")';
     } else selection.hidden = true;
+    frame.classList.toggle('mask-only', !!ui.maskOnly?.checked && !selection.hidden);
     paintCrop();
   }
   function choose(name) {
@@ -73,10 +74,14 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       else note('Finding ' + name + ' in this photo…');
       refresh();
     } } }, el('label', { htmlFor: 'find_object' }, 'Find an object'), el('div', { class: 'editor-find-row' }, ui.objectName, el('button', { type: 'submit', class: 'line' }, 'Find')));
+    ui.draw = button('Draw an oval selection', () => {
+      setMode('mark'); note('Drag across the area, then describe the change below the photo.');
+    }, {class:'line', hidden:true});
     ui.objectList = el('div', { class: 'editor-object-list', role: 'group', 'aria-label': 'Detected objects' });
     ui.select = button('Choose in photo', () => setMode(mode === 'select' ? 'none' : 'select'), { class: 'line', 'aria-pressed': 'false' });
     ui.add = button('Add to selection', () => setMode('add'), { class: 'line', disabled: true, 'aria-pressed': 'false' });
     ui.subtract = button('Subtract', () => setMode('subtract'), { class: 'line', disabled: true, 'aria-pressed': 'false' });
+    ui.maskOnly = el('input', {type:'checkbox', on:{change:paintSelection}});
     ui.radius = el('input', { type: 'range', min: .002, max: .2, step: .002, value: .035, 'aria-label': 'Brush size' });
     ui.radiusValue = el('output', { class: 'num' }, '3.5%');
     ui.radius.addEventListener('input', () => { ui.radiusValue.textContent = (+ui.radius.value * 100).toFixed(1) + '%'; });
@@ -88,7 +93,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       delete regions[selected]; delete masks[selected]; selected = finding = ''; updatePhoto(path, { region_settings: regions, mask_refinements: masks });
     }, { class: 'link' });
     ui.objectSection = el('details', { class: 'editor-tool' }, el('summary', null, 'Objects & selections'), ui.objectNote, ui.objectModeNote,
-      find, ui.select, ui.objectList, ui.regionTitle, ui.regionSliders,
+      find, ui.select, ui.draw, ui.objectList, el('label', {class:'check'}, ui.maskOnly, 'Mask only'), ui.regionTitle, ui.regionSliders,
       el('div', { class: 'editor-history' }, ui.add, ui.subtract),
       el('div', { class: 'sl' }, el('div', { class: 'row' }, el('span', null, 'Brush size'), ui.radiusValue), ui.radius),
       el('div', { class: 'editor-history' }, reset, button('Done selecting', () => setMode('none'), { class: 'line' })));
@@ -117,7 +122,8 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       class: 'line', 'aria-pressed': String(selected === object.name), disabled: object.found === false,
       title: object.found === false ? 'Not found in this photo' : 'Select ' + nice(object.label || object.name) }));
     const chosen = objects.find(o => o.name === selected);
-    if (selected && chosen?.found === false) note(nice(selected) + ' was not found. No selection was invented. Try a clearer name or use an oval mark.');
+    ui.draw.hidden = !((selected && chosen?.found === false) || !objects.some(o => o.found !== false));
+    if (selected && chosen?.found === false) note(nice(selected) + ' was not found. Try another name or draw an oval selection.');
     else if (selected && chosen?.found !== false && chosen) note(nice(selected) + ' selected. Adjust it or refine its outline.');
     else if (finding) note('Finding ' + finding + ' in this photo…');
     else if (!objects.some(o => o.found !== false)) note('No objects were found. Automatic object selection needs the region finder; whole-photo controls and oval marks still work.');
@@ -352,16 +358,30 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       el('div', { class: 'editor-history' }, apply, dismiss));
   }
   function assistPanel() {
+    const style = el('select', {id:'gemini-brief'}, el('option', {value:'standard'}, 'Standard'));
+    const key = el('input', {id:'gemini-session-key', type:'password', autocomplete:'off',
+      value:assistantOptions().api_key || '', on:{input:e => setAssistantKey(e.target.value)}});
+    let catalogLoaded = false;
+    const catalog = () => {
+      if (catalogLoaded) return;
+      catalogLoaded = true;
+      api('/ai-edits').then(({styles,has_server_key}) => {
+        if (!active()) return;
+        style.replaceChildren(...styles.map(s => el('option', {value:s.id}, s.label)));
+        key.placeholder = has_server_key ? 'Server key available' : 'Gemini API key';
+      }).catch(() => {catalogLoaded = false;});
+    };
+    style.addEventListener('focus', catalog);
     ui.assistPrompt = el('textarea', { id: 'assist_prompt', rows: 3, maxLength: 1200, placeholder: 'e.g. Keep the snow natural and warm the foreground', 'aria-label': 'Describe the edit you want' });
     ui.consent = el('input', { type: 'checkbox', checked: !!assistantOptions().allow_cloud, on: { change: e => setAssistantConsent(e.target.checked) } });
     ui.assistStatus = el('p', { class: 'fine', role: 'status' }); ui.proposal = el('div', { class: 'editor-proposal' });
     ui.ask = button('Suggest changes', async () => {
-      const prompt = ui.assistPrompt.value.trim(); if (!prompt) { ui.assistStatus.textContent = 'Describe what you want to change first.'; ui.assistPrompt.focus(); return; }
+      const prompt = ui.assistPrompt.value.trim();
       if (!ui.consent.checked) { ui.assistStatus.textContent = 'Allow the small preview to be sent before asking Gemini. Local controls remain available.'; return; }
       if (assistController) assistController.abort(); const controller = assistController = new AbortController();
       const settings = assistantOptions(), start = photoSignature(); ui.ask.disabled = true; ui.assistStatus.textContent = 'Asking Gemini for proposed adjustments…'; proposal = null; appliedSuggestion = null; ui.proposal.replaceChildren();
       try {
-        const j = await api('/assist', { ...request(), assist_prompt: prompt, allow_cloud: true,
+        const j = await api('/assist', { ...request(), assist_prompt: prompt, assist_style:style.value || 'standard', allow_cloud: true,
           ...(settings.api_key ? { gemini_api_key: settings.api_key } : {}) }, { signal: controller.signal });
         if (!active() || controller !== assistController) return;
         if (j.status !== 'ok' || !j.proposal) { ui.assistStatus.textContent = j.message || 'Gemini could not suggest changes. Your local edit is unchanged.'; return; }
@@ -371,8 +391,10 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       } catch (e) { if (e.name !== 'AbortError' && active() && controller === assistController) ui.assistStatus.textContent = e.message; }
       finally { if (active() && controller === assistController) ui.ask.disabled = false; }
     }, { class: 'line' });
-    return el('details', { class: 'editor-tool' }, el('summary', null, 'Ask Gemini'),
-      ui.assistPrompt, el('label', { class: 'check' }, ui.consent, ' Send a small preview and editing measurements to Gemini'), ui.ask, ui.assistStatus, ui.proposal);
+    return el('details', { class: 'editor-tool', on:{toggle:catalog} }, el('summary', null, 'Ask Gemini'),
+      el('label',{htmlFor:'gemini-brief'},'Photographic brief'), style,
+      el('label',{htmlFor:'assist_prompt'},'Your direction (optional)'), ui.assistPrompt,
+      el('details',null,el('summary',null,'Session key'),el('label',{htmlFor:'gemini-session-key'},'Gemini API key'),key), el('label', { class: 'check' }, ui.consent, ' Send a small preview and editing measurements to Gemini'), ui.ask, ui.assistStatus, ui.proposal);
   }
 
   const panels = [changes.panel, objectPanel(), framingPanel(), assistPanel()];

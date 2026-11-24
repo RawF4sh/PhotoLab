@@ -59,3 +59,7 @@ Open, for the owner to decide:
 
 Not checked: Compare, Ask Gemini, Masking and Export inside the embedded editor, and the desktop
 window.
+
+**Taken up on 2026-11-24.** [F58](F58-editor-sidebar-and-cr2.md) turns the four open points into
+work: exports and browser storage in its M2, RAW files in its M1, and the disagreement between
+plan and build in its decision D7. The feature plan has rows for F57 and F58 since that day.

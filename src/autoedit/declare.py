@@ -17,7 +17,7 @@ STATEMENT = ("AutoEdit adjusts tone, colour, sharpness and geometry. It has no g
 _REPAIRS = {"hot_pixels": "stuck-pixel repair (F31)", "denoise": "noise reduction (F7)",
             "denoise_stars": "noise reduction around stars (F7)"}
 _OWN = ("lut", "grain", "bw") + tuple(_REPAIRS)      # named in their own fields, not in the plain lists
-_EV = ("exposure", "shadows_ev")
+_EV = ("exposure", "shadows_ev", "burn_ev")
 
 
 def _fmt(settings: dict) -> list[str]:
@@ -54,6 +54,12 @@ def _steps(r: Result) -> list[str]:
     for n in r.notes:
         if n.startswith(_NOTE_STEPS) or (n.startswith("palette:") and not n.startswith("palette: none")):
             out.append(n)
+    manual = a.get("manual")
+    if manual:
+        tools = ", ".join(manual.get("spot_tools", []))
+        detail = "; spot tools used: " + tools if tools else ""
+        out.append(f"Manual edit in {manual.get('engine')} {manual.get('version')}; "
+                   f"{manual.get('masks', 0)} masks{detail}. Local safety checks preceded these changes.")
     bd = a.get("backdrop")
     if bd and bd.get("applied"):
         out.append(f"backdrop evened out on {bd['coverage']:.0%} of the frame, taken to {bd['white'] * 255:.0f} of 255 (F34)")
@@ -125,6 +131,7 @@ def declaration(sidecar_path: str) -> dict:
         "black_and_white": g.get("bw") or None,
         "steps": _steps(r),
         "watermark": r.audit.get("watermark"),
+        **({"manual": r.audit["manual"]} if r.audit.get("manual") else {}),
         "repairs": _repairs(g, *(m.ops for m in r.masks), *(m.ops for m in r.composition)),
         "notes": notes,
     }
@@ -169,11 +176,15 @@ def _page(decls: list[dict]) -> str:
         if d["notes"]:
             body += f"<ul>{li(d['notes'])}</ul>"
         out.append(f"<section><h2>{e(d['source'])}</h2>{body}</section>")
+    statement = STATEMENT
+    if any(d.get("manual", {}).get("spot_tools") for d in decls):
+        statement = ("The local AutoEdit pipeline develops the photograph. The photographer also used "
+                     "manual content-editing tools on the photos identified below.")
     mark = f"<p>{e(WATERMARK_NOTE)}</p>" if any(d.get("watermark") for d in decls) else ""
     return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>Edit declaration</title>"
             "<style>body{font:15px sans-serif;max-width:46em;margin:2em auto;padding:0 1em}"
             "section{border-top:1px solid #999;margin-top:1.5em}code,p{overflow-wrap:anywhere}</style></head><body>"
-            f"<h1>Edit declaration</h1><p>{e(STATEMENT)}</p>{mark}{''.join(out)}</body></html>")
+            f"<h1>Edit declaration</h1><p>{e(statement)}</p>{mark}{''.join(out)}</body></html>")
 
 
 def _build(folder: str, out: str | None) -> tuple[str, str, int, int]:
