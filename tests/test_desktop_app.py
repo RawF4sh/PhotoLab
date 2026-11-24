@@ -3,6 +3,7 @@ import sys
 import types
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from autoedit.web import desktop
 
@@ -19,6 +20,16 @@ def _have_server():
 
 def test_free_port():
     assert isinstance(desktop.free_port(), int) and desktop.free_port() > 0
+
+
+def test_desktop_origin_survives_relaunch(tmp_path):
+    with patch.dict('os.environ', {'AUTOEDIT_PROFILE': ''}):
+        assert desktop._profile_port(None) == desktop._DESKTOP_PORT
+        assert desktop._profile_port(str(tmp_path)) == desktop._profile_port(str(tmp_path / '.'))
+        assert desktop._profile_port(str(tmp_path)) != desktop._profile_port(None)
+    with patch.dict('os.environ', {'XDG_CONFIG_HOME': str(tmp_path), 'APPDATA': str(tmp_path)}, clear=True):
+        default = tmp_path / 'autoedit'
+        assert desktop._profile_port(None) == desktop._profile_port(str(default))
 
 
 def test_start_server_answers():
@@ -55,19 +66,22 @@ def test_run_opens_page_and_stops_server():
         return
     calls = []
     fake = types.ModuleType("webview")
-    fake.create_window = lambda *a, **k: calls.append(("window", a, k))
+    fake.settings = {"ALLOW_DOWNLOADS": False}
+    fake.create_window = lambda *a, **k: calls.append(("window", a, k, dict(fake.settings)))
     fake.start = lambda **k: calls.append(("start", k))
     saved = sys.modules.get("webview")
     sys.modules["webview"] = fake
     try:
-        desktop.run(str(ROOT / "configs"), debug=True)
+        with patch.object(desktop, '_profile_port', return_value=0):
+            desktop.run(str(ROOT / "configs"), debug=True)
     finally:
         if saved is None:
             sys.modules.pop("webview", None)
         else:
             sys.modules["webview"] = saved
     assert calls[0][1][1].endswith(desktop.PAGE)
-    assert calls[1] == ("start", {"debug": True})
+    assert calls[0][3] == {"ALLOW_DOWNLOADS": True}     # a recipe's "Export" is a file the page makes (F56)
+    assert calls[1] == ("start", {"debug": True, "private_mode": False})
 
 
 def test_server_thread_stops_after_run_also_when_webview_raises():
@@ -82,7 +96,8 @@ def test_server_thread_stops_after_run_also_when_webview_raises():
         saved = sys.modules.get("webview")
         sys.modules["webview"] = fake
         try:
-            desktop.run(str(ROOT / "configs"))
+            with patch.object(desktop, '_profile_port', return_value=0):
+                desktop.run(str(ROOT / "configs"))
         finally:
             sys.modules.pop("webview", None)
             if saved is not None:

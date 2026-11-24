@@ -1,12 +1,11 @@
 /* Workspace navigation stays compact while selection targets remain easy to hit. */
-.start h1, .start > p { text-align: center; max-width: 42ch; }
+.start h1 { text-align: center; max-width: 42ch; }
 .start-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-3); padding: var(--sp-4); border: 1px dashed transparent; border-radius: var(--r-m); }
 .start-actions.dragging { border-color: var(--accent); background: var(--raised); }
 .start-actions button { min-height: 44px; padding-inline: var(--sp-5); }
 .folder .tools { margin: 0 0 var(--sp-2); }
 .folder .tools button, .folder .tools select { min-height: 40px; }
 .folder .tools label { display: inline-flex; align-items: center; gap: var(--sp-2); min-height: 40px; }
-.selection-hint { display: block; margin-bottom: var(--sp-2); }
 .folder .statusline { margin: 0 0 var(--sp-3); }
 .burst-control { display: flex; align-items: center; gap: var(--sp-2); }
 .cell-name { position: absolute; left: 0; right: 0; bottom: 0; padding: var(--sp-2); color: #fff; font-size: var(--fs-s); background: linear-gradient(transparent, rgb(0 0 0 / .72)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
@@ -14,9 +13,8 @@
 .grid-pages { display: flex; justify-content: center; align-items: center; gap: var(--sp-4); margin-top: var(--sp-5); }
 .grid-pages button { min-height: 44px; }
 .grid-empty { padding: var(--sp-6); color: var(--text-2); text-align: center; }
-.workflow-steps { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-4); width: min(840px, 100%); margin: var(--sp-5) 0; text-align: left; }
-.workflow-steps li { display: flex; align-items: flex-start; gap: var(--sp-2); color: var(--text-2); }
-.workflow-steps small, .readiness-card small, .folder-guide small, .saved-preset small { display: block; line-height: 1.5; }
+.workflow-steps { list-style: none; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--sp-4); margin: var(--sp-3) 0; }
+.workflow-steps li { display: flex; align-items: center; gap: var(--sp-2); color: var(--text-2); }
 .step-number { display: grid; place-items: center; flex: 0 0 26px; height: 26px; border: 1px solid var(--line); border-radius: 50%; font-size: 12px; }
 .workflow-steps .current .step-number { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .readiness-card, .folder-guide { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-m); padding: var(--sp-4); }
@@ -30,17 +28,45 @@
 .assistant-consent { display: flex; align-items: flex-start; gap: var(--sp-2); margin: var(--sp-4) 0; }
 .assistant-consent input { flex: 0 0 auto; margin-top: 3px; }
 .saved-presets { display: grid; gap: var(--sp-2); margin: var(--sp-4) 0; }
-.saved-preset { display: flex; gap: var(--sp-2); }
-.saved-preset > button:first-child { flex: 1; text-align: left; min-height: 56px; white-space: normal; }
-.saved-preset small { font-weight: 400; color: var(--text-2); }
-.preset-save { display: grid; grid-template-columns: 1fr auto; gap: var(--sp-2); }
-.preset-save label { grid-column: 1 / -1; }
+.preset-save { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); margin: var(--sp-3) 0; }
 .preset-save input { min-width: 0; }
+.recipe-save-panel > summary { padding: var(--sp-3) 0; cursor: pointer; font-weight: 600; }
+.recipe-import { display: grid; gap: var(--sp-2); padding: var(--sp-3) 0; }
+.recipe-import input { max-width: 100%; }
 @media (max-width: 719px) {
   .folder .tools { align-items: stretch; }
   .folder .tools .grow { flex-basis: 100%; }
   .grid-pages { gap: var(--sp-2); }
-  .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
+  .workflow-steps { display: grid; grid-template-columns: repeat(2, auto); }
   .readiness-card, .folder-guide { align-items: stretch; flex-direction: column; }
-  .preset-save { grid-template-columns: 1fr; }
 }
+.reopen-folder-path { overflow-wrap: anywhere; }
+
+.recipe-card, .recipe-plan, .recipe-condition { min-width: 0; display: grid; gap: var(--sp-2); padding: var(--sp-2); }
+.recipe-card { border-bottom: 1px solid var(--line); }
+.recipe-status:not(:empty) { margin-bottom: var(--sp-4); }
+.recipe-tests, .recipe-order { display: grid; gap: var(--sp-2); }
+.recipe-test, .recipe-order li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.recipe-test input { width: 8em; }
+.recipe-tile-label { position: absolute; top: var(--sp-2); left: 35px; right: 24px; text-align: center; color: white; background: rgb(0 0 0 / .72); border-radius: var(--r-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+
+.mode-home, .automatic-panel { width: min(100% - 2rem, 44rem); margin-inline: auto; display: grid; align-content: center; gap: 1.5rem; min-height: calc(100vh - var(--bar)); padding-block: 2rem; }
+.mode-home h1, .automatic-panel h1 { font-size: clamp(1.75rem, 4vw, 2.7rem); line-height: 1.12; letter-spacing: -.04em; }
+.mode-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.mode-choice { color: var(--text); background: var(--panel); text-decoration: none; border: 1px solid var(--line); border-radius: var(--r-m); padding: clamp(1rem, 4vw, 2rem); min-height: 10rem; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 1rem; font-size: 1.35rem; font-weight: 600; }
+.mode-choice:hover { border-color: var(--accent); background: var(--raised); }
+.mode-glyph { color: var(--accent); font-size: 2rem; line-height: 1; }
+.manual-glyph { color: var(--text-2); }
+.automatic-panel { max-width: 38rem; align-items: start; justify-items: start; }
+.automatic-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.automatic-panel button { min-height: 44px; }
+.automatic-selection, .automatic-result { display: grid; justify-items: start; gap: .85rem; width: 100%; }
+.automatic-selection h2, .automatic-result h2 { overflow-wrap: anywhere; }
+.automatic-thumbs { display: flex; flex-wrap: wrap; gap: .4rem; }
+.automatic-thumbs img { width: 72px; height: 72px; object-fit: cover; background: var(--raised); border-radius: var(--r-s); }
+.automatic-panel progress { width: min(100%, 22rem); accent-color: var(--accent); }
+.automatic-issues summary { cursor: pointer; padding-block: .5rem; }
+.automatic-issues li { overflow-wrap: anywhere; margin-bottom: .4rem; }
+.automatic-path { color: var(--text-2); overflow-wrap: anywhere; }
+.automatic-message { color: var(--warn); overflow-wrap: anywhere; }
+@media (max-width: 480px) { .mode-choices { grid-template-columns: 1fr; } .mode-choice { min-height: 5.5rem; flex-direction: row; justify-content: flex-start; align-items: center; } }

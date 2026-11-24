@@ -92,7 +92,7 @@ function previewBody() {
   if (t) b.photo_edit = t;
   if (m.length) b.photo_marks = m;
   const own = getPhoto(v.file.path), sliders = v.draftSliders || (own.sliders === undefined ? state.folderSliders : own.sliders);
-  for (const key of ['region_settings', 'mask_refinements', 'photo_geometry']) if (own[key] !== undefined) b[key] = own[key];
+  for (const key of ['region_settings', 'mask_refinements', 'photo_geometry', 'edit_steps']) if (own[key] !== undefined) b[key] = own[key];
   if (own.base) b.photo_base = own.base;
   if (sliders && Object.keys(sliders).length) b.photo_settings = { ...sliders };
   return b;
@@ -108,7 +108,7 @@ const SHOW = {
   try: j => { v.tried = j; if (v.view === 'try') paintTry(); },
 };
 async function once(kind) {   // cancel obsolete client work; never paint a response for an old edit/photo
-  if (!v) return;
+  if (!v || !v.editing) return;
   const me = v, f = me.flights[kind] ||= {}, body = BODIES[kind](), key = JSON.stringify(body);
   if ((key === f.shown && key === f.painted && !f.busy) || (f.busy && key === f.key)) return;
   if (f.controller) f.controller.abort();
@@ -132,7 +132,7 @@ async function once(kind) {   // cancel obsolete client work; never paint a resp
     if (v === me) setBusy(-1);
   }
 }
-function refresh() { if (!v) return; once(v.view); if (v.masks && v.view !== 'how') once('how'); }
+function refresh() { if (!v?.editing) return; once(v.view); if (v.masks && v.view !== 'how') once('how'); }
 function schedulePreview() { clearTimeout(v.previewTimer); v.previewTimer = setTimeout(refresh, 160); }
 const curAnswer = () => v[{ edit: 'answer', how: 'how', try: 'tried' }[v.view]];
 
@@ -177,19 +177,24 @@ function fit() {
   frame.style.width = Math.max(1, Math.floor(w * s)) + 'px'; frame.style.height = Math.max(1, Math.floor(h * s)) + 'px';
 }
 function setImg(img, s) { const p = pic(s); if (p) img.src = p; }
-function setThumbs() { const t = thumbUrl(v.file.thumb, 1600); v.u.before.src = t; v.u.after.src = t; }
+function setThumbs() { const t = thumbUrl(v.file.path, 1600); v.u.before.src = t; v.u.after.src = t; }
 function showing() {
   const engine = v.view === 'try' && v.compare && v.which === 'engine' && v.tried && v.tried.compare;
-  const s = v.hold ? 'before' : engine ? 'engine' : 'after', u = v.u;
+  const s = !v.editing || v.hold ? 'before' : engine ? 'engine' : 'after', u = v.u;
+  const split = v.split && s === 'after' && !!curAnswer();
   u.frame.dataset.showing = s;
-  u.frame.classList.toggle('split', v.split && !v.hold && !engine);
+  u.frame.classList.toggle('split', split);
   u.frame.style.setProperty('--split', v.splitAt + '%');
-  if (u.splitControl) u.splitControl.hidden = !v.split;
-  u.tag.hidden = s === 'after';
+  u.splitControl.hidden = !split;
+  u.splitControl.setAttribute('aria-valuenow', v.splitAt);
+  u.splitControl.setAttribute('aria-valuetext', v.splitAt + '% before, ' + (100 - v.splitAt) + '% after');
+  u.split.setAttribute('aria-pressed', String(v.split));
+  u.split.disabled = !curAnswer() || !!engine;
+  u.tag.hidden = !v.editing || s === 'after';
   u.tag.textContent = s === 'before' ? (v.view === 'how' ? 'Before this step' : 'Original') : "AutoEdit's edit";
   u.orig.setAttribute('aria-pressed', String(v.hold));
 }
-function setHold(on) { if (!v || v.hold === on) return; v.hold = on; showing(); }
+function setHold(on) { if (!v?.editing || v.hold === on) return; v.hold = on; showing(); }
 function tint(list, color) {
   const t = v.u.tint; t.replaceChildren();
   (list || []).forEach(o => {
@@ -245,14 +250,27 @@ function setPicking(on) {
   v.u.frame.classList.toggle('marking', v.marking || v.picking);
 }
 function wireFrame() {   // drag draws an oval while marking; otherwise holding the photo shows the original
-  const f = v.u.frame; let a = null, pan = null;
+  const f = v.u.frame, handle = v.u.splitControl; let a = null, pan = null, splitPointer = null;
   const pt = e => {
     const r = f.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0)) return null;
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
   };
   const boxOf = (p, q) => [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
+  const moveSplit = e => { const p = pt(e); if (p) { v.splitAt = Math.round(p[0] * 100); showing(); } };
+  handle.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 10 : 1;
+    const value = { ArrowLeft: v.splitAt - step, ArrowRight: v.splitAt + step,
+      ArrowDown: v.splitAt - step, ArrowUp: v.splitAt + step, PageDown: v.splitAt - 10,
+      PageUp: v.splitAt + 10, Home: 0, End: 100 }[e.key];
+    if (value === undefined) return;
+    e.preventDefault(); e.stopPropagation(); v.splitAt = Math.max(0, Math.min(100, value)); showing();
+  });
   f.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.isPrimary === false) return;
+    if (!handle.hidden && (!v.zoom || handle.contains(e.target))) {
+      splitPointer = e.pointerId; f.setPointerCapture(e.pointerId); handle.focus({ preventScroll: true });
+      e.preventDefault(); moveSplit(e); return;
+    }
     if ((v.marking || v.picking) && v.tools && !v.tools.ready) { e.preventDefault(); say('Opening the uncropped photo. Place your mark when it is ready.'); return; }
     if (v.picking) {
       const p = pt(e); if (p) { e.preventDefault(); setNeutral(p.map(n => Math.round(n * 1e4) / 1e4)); setPicking(false); }
@@ -270,16 +288,19 @@ function wireFrame() {   // drag draws an oval while marking; otherwise holding 
     try { f.setPointerCapture(e.pointerId); } catch (_) { /* a synthetic pointer */ }
   });
   f.addEventListener('pointermove', e => {
+    if (splitPointer === e.pointerId) { moveSplit(e); return; }
     if (pan) { v.u.canvas.scrollLeft = pan.left + pan.x - e.clientX; v.u.canvas.scrollTop = pan.top + pan.y - e.clientY; return; }
     if (!a) return; const q = pt(e); if (!q) return;
     placeOval(v.u.pend, boxOf(a, q)); v.u.pend.hidden = false;
   });
   f.addEventListener('pointerup', e => {
+    if (splitPointer === e.pointerId) { moveSplit(e); splitPointer = null; return; }
     pan = null; setHold(false); if (!a) return;
     const q = pt(e) || a, box = boxOf(a, q).map(n => Math.round(n * 1e4) / 1e4); a = null;
     if (box[2] - box[0] < MIN_SIDE || box[3] - box[1] < MIN_SIDE) clearPending(); else setPending(box);
   });
-  f.addEventListener('pointercancel', () => { pan = null; setHold(false); if (a) { a = null; clearPending(); } });
+  f.addEventListener('lostpointercapture', e => { if (splitPointer === e.pointerId) splitPointer = null; });
+  f.addEventListener('pointercancel', () => { splitPointer = null; pan = null; setHold(false); if (a) { a = null; clearPending(); } });
   f.addEventListener('pointerleave', () => { if (!a) setHold(false); });
   f.addEventListener('keydown', e => {   // with Mark on: Enter places an oval, arrows move it, Shift + arrows resize it, Enter confirms
     if (!v.marking || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -515,7 +536,17 @@ function paintCompare(c) {
 }
 
 /* ---- save ------------------------------------------------------------------------------------ */
+async function openInEditor(edited) {
+  const me = v, path = edited ? me.file.exported : me.file.path;
+  if (!path || (edited && me.file.dirty)) return;
+  try {
+    if (await persistProject() === false || v !== me || (edited && me.file.dirty)) return;
+    sessionStorage.setItem('autoedit.editor.open', path);
+    location.assign('/editor/');
+  } catch (error) { toast('Could not open the photo editor. ' + error.message); }
+}
 async function save() {
+  if (!v?.editing) return;
   if (v.draftSliders) { const sliders = Object.fromEntries(Object.entries(v.draftSliders).filter(([, value]) => value)); v.draftSliders = null; updatePhoto(v.file.path, { sliders }); }
   const me = v, b = previewBody(), u = me.u, savedState = JSON.stringify({ photo: getPhoto(v.file.path), run: runOptions() }); if (u.save.disabled) return;
   u.save.disabled = true; u.saved.className = 'fine'; u.saved.textContent = 'Saving…'; u.saved.removeAttribute('title');
@@ -533,7 +564,12 @@ async function save() {
 /* ---- copy to similar ------------------------------------------------------------------------- */
 // The sync tool reads the exported file's sidecar, so it needs this photo saved first. It holds the server's slow-job lock,
 // so nothing runs until the button is pressed: the first press counts the similar photos, the Copy it offers does the copy.
-function copyState() { const c = v.u.copy, ok = !!v.file.exported && !v.file.dirty; c.disabled = !ok; c.title = ok ? '' : 'Save this photo’s current changes first'; }
+function copyState() {
+  const ready = !!v.file.exported && !v.file.dirty;
+  for (const button of [v.u.copy, v.u.openEdited]) {
+    button.disabled = !ready; button.title = ready ? '' : 'Save this photo’s current changes first';
+  }
+}
 async function copyAsk() {
   const me = v, u = me.u, target = me.file.exported; if (!target || me.file.dirty) return;
   u.copy.disabled = true; u.copyRes.textContent = 'Looking for similar photos…';
@@ -574,7 +610,7 @@ const photoSignature = value => JSON.stringify(photoValues(value));
 const exportSidecar = path => String(path || '').replace(/\.[^./\\]+$/, '.autoedit.json');
 function copiedPatch(result, previous) {
   return { base: { adjustments: (result.adjustments || []).filter(a => a.scope === 'photo' && !String(a.target).startsWith('mark:')),
-    selected_regions: result.selected_regions || [], exposure_bias: result.exposure_bias || 0, wb: result.wb || null, wb_bias: result.wb_bias || [0, 0] }, sliders: {}, region_settings: {},
+    selected_regions: result.selected_regions || [], exposure_bias: result.exposure_bias || 0, wb: result.wb || null, wb_bias: result.wb_bias || [0, 0] }, sliders: {}, region_settings: {}, edit_steps: undefined,
     entries: (previous.entries || []).filter(okMark), neutral: undefined };
 }
 const copiedFile = result => ({ dirty: false, status: result.needs_review ? 'review' : 'finished', ...(result.image ? { out: result.image } : {}) });
@@ -642,7 +678,6 @@ function syncEditControls() {
   if (u.strength) { u.strength.value = p.intensity === undefined ? (state.strength === null ? u.defaultStrength : state.strength) : p.intensity; u.paintStrength(); }
   for (const [op, c] of Object.entries(u.manualInputs || {})) { c.input.value = (p.sliders === undefined ? state.folderSliders || {} : p.sliders)[op] || 0; c.paint(); }
   if (u.copiedChip) u.copiedChip.hidden = !p.base;
-  if (u.manualNote) u.manualNote.textContent = p.base ? 'Additional adjustments to the copied edit. These are included when you save or edit the batch.' : 'Adjustments to AutoEdit’s result. These are included when you save or edit the batch.';
   if (u.undo) u.undo.disabled = !canUndo(v.file.path);
   if (u.redo) u.redo.disabled = !canRedo(v.file.path);
   const ref = options().reference;
@@ -676,7 +711,7 @@ function historyMove(redo = false) { if (redo ? redoPhoto(v.file.path) : undoPho
 function resetPhoto() {
   updatePhoto(v.file.path, { look: undefined, intensity: undefined, neutral: undefined, reference: undefined,
     reference_strength: undefined, base: undefined, sliders: undefined, entries: [], hide: undefined, hideMethod: undefined,
-    region_settings: undefined, mask_refinements: undefined, photo_geometry: undefined, local_only: undefined });
+    edit_steps: undefined, region_settings: undefined, mask_refinements: undefined, photo_geometry: undefined, local_only: undefined });
 }
 function chooseLooks() {
   const me = v, names = [...me.u.look.options].map(o => o.value).filter(Boolean); if (!names.length) return;
@@ -749,7 +784,6 @@ function editPanel() {
   }).catch(e => toast('Settings could not be read: ' + e.message));
   u.copiedChip = el('div', { class: 'pchip', hidden: true }, el('div', { class: 'row' }, el('span', { class: 'txt' }, 'Copied adjustments'),
     button('Reset copied', () => updatePhoto(path, { base: undefined }), { class: 'link', title: 'Remove the copied adjustments. Undo restores them.' })));
-  u.manualNote = el('p', { class: 'fine' });
   u.manual = el('div', { class: 'sliders' }, el('p', { class: 'fine' }, 'Adjustments appear when the preview is ready.'));
   u.undo = button('Undo', () => historyMove(), { class: 'line', disabled: true, title: 'Undo photo change (Ctrl/Cmd + Z)' });
   u.redo = button('Redo', () => historyMove(true), { class: 'line', disabled: true, title: 'Redo photo change (Ctrl/Cmd + Shift + Z)' });
@@ -782,14 +816,18 @@ function editPanel() {
   u.review = el('div', { class: 'field', hidden: !store.get('labels', false) }, el('h3', null, 'Is this edit good?'), el('div', { class: 'btnrow' }, ...both));
   return el('div', { class: 'panel' },
     history,
-    button('My presets', () => openPhotoPresets({
-      getOptions: () => ({ look: options().look || '', intensity: options().intensity === undefined ? u.defaultStrength : options().intensity,
-        sliders: getPhoto(path).sliders === undefined ? state.folderSliders || {} : getPhoto(path).sliders }),
-      onApply: settings => { if (v === u.owner) updatePhoto(path, settings); },
+    button('Recipes', () => openPhotoPresets({
+      file: v.file,
+      getOptions: () => ({ look: options().look || '', intensity: options().intensity ?? u.defaultStrength }),
+      getOffsets: () => {
+        const own = getPhoto(path);
+        return { photo_settings: own.sliders ?? state.folderSliders ?? {}, region_settings: own.region_settings || {},
+          edit_steps: own.edit_steps || [] };
+      },
     }), { class: 'line' }),
     el('div', { class: 'field' }, el('label', { htmlFor: 'look' }, 'Look'), lookSel, button('Compare looks…', chooseLooks, { class: 'line' })),
     el('div', { class: 'field' }, el('div', { class: 'row' }, el('label', { htmlFor: 'strength' }, 'Strength'), out, reset), range),
-    el('div', { class: 'field' }, el('h3', null, 'Adjust this photo'), u.copiedChip, u.manualNote, u.manual),
+    el('details', { class: 'editor-tool' }, el('summary', null, 'Whole photo adjustments'), u.copiedChip, u.manual),
     el('div', { class: 'field' }, u.grey, u.greyChip), referencePanel(),
     ...v.tools.panels,
     u.changes, u.probs, u.check,
@@ -797,7 +835,8 @@ function editPanel() {
     el('div', { class: 'field' }, nav('How it was done', 'how'), nav('Try it yourself', 'try'),
       el('label', { class: 'check' }, u.masksBox, ' Masks')),
     u.review,
-    el('div', { class: 'field' }, u.save, u.saved));
+    el('div', { class: 'field' }, u.save, u.saved,
+      u.openEdited = button('Open saved copy in Photo editor', () => openInEditor(true), { class: 'line', disabled: true })));
 }
 function howPanel() {
   const u = v.u;
@@ -831,27 +870,33 @@ function filmstrip() {
   const start = Math.max(0, v.index - 12), end = Math.min(state.files.length, v.index + 13);
   for (let i = start; i < end; i++) {
     const f = state.files[i], active = i === v.index;
-    strip.append(button('', () => { state.reviewQueue = false; go('photo', { index: i }); }, { title: f.name + (f.status === 'review' ? ' · needs review' : ''),
+    strip.append(button('', () => { state.reviewQueue = false; go('photo', { index: i }); }, { title: f.name + (f.recipeReview ? ' · ' + f.recipeReview : f.status === 'review' ? ' · needs review' : ''),
       'aria-label': 'Open ' + f.name, 'aria-current': active ? 'true' : undefined, data: { status: f.status || '' } }));
     strip.lastChild.append(el('img', { src: thumbUrl(f.thumb, 160), alt: '', loading: 'lazy' }), el('span', null, f.name));
   }
   return strip;
 }
-function compareTools() {
+function compareTools(begin) {
   const u = v.u;
-  u.split = button('Split comparison', () => { v.split = !v.split; u.split.setAttribute('aria-pressed', String(v.split)); showing(); }, { class: 'line', 'aria-pressed': 'false' });
-  u.splitControl = el('input', { type: 'range', min: 0, max: 100, step: 1, value: 50, hidden: true, 'aria-label': 'Before and after split position',
-    on: { input: e => { v.splitAt = +e.target.value; showing(); } } });
+  u.begin = button(v.file.dirty || v.file.exported || canUndo(v.file.path) ? 'Resume guided edit' : 'Preview AutoEdit', begin, { class: 'primary' });
+  u.split = button('Before / after', () => {
+    if (!v.split && v.tools.mode !== 'none') v.tools.setMode('none');
+    setHold(false); v.split = !v.split; showing();
+    if (v.split) u.splitControl.focus({ preventScroll: true });
+  }, { class: 'line', disabled: true, 'aria-pressed': 'false' });
   u.zoom = button('100% preview', () => {
     v.zoom = !v.zoom; u.zoom.textContent = v.zoom ? 'Fit photo' : '100% preview'; u.zoom.setAttribute('aria-pressed', String(v.zoom)); fit();
     if (v.zoom) { u.canvas.scrollLeft = (u.canvas.scrollWidth - u.canvas.clientWidth) / 2; u.canvas.scrollTop = (u.canvas.scrollHeight - u.canvas.clientHeight) / 2; }
   }, { class: 'line', 'aria-pressed': 'false', title: 'Inspect preview pixels. Drag to pan, or use the scrollbars.' });
-  return el('div', { class: 'editor-compare' }, u.split, u.splitControl, u.zoom, v.tools.detailButton());
+  u.editActions = el('div', { class: 'editor-action-group', hidden: true }, u.split,
+    button('Targeted edits', () => { if (v.view !== 'edit') setView('edit'); v.tools.openObjects(); }, { class: 'line' }));
+  return el('div', { class: 'editor-compare' }, u.begin, u.editActions, u.zoom,
+    button('Open original in Photo editor', () => openInEditor(false), { class: 'line' }));
 }
 
 /* ---- the screen ------------------------------------------------------------------------------ */
 const neighbourIndex = d => {
-  for (let i = v.index + d; i >= 0 && i < state.files.length; i += d) if (!state.reviewQueue || ['review', 'failed'].includes(state.files[i].status)) return i;
+  for (let i = v.index + d; i >= 0 && i < state.files.length; i += d) if (!state.reviewQueue || state.files[i].recipeReview || ['review', 'failed'].includes(state.files[i].status)) return i;
   return -1;
 };
 const neighbour = d => { const i = neighbourIndex(d); if (i >= 0) go('photo', { index: i }); };
@@ -863,12 +908,12 @@ export const screen = {
       setBar(backButton('Folder', 'folder'), el('span', { class: 'grow' }), gearButton());
       root.append(el('p', { class: 'fine pv-gone' }, 'That photo is not in this folder.')); return;
     }
-    const u = {}, me = v = { index, file, u, view: 'edit', list: loadEntries(file.path), flights: {}, answer: null, how: null, tried: null,
+    const u = {}, me = v = { index, file, u, editing: false, view: 'edit', list: [], flights: {}, answer: null, how: null, tried: null,
       step: 0, sliders: {}, compare: false, which: 'yours', hold: false, marking: false, picking: false, pending: null, masks: false,
-      busy: 0, scene: '', busyTimer: 0, busyFrom: 0, timer: 0, previewTimer: 0, draftSliders: null, unframed: false, split: false, splitAt: 50, zoom: false };
+      busy: 0, scene: '', busyTimer: 0, busyFrom: 0, previewTimer: 0, draftSliders: null, unframed: false, split: false, splitAt: 50, zoom: false };
     u.owner = me;
     u.title = el('span', { class: 'title' });
-    u.orig = el('button', { type: 'button', 'aria-pressed': 'false', title: 'Hold B to see the original', on: { click: () => setHold(!v.hold) } }, 'Original');
+    u.orig = el('button', { type: 'button', hidden: true, 'aria-pressed': 'false', title: 'Hold B to see the original', on: { click: () => setHold(!v.hold) } }, 'Original');
     setBar(backButton('Folder', 'folder'), u.title, el('span', { class: 'grow' }),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Previous photo to review' : 'Previous photo', disabled: neighbourIndex(-1) < 0, on: { click: () => neighbour(-1) } }, '‹'),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Next photo to review' : 'Next photo', disabled: neighbourIndex(1) < 0, on: { click: () => neighbour(1) } }, '›'),
@@ -881,9 +926,12 @@ export const screen = {
     u.ghost = el('div', { class: 'oval', hidden: true }); u.pend = el('div', { class: 'oval pend', hidden: true });
     u.greyDot = el('div', { class: 'pv-grey', hidden: true }); u.secs = el('span', { 'aria-hidden': 'true' });
     u.tag = el('div', { class: 'pv-tag', hidden: true });
-    u.frame = el('div', { class: 'pv-frame', role: 'img', tabIndex: 0, 'aria-label': 'Photo. Hold B to see the original. With Mark on, Enter places an oval.', data: { showing: 'after' } },
+    u.splitControl = el('div', { class: 'editor-split-line', role: 'slider', tabIndex: 0, hidden: true,
+      'aria-label': 'Before and after divider', 'aria-orientation': 'horizontal', 'aria-valuemin': 0, 'aria-valuemax': 100,
+      title: 'Drag to compare, or use the arrow keys' }, el('span', { 'aria-hidden': 'true' }, '‹ ›'));
+    u.frame = el('div', { class: 'pv-frame', role: 'group', tabIndex: 0, 'aria-label': 'Original photo', data: { showing: 'before' } },
       u.before, u.after, u.engine, u.tint, el('div', { class: 'pv-ovals' }, u.ghost, u.pend, u.greyDot), u.tag,
-      el('div', { class: 'editor-split-line', 'aria-hidden': 'true' }), el('div', { class: 'editor-split-labels', 'aria-hidden': 'true' }, el('span', null, 'Original'), el('span', null, 'Edited')));
+      u.splitControl, el('div', { class: 'editor-split-labels', 'aria-hidden': 'true' }, el('span', null, 'Before'), el('span', null, 'After')));
     u.canvas = el('div', { class: 'pv-canvas' }, u.frame);
     u.status = el('div', { class: 'pv-status', role: 'status' });
     u.mark = el('button', { type: 'button', class: 'line', 'aria-pressed': 'false', title: 'Draw an oval, then say what changes in it (M)',
@@ -894,46 +942,57 @@ export const screen = {
       u.whichYours = button('Yours', () => { v.which = 'yours'; syncWhich(); showing(); }, { 'aria-pressed': 'true' }),
       u.whichEngine = button("AutoEdit's", () => { v.which = 'engine'; syncWhich(); showing(); }, { 'aria-pressed': 'false' }));
     const form = el('form', { class: 'pv-say', on: { submit: submitSay } }, u.mark, u.markTag, u.say);
-    me.tools = createPhotoTools({ path: file.path, frame: u.frame, displayImage: u.after, request: previewBody, alive: () => v === me, refresh: schedulePreview,
-      onMode: (mode, unframed) => {
-        me.marking = mode === 'mark'; me.picking = mode === 'neutral';
-        u.mark.setAttribute('aria-pressed', String(me.marking)); if (u.grey) u.grey.setAttribute('aria-pressed', String(me.picking));
-        u.frame.classList.toggle('marking', me.marking || me.picking);
-        if (!me.marking) clearPending();
-        if (me.unframed !== unframed) { me.unframed = unframed; schedulePreview(); }
-      },
-    });
-    u.panels = { edit: editPanel(), how: howPanel(), try: tryPanel() };
-    root.append(el('div', { class: 'pv' },
-      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas), compareTools(),
-        el('div', { class: 'pv-under' }, me.tools.sourceNote, el('div', { class: 'pv-line' }, u.status, u.which), form), u.strip = filmstrip()),
-      el('aside', { class: 'side pv-side', 'aria-label': 'Edit this photo' }, u.panels.edit, u.panels.how, u.panels.try)));
-
-    wireFrame(); setThumbs(); drawChips(); showing(); paintNeutral(); copyState(); syncEditControls(); me.tools.sync();
+    const under = el('div', { class: 'pv-under', hidden: true }, el('div', { class: 'pv-line' }, u.status, u.which), form);
+    const side = el('aside', { class: 'side pv-side', hidden: true, 'aria-label': 'Edit this photo' });
+    const workspace = el('div', { class: 'pv is-viewing' },
+      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas), compareTools(startEditing), under, u.strip = filmstrip()), side);
+    root.append(workspace);
+    function startEditing() {
+      if (v !== me || me.editing) return;
+      me.editing = true; me.list = loadEntries(file.path);
+      me.tools = createPhotoTools({ path: file.path, frame: u.frame, displayImage: u.after, request: previewBody, alive: () => v === me, refresh: schedulePreview,
+        onMode: (mode, unframed) => {
+          me.marking = mode === 'mark'; me.picking = mode === 'neutral';
+          if (mode !== 'none' && me.split) { me.split = false; showing(); }
+          u.mark.setAttribute('aria-pressed', String(me.marking)); if (u.grey) u.grey.setAttribute('aria-pressed', String(me.picking));
+          u.frame.classList.toggle('marking', me.marking || me.picking);
+          if (!me.marking) clearPending();
+          if (me.unframed !== unframed) { me.unframed = unframed; schedulePreview(); }
+        },
+      });
+      u.panels = { edit: editPanel(), how: howPanel(), try: tryPanel() };
+      side.append(u.panels.edit, u.panels.how, u.panels.try); under.prepend(me.tools.sourceNote);
+      u.editActions.append(me.tools.detailButton());
+      u.begin.hidden = true; u.orig.hidden = u.editActions.hidden = under.hidden = side.hidden = false;
+      workspace.classList.remove('is-viewing');
+      u.frame.setAttribute('aria-label', 'Photo preview. Hold B for the original. With Mark on, Enter places an oval.');
+      drawChips(); showing(); paintNeutral(); copyState(); syncEditControls(); me.tools.sync();
+      u.frame.focus({ preventScroll: true }); refresh();
+    }
+    wireFrame(); setThumbs(); showing();
     const active = u.strip.querySelector('[aria-current=true]'); if (active) u.strip.scrollLeft = active.offsetLeft - u.strip.offsetLeft - u.strip.clientWidth / 2 + active.clientWidth / 2;
     me.unsubscribe = subscribeProject(event => {
-      if (v !== me || !['change', 'undo', 'redo', 'load'].includes(event.type) || (event.path && event.path !== me.file.path)) return;
+      if (v !== me || !me.editing || !me.tools || !['change', 'undo', 'redo', 'load'].includes(event.type) || (event.path && event.path !== me.file.path)) return;
       me.draftSliders = null; me.list = loadEntries(me.file.path); if (event.type !== 'load') me.file.dirty = true;
       syncEditControls(); drawChips(); paintNeutral(); copyState(); me.tools.sync();
       u.saved.textContent = 'Changes ready. Save to update the exported photo.'; schedulePreview();
     });
-    u.after.addEventListener('load', () => { if (v === me) { fit(); me.tools.imageReady(); paintNeutral(); } });
+    u.after.addEventListener('load', () => { if (v === me) { fit(); if (me.tools) { me.tools.imageReady(); paintNeutral(); } } });
     me.ro = new ResizeObserver(fit); me.ro.observe(u.canvas);
     me.settingsKey = JSON.stringify(runOptions());
     me.sheetClose = () => {
-      if (v !== me) return; me.tools.sync(); const key = JSON.stringify(runOptions());
+      if (v !== me || !me.editing) return; me.tools.sync(); const key = JSON.stringify(runOptions());
       if (key !== me.settingsKey) { me.settingsKey = key; syncEditControls(); paintNeutral(); copyState(); schedulePreview(); }
     };
     document.getElementById('sheet').addEventListener('close', me.sheetClose);
     me.up = e => { if (e.key.toLowerCase() === 'b') setHold(false); };
     me.blur = () => setHold(false);
     document.addEventListener('keyup', me.up); window.addEventListener('blur', me.blur);
-    me.timer = setTimeout(refresh, 250);
   },
-  focus() { if (v) v.u.say.focus(); },
+  focus() { if (v) v.u.frame.focus({ preventScroll: true }); },
   unmount() {
     if (!v) return;
-    clearTimeout(v.timer); clearTimeout(v.previewTimer); clearInterval(v.busyTimer);
+    clearTimeout(v.previewTimer); clearInterval(v.busyTimer);
     for (const f of Object.values(v.flights)) if (f.controller) f.controller.abort();
     if (v.lookController) v.lookController.abort();
     if (v.unsubscribe) v.unsubscribe();
@@ -945,6 +1004,10 @@ export const screen = {
   },
   key(e) {
     if (!v || !v.u.say) return false;
+    if (!v.editing) {
+      if (e.metaKey || e.ctrlKey || e.altKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return false;
+      neighbour(e.key === 'ArrowRight' ? 1 : -1); return true;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return true; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !(e.target.matches('textarea, input[type=text], input[type=search], [contenteditable]'))) { e.preventDefault(); historyMove(e.shiftKey); return true; }
     if (e.metaKey || e.ctrlKey || e.altKey) return false;

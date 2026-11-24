@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark"><title>Photo editor · AutoEdit</title>
+<link rel="stylesheet" href="/app/editor_host.css">
+<link rel="stylesheet" href="/app/editor_assist.css">
+<script type="module" src="/app/editor_host.js"></script>
+</head><body>
+<header>
+  <a class="home" href="/#/start" aria-label="AutoEdit start">AutoEdit</a>
+  <h1>Photo editor</h1>
+  <nav aria-label="Photo tools">
+    <button id="open" class="primary" disabled>Open photo</button>
+    <button id="open-tiff" disabled>Open RAW as TIFF</button>
+    <button id="auto" disabled>Auto adjust</button>
+    <button id="ask-gemini" disabled>Ask Gemini</button>
+    <button id="mask" disabled>Masking</button>
+    <button id="compare" disabled>Compare</button>
+    <button id="export" disabled>Export</button>
+    <a class="tools" href="/#/workspace">Guided tools</a>
+    <button id="native" hidden>Open desktop editor</button>
+  </nav>
+</header>
+<main>
+  <iframe id="editor" title="LightCraft photo editor" hidden></iframe>
+  <section id="boot" aria-label="Editor setup"><h2 id="boot-title">Opening photo editor…</h2>
+    <p id="boot-message"></p><button id="retry" hidden>Try again</button></section>
+</main>
+<div id="status" role="status" aria-live="polite"></div>
+<dialog id="comparison" aria-labelledby="comparison-title">
+  <div class="compare-top"><h2 id="comparison-title">Before and after</h2><button id="close">Back to editing</button></div>
+  <div id="canvas-area"><div id="compare-pair" hidden>
+    <canvas id="edited" aria-label="Edited photo"></canvas>
+    <canvas id="before" aria-label="Original photo"></canvas>
+    <span id="divider" aria-hidden="true"></span>
+    <input id="wipe" type="range" min="0" max="100" value="50" aria-label="Original photo visible">
+    <span class="side left">Original</span><span class="side right">Edited</span>
+  </div><div id="compare-feedback"><p id="compare-status" role="status">Rendering comparison…</p>
+    <button id="native-split" hidden>Use LightCraft split view</button></div></div>
+</dialog>
+</body></html>

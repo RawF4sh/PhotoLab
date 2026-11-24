@@ -19,7 +19,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 
 from .. import paths
-from . import service
+from . import recipe_plan, service
 
 # ponytail: one heavy job at a time; per-kind locks if that ever hurts
 _SLOW = threading.Lock()
@@ -369,6 +369,7 @@ def reveal(p, configs_dir, profile, log):
 
 
 TOOLS = {
+    "plan-recipes": (recipe_plan.run, True),
     "find": (find, False), "keywords": (keywords, False), "declare": (declare, False),
     "gallery": (gallery, True), "check": (check, True), "sync": (sync, True), "merge": (merge, True),
     "pick": (pick, True), "exports": (exports_, False),
@@ -383,7 +384,7 @@ TOOLS = {
 }
 
 # Fields a tool cannot run without: checked before the job starts, so a bad body is a 400, not a failed job.
-REQUIRED = {"find": ("folder", "words"), "keywords": ("folder",), "declare": ("folder",), "gallery": ("folder",),
+REQUIRED = {"plan-recipes": ("folder", "recipes"), "find": ("folder", "words"), "keywords": ("folder",), "declare": ("folder",), "gallery": ("folder",),
             "check": ("folder",), "sync": ("target",), "merge": ("folder",), "pick": ("folder",),
             "looks_save": ("name",), "looks_delete": ("name",), "looks_lut": ("name", "out"),
             "looks_export": ("name", "out"), "looks_import": ("file",), "looks_card": ("name", "out"),

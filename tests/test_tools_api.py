@@ -240,3 +240,43 @@ def test_the_guard_covers_the_tools_routes_and_app_files():
         assert r.status_code == 403, (url, r.status_code)
     r = c.post("/api/v1/tools/exports", json={}, headers={"Origin": "http://evil.com"})
     assert r.status_code == 403
+
+
+def test_recipe_plan_routes_images_and_reports_missing_objects_and_corrupt_file(tmp_path):
+    from PIL import Image
+    from autoedit.web import edit_presets
+    c = _client(str(tmp_path))
+    if c is None:
+        return
+    folder = str(tmp_path / 'photos')
+    os.makedirs(folder)
+    _approved(folder)
+    for name, value in (('dark', 40), ('light', 220), ('other', 130)):
+        Image.new('RGB', (32, 32), (value,) * 3).save(os.path.join(folder, name + '.png'))
+    open(os.path.join(folder, 'broken.png'), 'wb').close()
+    dark = edit_presets.save('Dark scenes', {
+        'region_settings': {'red boat': {'temp': -3}}, 'condition': {
+            'tests': [{'measure': 'mean_lum', 'op': 'below', 'value': .4}]}}, profile=str(tmp_path))
+    light = edit_presets.save('Light scenes', {'condition': {
+        'tests': [{'measure': 'mean_lum', 'op': 'above', 'value': .7}]}}, profile=str(tmp_path))
+    ids = [record['id'] for record in (light, dark)]
+    body = {'folder': folder, 'recipes': ids, 'options': {'backend': 'stub'}}
+    job = _run(c, 'plan-recipes', body)
+    assert job['status'] == 'done', job
+    result = job['result']
+    assert result['counts'] == {key: 1 for key in ids}, result
+    assert result['failed'] == result['unmatched'] == result['missing_objects'] == 1
+    items = {os.path.basename(row['path']): row for row in result['items']}
+    assert 'error' in items['broken.png']
+    assert items['dark.png']['missing'] == ['red boat']
+    assert items['other.png']['recipe_id'] is None
+    assert items['light.png']['recipe_id'] == light['id'] and items['light.png']['values']['iso'] is None
+    all_photos = edit_presets.save('All', {}, profile=str(tmp_path))
+    repeat = _run(c, 'plan-recipes', {**body, 'recipes': [all_photos['id'], *ids],
+                                      'photos': [os.path.join(folder, 'light.png')]})
+    assert repeat['result']['items'][0]['recipe_id'] == all_photos['id']
+    payload = c.get(f"/api/v1/edit-presets/{dark['id']}/export").json()
+    assert set(payload) == {'name', 'settings'}
+    imported = c.post('/api/v1/edit-presets/import', json={**payload, 'name': 'Imported'}).json()['preset']
+    assert imported['settings'] == dark['settings']
+    assert c.post('/api/v1/edit-presets/import', json={**payload, 'path': 'private'}).status_code == 400

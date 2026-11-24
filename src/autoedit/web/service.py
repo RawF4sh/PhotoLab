@@ -26,9 +26,8 @@ from ..contract import Adjustment, RunConfig
 from ..imageio import analysis_opts, downscale_long_edge, is_raw, is_supported, load_image, raw_opts_from
 from ..pipeline import Pipeline
 from ..segment.base import parse_mark
-from ..segment import refine as refine_masks
 from ..styles import load_styles
-from . import photo_base
+from . import edit_steps, photo_base
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
 _ALLOWED = (
@@ -362,10 +361,7 @@ def check_photo_settings(value) -> dict:
     if value is None:
         return {}
     table, _ = editor_sliders()
-    try:
-        return teach.check_try({"sliders": value}, table)["sliders"]
-    except ValueError as exc:
-        raise ValueError(str(exc).replace("try.sliders", "photo_settings")) from None
+    return edit_steps.controls(value, table)
 
 
 def settings_adjustments(value) -> list[Adjustment]:
@@ -376,9 +372,8 @@ def settings_adjustments(value) -> list[Adjustment]:
 def check_region_settings(value) -> dict:
     if value is None:
         return {}
-    if not isinstance(value, dict) or len(value) > refine_masks.MAX_CONCEPTS:
-        raise ValueError("region_settings must contain at most 32 concepts")
-    return {refine_masks.name(name): check_photo_settings(ops) for name, ops in value.items()}
+    table, _ = editor_sliders()
+    return edit_steps.regions(value, table, legacy=True)
 
 
 def region_adjustments(value) -> list[Adjustment]:
@@ -620,6 +615,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
     max_px = min(max_px, edge)
     saved_sliders = check_photo_settings(opts.get("photo_settings"))
     table, les = editor_sliders()
+    entries = opts.get("edit_steps", [])
+    opts, limited = edit_steps.fold(opts, table)
     trial = None
     px, lossless = teach.check_steps(opts.get("steps"))     # first: {} is a valid steps value, and asks for steps
     if opts.get("try") is not None:
@@ -639,6 +636,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
         return small(rgb)
     walk = teach.Steps(encode) if px else None
     r = _edit(image_path, opts, configs_dir, profile, trial, walk, geo_box)
+    if trial is None:
+        r["result"].notes.extend(edit_steps.notes(entries, limited))
     geo = None if opts.get("preview_unframed") else r["result"].geometry
     actual = {m["name"]: m for m in r["source_overlays"]}
     grain = emit.grain_args(r["result"], r["cfg"])
@@ -657,7 +656,8 @@ def preview(image_path: str, opts: dict, configs_dir: str | None = None, max_px:
         "objects": [{"name": c.name, "label": c.name.replace("_", " "), "found": c.name in actual,
                       "coverage": actual.get(c.name, {}).get("coverage", 0), "alpha": actual.get(c.name, {}).get("alpha")}
                      for c in r["result"].concepts],
-        "editor": {"sliders": [{"op": op, "min": lo, "max": hi, "step": st,
+        "editor": {"totals": {"global": opts.get("photo_settings") or {}, "regions": opts.get("region_settings") or {}},
+                   "clamped": limited, "sliders": [{"op": op, "min": lo, "max": hi, "step": st,
                                   "value": saved_sliders.get(op, 0.0), **lessons._lines(les, "op", op)}
                                  for op, (lo, hi, st) in table.items()]},
         "reveal": r["result"].reveal.model_dump() if r["result"].reveal else None,     # F21: null = the check was off
@@ -703,6 +703,8 @@ def detail(image_path: str, opts: dict, configs_dir: str | None = None, profile:
     requested = opts.get("size", 512)
     if type(requested) is not int or not 64 <= requested <= 1024:
         raise ValueError("detail size must be a whole number from 64 to 1024")
+    if "edit_steps" in opts:
+        opts, _ = edit_steps.fold(opts, editor_sliders()[0])
     local = {**{k: v for k, v in opts.items() if k not in ("try", "steps")},
              "local_only": True, "decider": "rules", "allow_cloud": False, "translator": "off", "preview_unframed": False}
     r = _edit(image_path, local, configs_dir, profile, native=True)
@@ -838,6 +840,8 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
     critic), rank, auto-pick the best, and flag uncertain cases for review (M7). Non-generative —
     every variant is an ordinary bounded edit."""
     check_image(image_path)
+    if "edit_steps" in opts:
+        opts, _ = edit_steps.fold(opts, editor_sliders()[0])
     seed = picks = None
     if opts.get("surprise"):   # F26: the specs are looks of the library, picked by the seed
         if opts.get("variants"):
@@ -903,6 +907,9 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
             profile: str | None = None) -> dict:
     """Edit a single photo to out_dir (baked image + sidecar)."""
     check_image(image_path)
+    entries, limited = opts.get("edit_steps", []), []
+    if "edit_steps" in opts:
+        opts, limited = edit_steps.fold(opts, editor_sliders()[0])
     base = photo_base.check(opts.get("photo_base"))
     cfg = make_cfg(opts, configs_dir, profile)
     pipe = build_pipeline(cfg)
@@ -916,6 +923,7 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
         out_rgb, result = pipe.process_one(image_path, do_apply=True, adjustments=photo_adjs or None,
                                            exposure_bias=base.get("exposure_bias", 0.0),
                                            wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))))
+    result.notes.extend(edit_steps.notes(entries, limited))
     os.makedirs(out_dir, exist_ok=True)
     image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,
                                            subdir=cfg.out_subdir, fields={"style": cfg.style, "n": 1},
@@ -998,8 +1006,9 @@ def _pick_native(kind: str = "folder") -> str | None:
         elif kind == "json":
             path = filedialog.askopenfilename(filetypes=[("JSON", "*.json"), ("All", "*.*")])
         else:
+            from ..imageio import picker_extensions
             path = filedialog.askopenfilename(
-                filetypes=[("Images", "*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp"), ("All", "*.*")])
+                filetypes=[("Images", " ".join(picker_extensions())), ("All", "*.*")])
         root.destroy()
         return path or None
     except Exception:

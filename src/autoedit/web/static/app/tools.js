@@ -195,24 +195,24 @@ const trainingNode = () => el('div', null,
     fields: [dirField(), { key: 'model', label: 'Scorer file (.json)', type: 'text', pick: 'json' }] }));
 
 const TOOLS = [
-  ['Pick keepers', 'the sharpest well-exposed frame of each burst', pickForm],
-  ['Merge frames', 'brackets, repeats, focus series, trails', mergeForm],
-  ['Choose a subset', 'copy a varied or best-scored set for review', subsetForm],
-  ['Looks', 'save, import, export, card, LUT', looksNode],
-  ['Your style', 'changes you keep making', styleNode],
-  ['Calibrate', 'find your look from pairs you vote on', calibrateForm],
-  ['Training (advanced)', 'datasets, scorers, recipe model', trainingNode],
+  ['Pick keepers', pickForm],
+  ['Merge frames', mergeForm],
+  ['Choose a subset', subsetForm],
+  ['Looks', looksNode],
+  ['Your style', styleNode],
+  ['Calibrate', calibrateForm],
+  ['Training (advanced)', trainingNode],
 ];
 
 export const screen = {
   mount(root) {
     setBar(backButton('Folder', 'folder'), el('span', { class: 'title grow' }, 'Tools'), gearButton());
-    root.append(el('div', { class: 'toolscreen' }, ...TOOLS.map(([title, sub, build]) => {
+    root.append(el('div', { class: 'toolscreen' }, ...TOOLS.map(([title, build]) => {
       const body = el('div', { class: 'tbody', hidden: true });
       const head = el('button', { type: 'button', class: 'trow', 'aria-expanded': 'false', on: { click: () => {
         if (!body.childNodes.length) body.append(build());
         body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden));
-      } } }, el('span', null, title), el('small', { class: 'grow' }, sub), el('span', { 'aria-hidden': 'true' }, '›'));
+      } } }, el('span', { class: 'grow' }, title), el('span', { 'aria-hidden': 'true' }, '›'));
       return el('div', { class: 'titem' }, head, body);
     })));
   },

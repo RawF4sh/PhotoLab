@@ -20,16 +20,16 @@ export function openShare() {
     const f = { folder: exportsDir() };
     const make = el('button', { type: 'button', class: 'primary', on: { click: () => run('gallery', f, r => showResult(res, r, r.page, 'Show gallery')) } }, 'Make gallery');
     jobs.push(make);   // declare, keywords and gallery read the exports' sidecars
-    const row = (title, sub, fn, job = true) => {
-      const b = el('button', { type: 'button', class: 'shrow', on: { click: fn } }, title, el('small', null, sub));
+    const row = (title, fn, job = true) => {
+      const b = el('button', { type: 'button', class: 'shrow', on: { click: fn } }, title);
       if (job) jobs.push(b);
       return b;
     };
     body.append(
-      row('Check before sharing', 'finds people, plates and other things to look at', () => run('check', { folder: state.dir, backend: state.finder }, r => showResult(res, r, r.report, 'Show report'))),
-      row('Edit declaration', 'what was changed, with hashes', () => run('declare', f)),
-      row('Keywords', 'write .xmp files beside the exports', () => run('keywords', f)),
-      row('Show in ' + fileManager, 'the AutoEdit Exports folder', () => { res.textContent = ''; reveal(exportsDir()).catch(e => { res.textContent = e.message; }); }, false),
+      row('Check before sharing', () => run('check', { folder: state.dir, backend: state.finder }, r => showResult(res, r, r.report, 'Show report'))),
+      row('Create edit declaration', () => run('declare', f)),
+      row('Write keyword files (.xmp)', () => run('keywords', f)),
+      row('Show exports in ' + fileManager, () => { res.textContent = ''; reveal(exportsDir()).catch(e => { res.textContent = e.message; }); }, false),
       res,
       make);
   });

@@ -80,6 +80,7 @@ def make_config(configs_dir=None, backend=None, device=None, style=None, intensi
               "compose", "vignette", "sharpen", "configs_dir"):
         setattr(ns, k, None)
     ns.configs_dir = configs_dir
+    ns.profile = os.environ.get("AUTOEDIT_PROFILE") or None   # like the CLI: e.g. a lens profile (F52)
     ns.backend = backend
     ns.device = device
     ns.style = style

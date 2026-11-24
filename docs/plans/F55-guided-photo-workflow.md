@@ -131,6 +131,24 @@ ownership and real-feather interior probes pass; native detail matches the full 
   missing/reserved names and request limits, selection/refinement, framing, native detail,
   assistant application/history and disposal of stale requests.
 
+## Reopening follow-up — 2026-11-23
+
+An app restart clears the server's approved folders while the Recent list and editing projects
+remain saved. Clicking a recent item used to expose a technical filesystem-access error. The
+client now retains the API status/code and offers a **Choose folder** sheet for a denied folder.
+It uses the existing native picker, then loads the existing project. It does not grant access
+from a stored path. Cancel keeps the sheet and saved data intact; unrelated server/network
+errors retain their normal handling. A photo-opening request also retains its target photo.
+
+Verification: 20 focused interface/project tests pass, including a package-free Node harness
+that executes the real shell, folder and project modules. The API check proves cancellation
+does not grant access and a successful picker reopens the same saved project. Browser checks
+used a restarted local test server and a simulated picker: cancel, retry, restored +0.35 EV
+and undo history all passed, with no console errors. Screenshot: `.tmp/f55-reopen.jpg`.
+The stub batch produced two images, two sidecars and a manifest with zero failures. The full
+dependency-free suite passed: **1,233 tests, zero failures** (`.tmp/f55-reopen-tests.log`).
+Whitespace checks pass. No rendering behavior changed, so the earlier RAW gates were not rerun.
+
 ## Remaining limits
 
 - `natural_clean` is opt-in. No default was changed and no preference winner is claimed.

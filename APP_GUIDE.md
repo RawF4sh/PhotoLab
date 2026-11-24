@@ -20,7 +20,7 @@ invents or replaces content.
 
 | Principle | What it means |
 |---|---|
-| **Local-first** | Everything runs on-device. Full-resolution pixels never leave the machine. The only optional exception is the LLM decider, which sends a thumbnail + stats — off by default, opt-in. |
+| **Local-first** | Automatic editing and both local editors work on-device. The optional LLM decider and Gemini assistant can send a thumbnail and measurements with consent. |
 | **Non-generative** | No object generation, inpainting, sky replacement, or invented pixels. The system only adjusts bounded parametric edits, then re-measures and rejects unsafe results. |
 | **Explainable** | Every photo gets a sidecar JSON with a human-readable "why" list: which rules fired, which gates acted, which intent/palette/reference applied. |
 | **Copy-only** | Culling and dataset building never move, rename, or delete your originals — they copy. |
@@ -374,8 +374,8 @@ untested until 20 night photos have been through the tone gate and a blind sheet
 ### Start it
 
 - **Browser:** `pip install -e '.[ui]'`, then `autoedit ui`. It opens `http://127.0.0.1:8765/`.
-- **Desktop window:** `pip install -e '.[app]'`, then `autoedit app`. It is the same interface in a
-  native window, on a free loopback port. On Linux it needs a GTK or Qt web view installed.
+- **Desktop window:** `pip install -e '.[app]'`, then `autoedit app`. It opens the same interface in a
+  native window. The port is stable for a given profile so the photo editor can reopen its library. On Linux it needs a GTK or Qt web view installed.
 
 Light or dark follows the system. The photo always sits on the same mid grey. Esc and the back
 arrow (top left) go back one screen.
@@ -383,12 +383,38 @@ arrow (top left) go back one screen.
 ### Screens
 
 #### Start
+
+Choose **Automatic** to finish a photo or a folder in one pass. Choose **Photo editor** to work on individual images. **Guided workspace** opens AutoEdit's folder, recipe, review and learning tools.
+
+#### Automatic
+
+Use **Choose photo** or **Choose folder**. The selection shows the originals and the photo count.
+**Edit and export** runs AutoEdit's local rules and writes finished files and decision sidecars into
+a new dated folder inside `AutoEdit Exports`. You can follow progress, stop the run, see which files
+need attention and use **Show exports** to open the results.
+
+#### Photo editor
+
+The manual workspace embeds Brandon Thomas's LightCraft web editor, pinned to version 0.21.1.
+On first use, AutoEdit downloads the official release, checks its SHA-256 digest and caches it locally.
+Opening photos and using develop controls then work offline. The editor needs a browser or desktop
+web view with WebGL 2. See [LightCraft's web edition](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
+
+- **Open photo** imports the original into LightCraft's local library. Set exposure, adjust the tone curve or color mixer, crop and straighten, or use **Masking** to limit a change to part of the picture. **Auto adjust** runs LightCraft's automatic development on request.
+- **Compare** opens a before/after view with a draggable divider. Use the arrow keys to fine-tune its position. **Export** saves the developed image through the browser or desktop window.
+- **Ask Gemini** lets you review suggested whole-photo adjustments and apply supported values to LightCraft's editable controls. The guided workspace also supports named-region suggestions and recipes.
+- LightCraft keeps its catalog and adjustment history in local storage for this browser and app address. Clearing site data removes that catalog. The native LightCraft app has additional capabilities including JPEG XL export. **Open desktop editor** is available when AutoEdit finds an installed copy.
+- **Guided tools** opens the AutoEdit workspace. In a guided photo, **Open original in Photo editor** imports the source file. After saving, **Open saved copy in Photo editor** imports the rendered pixels as a new starting point. The editable AutoEdit steps stay in the guided project.
+
+#### Guided workspace
+
 **Open photo**, **Open folder**, **Try a sample set**, and recent folders. The samples are generated
 landscapes made locally without a download. Your photos stay on this computer. Reopening a folder
 restores its editing project, including selection, individual changes and undo/redo history.
+After restarting AutoEdit, a recent folder may ask you to **Choose folder** again. Select the
+same folder to restore its saved edits. Canceling leaves the saved project untouched.
 Browser drag-and-drop uses a file picker when the browser cannot provide a local file path.
-The Open → Improve → Adjust → Export guide explains the next step. Readiness distinguishes
-local editing from precise object selection, which requires the optional SAM 3 model.
+The guided workspace shows the four editing steps and whether the optional object selection model is ready.
 
 #### Folder (home)
 The grid of photos (RAW+JPEG pairs count as one) with a status dot on each tile: waiting, editing,
@@ -405,19 +431,29 @@ done, look at this, failed. The side panel holds what applies to the whole folde
   changes. Capture-time groups appear when timestamps are available; these are time groups,
   not a claim that every frame has the same composition. **Review** steps through flagged/failed photos.
 - Per-photo looks, intensity, reference choices and adjustments also apply to **Edit N photos**.
-- **My presets** saves a look, strength and whole-photo sliders for reuse. Applying one to a
-  folder keeps individual photo overrides. Presets exclude masks, crops, paths and credentials.
+- Open **Recipes** to apply a saved recipe to the ticked photos. Each tile shows its active
+  recipe names. For a mixed folder, add recipes to the order, then select **Plan**. Review the
+  counts and missing objects before choosing **Apply plan**. The first match wins. Changing
+  the order and planning again replaces the earlier assignment, and an empty order clears it.
+  Unmatched photos return to their pre-plan settings and keep later manual adjustments.
+  **Edit N photos** runs the export.
+- Set a recipe's optional scene and up to three measurement tests under **Edit name or conditions**.
+  A recipe without conditions matches any photo, so put a general fallback last. Failed files and
+  missing objects are listed in the plan. A missing target gets a review mark on the photo.
 
-#### Photo
-Click a tile. Arrow keys move between photos.
+#### Guided photo
 
-- A quick preview arrives first, followed by a sharp preview (up to 2560 pixels). **Hold the photo
-  or press B** to see the original. **Split comparison** exposes a draggable before/after division.
+Click a tile to see the original. Arrow keys and the filmstrip move between originals. Choose
+**Preview AutoEdit** to generate the first edit, or **Resume guided edit** to reopen one with saved work.
+
+- A quick local preview arrives first, followed by a sharp preview (up to 2560 pixels). **Hold the photo
+  or press B** to see the original. Choose **Before / after** and drag directly across the image,
+  or use the divider's arrow keys. Home and End show the full after and before images.
   **100% preview** shows one preview pixel per screen pixel; drag to pan. Exports use full resolution.
-- **Adjust this photo** has saved exposure, contrast, highlights, shadows, temperature, tint and
+- **Whole photo adjustments** has saved exposure, contrast, highlights, shadows, temperature, tint and
   color controls. Zero means AutoEdit's automatic baseline; values add an adjustment to it.
   Limits and safety checks still apply. **Undo**, **Redo** and **Reset photo** cover all photo changes.
-- **Objects** lets you select a found region and adjust it with the same seven controls. **Find
+- **Targeted edits** opens **Objects & selections**, where you can select a found region and adjust it with the same seven controls. **Find
   an object** requests a named concept such as "jacket". A missing object stays missing; no mask
   is invented. **Add** and **Subtract** brushes correct the selection on the uncropped source
   frame, with each stroke undoable. Stub selections are approximate demonstrations.
@@ -426,10 +462,17 @@ Click a tile. Arrow keys move between photos.
 - **Native detail** renders matching original/edited native-resolution crops. One image pixel
   is one displayed pixel. It includes framing and finishing; export resizing and lossy encoding
   are excluded. The ordinary **100% preview** remains limited to preview resolution.
-- **Gemini assistant** offers a reviewed proposal for global and found-object sliders. Nothing
-  changes until **Apply**; that is one undoable action. Applied suggestions become local saved
-  adjustments, so preview/export does not request Gemini again. **Dismiss** leaves edits alone.
-- **My presets** saves or applies portable look, strength and whole-photo adjustments.
+- **Ask Gemini** returns up to six named adjustments. Tick the ones you want and choose
+  **Apply selected**. They appear under **Changes**. If the photo changes before you apply
+  a suggestion, request a fresh suggestion. The accepted changes render locally after reopening.
+- In **Changes**, switch an entry off, adjust its **Amount**, or remove it. Manual sliders keep
+  their own values. For example, +0.4 EV at 50% adds +0.2 EV to the exposure slider. The panel
+  reports a limited total or a missing object. Undo restores the previous settings.
+- In **Recipes**, **Save current settings** captures the look, strength and effective whole-photo
+  and named-object adjustments, including enabled Changes at their current amounts. Each
+  destination finds its own objects. Export and import transfer the recipe name and settings as
+  JSON. Look and strength are photo settings; the new Changes entry controls the recipe's
+  adjustment amounts. Reapplying the same recipe replaces its entry.
 - **Compare looks** previews looks on the current photo. **Match a reference** brings the reference
   choice and matching strength into this panel. References outside the opened folder may need
   choosing again after restarting the app.
@@ -449,7 +492,7 @@ Click a tile. Arrow keys move between photos.
 - **Masks**: shows the regions that were found.
 - **Save this photo**: renders this photo's current choices at full resolution into AutoEdit Exports.
 - The filmstrip and arrow keys move through nearby photos; in the review queue they follow the queue.
-- When "Collect review labels" is on (Settings), a Good / Not good pair appears.
+- Turn on **Save photo ratings for training** in Settings to see the Good / Not good buttons.
 
 #### Tools
 One form per tool, then the result in place with "Open the result folder".
@@ -468,7 +511,8 @@ One form per tool, then the result in place with "Open the result folder".
 A sheet over any screen, drawn from the settings schema (`autoedit settings --json`). Groups:
 Region finder and model, RAW, Quality, Look extras (grain, LUT), Output (format, metadata,
 workers, export presets and watermark), Privacy, Profile, Advanced, About. Appearance has a dark
-surround option. Defaults are the ones the command line uses.
+surround option. Turn on **Show setting descriptions** for help with individual controls.
+Defaults are the ones the command line uses.
 Advanced groups are collapsed until needed. The Gemini key and cloud consent are held only
 for the current page session, or the server can read `GEMINI_API_KEY`. Each explicit request
 sends a stripped thumbnail no larger than 512 pixels and numeric editing context. Full-resolution
@@ -477,8 +521,8 @@ responses, timeouts and session budget limits leave the current local edit intac
 
 #### Share sheet
 After a run: **Check before sharing** (findings per photo, such as location or a serial number
-left in), **Edit declaration** (what was changed, with hashes), **Keywords** (writes `.xmp` files
-beside the exports), **Show in folder**, and **Make gallery**.
+left in), **Create edit declaration** (what was changed, with hashes), **Write keyword files (.xmp)**,
+**Show exports in Finder** (Explorer on Windows), and **Make gallery**.
 
 ## 10. CLI reference
 
@@ -532,6 +576,9 @@ route list is pinned by `tests/snapshots/api_v1.json`.
 | `POST /api/v1/preview` | Proxy before/after (lossless WebP), actual object masks + decision sidecar. |
 | `POST /api/v1/detail` | Local full-resolution render, matched native crops and true dimensions. |
 | `POST /api/v1/assist` | Explicit opt-in Gemini proposal; does not apply or save adjustments. |
+| `GET /api/v1/editor/status`, `POST /api/v1/editor/install` | Check or install the pinned local LightCraft release. |
+| `GET /api/v1/editor/original?path=`, `POST /api/v1/editor/native` | Open a picker-approved original or launch the installed desktop editor. |
+| `POST /api/v1/editor/assist` | Request whole-photo changes for a rendered LightCraft preview with explicit Gemini consent. |
 | `GET /api/v1/edit-presets`, `POST /api/v1/edit-presets`, `DELETE …/{id}` | Local portable creative presets; separate from concept presets. |
 | `POST /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `POST …/control` | Background edit batch + live progress. |
 | `POST /api/v1/curate/jobs`, `GET …/{id}` | Culling job (M1). |

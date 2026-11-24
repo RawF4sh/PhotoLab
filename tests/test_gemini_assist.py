@@ -26,8 +26,13 @@ def _jpeg(size=(400, 250), metadata=False):
     return out.getvalue()
 
 
+def _change(target="photo", ops=None):
+    return {"label": "Adjust light", "why": "Bring out detail.", "target": target,
+            "ops": {"exposure": .2} if ops is None else ops}
+
+
 def _response(proposal=None, **kwargs):
-    proposal = proposal or {"global": {"exposure": .2}, "regions": {"sky": {"highlights": -12}},
+    proposal = proposal or {"changes": [_change(), _change("sky", {"highlights": -12})],
                             "explanation": "Lift the foreground while preserving the sky."}
     return json.dumps({"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(proposal)}]}}],
                        **kwargs}).encode()
@@ -57,7 +62,7 @@ def test_gemini_body_contains_only_bounded_image_context_and_schema():
         return _response()
     client = gemini.Gemini(transport=transport)
     answer = _request(client, thumbnail=_jpeg(metadata=True))
-    assert answer["status"] == "ok" and answer["proposal"]["global"] == {"exposure": .2}
+    assert answer["status"] == "ok" and answer["proposal"]["changes"][0]["ops"] == {"exposure": .2}
     body, key = calls[0]
     assert key == "test-session-key" and key.encode() not in body
     assert b"private-photo-name" not in body and b"fileData" not in body and b'"tools"' not in body
@@ -65,7 +70,7 @@ def test_gemini_body_contains_only_bounded_image_context_and_schema():
     config = data["generationConfig"]
     assert config["maxOutputTokens"] == 2048 and config["candidateCount"] == 1
     assert config["thinkingConfig"]["thinkingLevel"] == "MINIMAL"
-    assert config["responseJsonSchema"]["properties"]["regions"]["additionalProperties"] is False
+    assert config["responseJsonSchema"]["properties"]["changes"]["items"]["additionalProperties"] is False
     image_part = data["contents"][0]["parts"][1]["inlineData"]
     with Image.open(io.BytesIO(base64.b64decode(image_part["data"]))) as image:
         assert max(image.size) <= 512 and not image.getexif()
@@ -86,14 +91,15 @@ def test_gemini_requires_consent_key_and_small_inputs_before_transport():
 
 
 def test_gemini_rejects_unknown_nonfinite_and_oversized_proposals():
-    valid = {"global": {"exposure": .2}, "regions": {}, "explanation": "A small change."}
-    invalid = []
+    valid = {"changes": [_change()], "explanation": "A small change."}
+    invalid = [{"global": {}, "regions": {}, "explanation": "Legacy shape"}]
     for op_value in ({"exposure": True}, {"exposure": float("nan")}, {"exposure": float("inf")},
                      {"exposure": 2.01}, {"unknown": 2}, {"temp": "4"}):
-        invalid.append({**valid, "global": op_value})
-    invalid.extend([{**valid, "regions": {"imaginary object": {"temp": 5}}},
-                    {**valid, "extra": 1}, {**valid, "explanation": "x" * 601},
-                    {**valid, "regions": []}])
+        invalid.append({**valid, "changes": [_change(ops=op_value)]})
+    for patch in ({"target": "missing"}, {"label": " "}, {"why": "x" * 241}, {"raw": "extra"}):
+        invalid.append({**valid, "changes": [{**_change(), **patch}]})
+    invalid.extend([{**valid, "changes": [_change()] * 7}, {**valid, "extra": 1},
+                    {**valid, "explanation": "x" * 601}, {**valid, "changes": {}}])
     for proposal in invalid:
         client = gemini.Gemini(transport=lambda *_, p=proposal: _response(p))
         _raises(gemini.Unavailable, lambda: _request(client), "invalid_response")
@@ -202,11 +208,12 @@ def test_assist_sends_local_edited_thumbnail_without_paths_or_metadata(tmp_path)
     with patch.object(assist, "_CLIENT", client), patch.object(service, "_edit", local):
         answer = assist.suggest(str(file), opts)
     assert opts == original and answer["status"] == "ok"
+    assert len(answer["id"]) == 32
     body = sent[0]
     for private in (str(file), str(reference), "private scene text", "private note", "mark:area", "local-mask-not-for-upload", "private-anthropic-key", "test-session-key"):
         assert private.encode() not in body
     payload = json.loads(body)
-    assert list(payload["generationConfig"]["responseJsonSchema"]["properties"]["regions"]["properties"]) == ["sky"]
+    assert payload["generationConfig"]["responseJsonSchema"]["properties"]["changes"]["items"]["properties"]["target"]["enum"] == ["photo", "sky"]
     with Image.open(io.BytesIO(base64.b64decode(payload["contents"][0]["parts"][1]["inlineData"]["data"]))) as image:
         assert image.size == (512, 341) and not image.getexif()
     assert sorted(p.name for p in tmp_path.iterdir()) == ["private-reference.jpg", "private-source.jpg"]
@@ -243,14 +250,14 @@ def test_assist_route_returns_reviewable_proposal_without_export(tmp_path):
         assert denied.json()["reason"] == "consent" and provider.budget.status()["calls"] == 0
         answer = app.post("/api/v1/assist", json={"file": str(file), "assist_prompt": "Improve this",
                                                   "allow_cloud": True, "gemini_api_key": "test-key"})
-        assert answer.status_code == 200 and answer.json()["proposal"]["global"] == {"exposure": .2}
+        assert answer.status_code == 200 and answer.json()["proposal"]["changes"][0]["ops"] == {"exposure": .2}
     assert [p.name for p in tmp_path.iterdir()] == ["photo.jpg"]
 
 
 def test_assist_real_local_stub_render_needs_no_cloud_decider(tmp_path):
     file = tmp_path / "photo.jpg"; file.write_bytes(_jpeg())
     service.approve_root(str(tmp_path))
-    proposal = {"global": {"temp": 2}, "regions": {}, "explanation": "Add a little warmth."}
+    proposal = {"changes": [_change(ops={"temp": 2})], "explanation": "Add a little warmth."}
     provider = gemini.Gemini(transport=lambda *_: _response(proposal))
     opts = {"assist_prompt": "Warm this slightly", "allow_cloud": True, "gemini_api_key": "test-key",
             "backend": "stub", "concepts": [], "compose": False, "decider": "llm", "translator": "off"}
@@ -258,3 +265,32 @@ def test_assist_real_local_stub_render_needs_no_cloud_decider(tmp_path):
         answer = assist.suggest(str(file), opts)
     assert answer["status"] == "ok" and answer["proposal"] == proposal
     assert opts["decider"] == "llm" and [p.name for p in tmp_path.iterdir()] == ["photo.jpg"]
+
+
+def test_gemini_never_returns_the_request_or_the_key_as_persistable_text():
+    # A label that repeats the request is named from its controls; a reason that repeats it is dropped.
+    echo = {"changes": [{**_change(), "label": "Make this more natural", "why": "You asked: make this more natural."}],
+            "explanation": "Improve the light."}
+    change = _request(gemini.Gemini(transport=lambda *_: _response(echo)))["proposal"]["changes"][0]
+    assert change == {"label": "Whole photo: exposure", "why": "", "target": "photo", "ops": {"exposure": .2}}
+    sky = {"changes": [{**_change("sky", {"highlights": -12, "temp": 2}), "label": "make this more natural"}],
+           "explanation": "Hold the sky."}
+    change = _request(gemini.Gemini(transport=lambda *_: _response(sky)))["proposal"]["changes"][0]
+    assert change["label"] == "Sky: highlights, temp" and change["why"] == "Bring out detail."
+    leaked = {"changes": [{**_change(), "why": "Use test-session-key here."}], "explanation": "Improve the light."}
+    _raises(gemini.Unavailable, lambda: _request(gemini.Gemini(transport=lambda *_: _response(leaked))), "invalid_response")
+
+
+def test_gemini_short_request_can_name_a_control_in_a_longer_reason():
+    answer = {"changes": [{**_change(), "why": "Keep texture in the sky."}], "explanation": "Preserve detail."}
+    assert _request(gemini.Gemini(transport=lambda *_: _response(answer)), prompt="sky")["proposal"] == answer
+
+
+def test_gemini_drops_empty_adjustments_and_excludes_ambiguous_object_targets():
+    result = _render("test")
+    result["source_overlays"].extend({"name": n, "coverage": .5}
+                                    for n in ("photo", "global", "prototype", "constructor"))
+    names, context = assist._context(result, {}, service.editor_sliders()[0])
+    assert names == ["sky"] and set(context["regions"]) == {"sky"}
+    answer = {"changes": [_change(ops={"exposure": 0})], "explanation": "Already balanced."}
+    assert _request(gemini.Gemini(transport=lambda *_: _response(answer)))["proposal"]["changes"] == []

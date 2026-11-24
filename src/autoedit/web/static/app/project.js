@@ -2,8 +2,8 @@
 // Imports are circular with main.js; access shared state only from functions/events.
 import { api, state, toast } from './main.js';
 
-const PHOTO_KEYS = ['look', 'intensity', 'neutral', 'sliders', 'entries', 'hide', 'hideMethod', 'reference', 'reference_strength', 'base', 'region_settings', 'mask_refinements', 'photo_geometry', 'local_only'];
-const FOLDER_KEYS = ['look', 'genre', 'strength', 'runText', 'exportPreset', 'finder', 'folderSliders'];
+const PHOTO_KEYS = ['look', 'intensity', 'neutral', 'sliders', 'entries', 'hide', 'hideMethod', 'reference', 'reference_strength', 'base', 'region_settings', 'mask_refinements', 'photo_geometry', 'local_only', 'edit_steps'];
+const FOLDER_KEYS = ['look', 'genre', 'strength', 'runText', 'exportPreset', 'finder', 'folderSliders', 'recipes'];
 const HISTORY_LIMIT = 30;
 let activeDir = '', project = fresh(), timer = 0, saving = Promise.resolve(), revision = 0, lastSaved = '';
 let warned = false;
@@ -22,6 +22,24 @@ function safeSettings(settings) {
   return Object.fromEntries(Object.entries(settings || {}).filter(([key]) => !/key|secret|token|password|credential/i.test(key)));
 }
 
+// Planned measurements provide an initial warning. A full export can correct that observation.
+export function syncRecipeReview(file, photo = {}) {
+  if (!file) return;
+  const checks = file.objectChecks || {};
+  const missing = new Set();
+  const inspect = (regions, expected = []) => {
+    for (const [name, ops] of Object.entries(regions || {})) {
+      if (Object.values(ops || {}).some(Boolean) && (Object.hasOwn(checks, name) ? !checks[name] : expected.includes(name))) missing.add(name);
+    }
+  };
+  inspect(photo.region_settings);
+  for (const step of photo.edit_steps || []) {
+    if (step.on && step.amount) inspect(step.regions, step.plan?.missing || []);
+  }
+  file.recipeReview = missing.size ? ('Object not found: ' + [...missing].join(', ')).slice(0, 2048) : '';
+}
+
+export function getPhotoValues(path) { return photoValues(project.photos[path]); }
 export function getPhoto(path) { return clone(project.photos[path] || {}); }
 export function subscribeProject(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 export function canUndo(path) { return !!getPhoto(path).history?.length; }
@@ -39,6 +57,14 @@ export function updatePhoto(path, patch, { history = true } = {}) {
     history: history ? [...(previous.history || []), before].slice(-HISTORY_LIMIT) : previous.history || [],
     future: history ? [] : previous.future || [] };
   const file = state.files.find(f => f.path === path); if (file?.exported) file.dirty = true;
+  // A new plan has freshly measured its own targets. Prefer that evidence until the next export.
+  const beforePlan = before.edit_steps?.find(step => step.plan);
+  const afterPlan = after.edit_steps?.find(step => step.plan);
+  if (file?.objectChecks && afterPlan &&
+      (beforePlan?.id !== afterPlan.id || JSON.stringify(beforePlan.plan) !== JSON.stringify(afterPlan.plan))) {
+    for (const name of Object.keys(afterPlan.regions)) delete file.objectChecks[name];
+  }
+  syncRecipeReview(file, after);
   emit(path, 'change'); scheduleProjectSave();
 }
 
@@ -49,6 +75,7 @@ function travel(path, undo) {
   project.photos[path] = { ...photoValues(next), [from]: source,
     [to]: [...(current[to] || []), photoValues(current)].slice(-HISTORY_LIMIT) };
   const file = state.files.find(f => f.path === path); if (file?.exported) file.dirty = true;
+  syncRecipeReview(file, next);
   emit(path, undo ? 'undo' : 'redo'); scheduleProjectSave(); return true;
 }
 export const undoPhoto = path => travel(path, true);
@@ -71,6 +98,9 @@ function snapshot() {
     result.folder.settings = safeSettings(state.settings);
     result.files = Object.fromEntries(state.files.map(f => [f.path, {
       checked: !!f.checked, dirty: !!f.dirty, status: ['finished', 'review', 'failed', 'saved'].includes(f.status) ? f.status : '',
+      ...(f.status === 'review' && f.error ? { qualityReason: f.error.slice(0, 2048) } : {}),
+      ...(Object.keys(f.objectChecks || {}).length ? { objectChecks: f.objectChecks } : {}),
+      ...(f.recipeReview ? { recipeReview: f.recipeReview } : {}),
       ...(f.exported ? { out: f.exported } : {}),
     }]));
     const match = location.hash.match(/^#\/photo\/(\d+)/);
@@ -131,6 +161,9 @@ export async function loadProject(dir, { initialize } = {}) {
     if (!object(savedFile)) return;
     if (typeof savedFile.checked === 'boolean') f.checked = savedFile.checked;
     if (['finished', 'review', 'failed', 'saved'].includes(savedFile.status)) f.status = savedFile.status;
+    if (object(savedFile.objectChecks)) f.objectChecks = { ...savedFile.objectChecks };
+    if (savedFile.qualityReason) f.error = savedFile.qualityReason;
+    syncRecipeReview(f, project.photos[f.path]);
     if (typeof savedFile.dirty === 'boolean') f.dirty = savedFile.dirty;
     if (typeof savedFile.out === 'string') f.exported = savedFile.out;
   });

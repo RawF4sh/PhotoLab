@@ -1,0 +1,9 @@
+#native-assist { box-sizing:border-box; width:min(32rem,95vw); height:auto; max-height:90vh; padding:1rem; gap:.9rem; overflow:auto; }
+#native-assist .assist-heading { display:flex; align-items:center; justify-content:space-between; }
+#native-assist label { display:block; line-height:1.5; }
+#native-assist textarea, #native-assist input[type=password] { display:block; box-sizing:border-box; width:100%; margin-top:.3rem; padding:.5rem; border:1px solid #777; border-radius:.3rem; font:inherit; }
+#native-assist p { margin:0; }
+#native-assist p:empty, #native-assist .assist-choices:empty { display:none; }
+#native-assist .assist-choices > div { border-top:1px solid #444; padding:.6rem 0; }
+#native-assist .assist-choices p { margin:.25rem 0 0 1.4rem; }
+#native-assist [type=checkbox] { margin-right:.45rem; }

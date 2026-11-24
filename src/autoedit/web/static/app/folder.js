@@ -5,7 +5,7 @@ import { runOptions, openSettings } from './settings.js';
 import { loadEntries, textOf, marksOf, hideRequest } from './photo.js';
 import { runTool } from './tools.js';
 import { openShare, exportsDir } from './share.js';
-import { getPhoto, loadProject, persistProject, scheduleProjectSave, folderSettingsChanged } from './project.js';
+import { getPhoto, getPhotoValues, loadProject, persistProject, scheduleProjectSave, folderSettingsChanged, syncRecipeReview } from './project.js';
 import { openPhotoPresets } from './presets.js';
 import { workflowSteps, readinessCard } from './workflow.js';
 
@@ -32,13 +32,17 @@ export async function loadFolderPath(path, { photo } = {}) {
   opening = true;
   try {
     if (await persistProject() === false) { toast('Your changes could not be saved. Keep this folder open and try again.'); return; }
-    const g = await api('/groups?dir=' + encodeURIComponent(path)).catch(e => { toast(e.message); return null; });
+    const g = await api('/groups?dir=' + encodeURIComponent(path)).catch(e => {
+      if (e.status === 403 && e.code === 'forbidden') reopenFolder(path, photo);
+      else toast(e.message);
+      return null;
+    });
     if (!g) return;
     if (!Array.isArray(g) || !g.length) { toast('No photos in this folder.'); return; }
     let saved;
     try { saved = await loadProject(path, { initialize: () => {
       stopStream();
-      Object.assign(state, { dir: path, job: null, reviewQueue: false, look: '', genre: '', strength: null, runText: '', exportPreset: '', folderSliders: {} });
+      Object.assign(state, { dir: path, job: null, reviewQueue: false, look: '', genre: '', strength: null, runText: '', exportPreset: '', folderSliders: {}, recipes: [] });
       state.files = g.map(x => ({ name: x.raw || x.pixel, path: joinPath(path, x.raw || x.pixel),
         thumb: joinPath(path, x.pixel || x.raw), checked: true, status: '', captureTime: x.capture_time }));
     } }); }
@@ -58,9 +62,10 @@ export async function loadFolderPath(path, { photo } = {}) {
     scheduleProjectSave();
     if (photo) {
       const index = state.files.findIndex(f => f.path === photo || f.thumb === photo);
-      if (index >= 0) { view.last = index; go('photo', { index }); return; }
+      if (index >= 0) { view.last = index; go('photo', { index }); return true; }
     }
     go('folder');
+    return true;
   } finally { opening = false; }
 }
 
@@ -70,11 +75,25 @@ export async function loadPhotoPath(path) {
   await loadFolderPath(path.slice(0, slash) || '/', { photo: path });
 }
 
+function reopenFolder(path, photo) {
+  openSheet('Reopen ' + baseName(path), (body, close) => {
+    const choose = el('button', { type: 'button', class: 'primary', on: { click: async () => {
+      choose.disabled = true;
+      try { if (await openFolderDialog({ photo })) close(); }
+      finally { if (choose.isConnected) choose.disabled = false; }
+    } } }, 'Choose folder');
+    body.append(el('p', null, 'Choose this folder again to reopen it with your saved edits.'),
+      el('p', { class: 'reopen-folder-path' }, path),
+      el('p', { class: 'fine' }, 'Your edits stay saved if you cancel.'),
+      choose, el('button', { type: 'button', class: 'line', on: { click: close } }, 'Not now'));
+  });
+}
+
 let picking = false;   // one dialog at a time
-export async function openFolderDialog() {
+export async function openFolderDialog({ photo } = {}) {
   if (picking) return;
   picking = true;
-  try { const r = await api('/pick?kind=folder', {}); if (r.path) await loadFolderPath(r.path); }
+  try { const r = await api('/pick?kind=folder', {}); if (r.path) return await loadFolderPath(r.path, { photo }); }
   catch (e) { toast(e.message); }
   finally { picking = false; }
 }
@@ -116,19 +135,16 @@ const ago = ms => {
 
 export const screen = {   // Start
   mount(root) {
-    setBar(el('span', { class: 'title grow' }, 'AutoEdit'), gearButton());
+    setBar(backButton('Start', 'start'), el('span', { class: 'title grow' }, 'Guided workspace'), gearButton());
     const recent = recents();
     root.append(el('div', { class: 'start' },
       el('h1', null, 'A better edit, ready to make your own'),
-      el('p', { class: 'fine' }, 'Open a photo to refine it, or a folder to edit a whole shoot.'),
       workflowSteps('open'),
       el('div', { class: 'start-actions', on: { dragover: e => { e.preventDefault(); e.currentTarget.classList.add('dragging'); }, dragleave: e => e.currentTarget.classList.remove('dragging'), drop: dropped } },
         el('button', { type: 'button', class: 'primary', on: { click: openPhotoDialog } }, 'Open photo'),
         el('button', { type: 'button', class: 'line', on: { click: openFolderDialog } }, 'Open folder')),
       el('button', { type: 'button', class: 'link', on: { click: openSample } }, 'Try a sample set'),
-      el('small', null, 'Generated demo images. No download or setup.'),
       readinessCard(openSettings),
-      el('p', { class: 'fine' }, 'Edits stay on this computer. Optional cloud suggestions send a small preview only when you request them.'),
       recent.length ? el('div', { class: 'recent' }, el('h3', null, 'Recent'),
         ...recent.map(r => el('button', { type: 'button', on: { click: () => loadFolderPath(r.path) } },
           r.name, el('small', null, r.count + ' photos · opened ' + ago(r.at))))) : null));
@@ -142,24 +158,50 @@ function etaText(s) {
 }
 
 function photoSignature(path) {
-  const own = getPhoto(path); delete own.history; delete own.future;
+  const own = getPhotoValues(path);
   return JSON.stringify({ folder: runOptions(), photo: own,
     sliders: own.sliders === undefined ? state.folderSliders : own.sliders });
+}
+
+// A completed export can refer to an older edit while the photographer is still working.
+export function applyBatchItem(file, item, submitted, currentSignature) {
+  if (item.out) file.exported = item.out;
+  if (submitted && submitted.signature !== currentSignature) {
+    if (['waiting', 'editing'].includes(file.status)) {
+      file.status = submitted.status;
+      file.error = submitted.error;
+    }
+    file.dirty = true;
+    return;
+  }
+  file.status = item.status;
+  file.error = item.error || item.warn || '';
+  if (!item.out) return;
+  file.dirty = false;
+  if (item.object_checks) {
+    // The quality verdict belongs to the export. A missing object applies only while
+    // its adjustment is active and must disappear when that step is removed or disabled.
+    file.status = item.quality_warn ? 'review' : 'finished';
+    file.error = item.quality_warn || '';
+    file.objectChecks = item.object_checks;
+    syncRecipeReview(file, getPhotoValues(file.path));
+  }
 }
 
 function applySnap(s) {
   state.job = { id: s.id, status: s.status };
   const byPath = new Map(state.files.map(file => [file.path, file]));
-  (s.items || []).forEach(it => {
-    const f = byPath.get(it.src);
-    if (f) {
-      f.status = it.status; f.error = it.error || '';
-      if (it.out) {
-        f.exported = it.out;
-        if (batchSettings.has(f.path)) f.dirty = batchSettings.get(f.path) !== photoSignature(f.path);
-      }
-    }
-  });
+  for (const item of s.items || []) {
+    const file = byPath.get(item.src);
+    if (!file) continue;
+    const submitted = batchSettings.get(file.path);
+    const receipt = JSON.stringify([item.status, item.out, item.warn, item.error, item.quality_warn, item.object_checks]);
+    if (submitted && submitted.receipt === receipt) continue;
+    if (submitted) submitted.receipt = receipt;
+    const completed = item.out || item.status === 'failed';
+    const signature = completed && submitted ? photoSignature(file.path) : submitted?.signature;
+    applyBatchItem(file, item, submitted, signature);
+  }
   const bits = [];
   if (s.review) bits.push(s.review + ' to look at');
   if (s.failed) bits.push(s.failed + ' failed');
@@ -199,10 +241,11 @@ function startStream(id) {
 async function editPhotos() {
   const files = state.files.filter(f => f.checked);
   if (!files.length || running()) return;
-  files.forEach(f => { f.status = ''; f.error = ''; });
   view.note = 'Starting…'; view.kind = ''; paintAll();
   try {
-    batchSettings = new Map(files.map(f => [f.path, photoSignature(f.path)]));
+    batchSettings = new Map(files.map(f => [f.path, {
+      signature: photoSignature(f.path), status: f.status, error: f.error || '',
+    }]));
     const photo_edits = {}, photo_marks = {}, photo_hide = {}, photo_options = {};   // exactly the same per-photo settings as Preview and Save
     files.forEach(f => {
       const l = loadEntries(f.path), t = textOf(l), m = marksOf(l), h = hideRequest(f.path);
@@ -214,7 +257,7 @@ async function editPhotos() {
       const sliders = own.sliders === undefined ? state.folderSliders : own.sliders;
       if (sliders && Object.keys(sliders).length) options.photo_settings = sliders;
       if (own.base !== undefined) options.photo_base = own.base;
-      ['region_settings', 'mask_refinements', 'photo_geometry', 'local_only'].forEach(key => { if (own[key] !== undefined) options[key] = own[key]; });
+      ['region_settings', 'mask_refinements', 'photo_geometry', 'local_only', 'edit_steps'].forEach(key => { if (own[key] !== undefined) options[key] = own[key]; });
       if (Object.keys(options).length) photo_options[f.path] = options;
     });
     const s = await api('/jobs', { input_dir: state.dir, files: files.map(f => f.path), ...runOptions(),
@@ -241,8 +284,12 @@ function assignBursts() {
   finish();
 }
 
+function visibleStatus(file) {
+  return file.recipeReview && !['failed', 'editing', 'waiting'].includes(file.status) ? 'review' : file.status;
+}
+
 function visibleFiles() {
-  return state.files.filter(f => (view.filter === 'all' || f.status === view.filter || (view.filter === 'attention' && ['review', 'failed'].includes(f.status)))
+  return state.files.filter(f => (view.filter === 'all' || visibleStatus(f) === view.filter || (view.filter === 'attention' && ['review', 'failed'].includes(visibleStatus(f))))
     && (!view.hits || view.hits.has(f.path)) && (!view.burst || f.burst === view.burst));
 }
 
@@ -269,9 +316,11 @@ function paintAll() {
   const n = state.files.filter(f => f.checked).length, total = state.files.length;
   state.files.forEach(f => {
     if (!f.dot) return;
-    if (f.status) f.dot.dataset.status = f.status; else delete f.dot.dataset.status;
+    if (visibleStatus(f)) f.dot.dataset.status = visibleStatus(f); else delete f.dot.dataset.status;
     f.box.checked = f.checked;
-    f.btn.title = f.error || '';
+    const names = (getPhoto(f.path).edit_steps || []).filter(step => step.origin === 'recipe' && step.on).map(step => step.label);
+    f.recipeLabel.textContent = names.join(', '); f.recipeLabel.hidden = !names.length;
+    f.btn.title = [f.recipeReview, f.error].filter(Boolean).join(' · ');
   });
   u.all.checked = n === total; u.all.indeterminate = n > 0 && n < total;
   u.allText.textContent = 'All · ' + total;
@@ -282,11 +331,11 @@ function paintAll() {
   u.findNote.textContent = view.findNote; u.clear.hidden = !view.hits;
   u.pause.hidden = u.cancel.hidden = !running();
   u.pause.textContent = state.job && state.job.status === 'paused' ? 'Resume' : 'Pause';
-  const attention = state.files.filter(f => ['review', 'failed'].includes(f.status)).length;
+  const attention = state.files.filter(f => ['review', 'failed'].includes(visibleStatus(f))).length;
   u.review.textContent = 'Review ' + attention; u.review.disabled = !attention;
   for (const option of u.filter.options) {
     const labels = { all: 'All', review: 'Needs review', failed: 'Failed', attention: 'Review queue' };
-    const count = option.value === 'all' ? total : option.value === 'attention' ? attention : state.files.filter(f => f.status === option.value).length;
+    const count = option.value === 'all' ? total : option.value === 'attention' ? attention : state.files.filter(f => visibleStatus(f) === option.value).length;
     option.textContent = labels[option.value] + ' · ' + count;
   }
 }
@@ -303,7 +352,8 @@ function tile(f, i) {
       view.anchor = i; scheduleProjectSave(); paintAll();
     } } });
   f.dot = el('span', { class: 'dot' });
-  f.cell = el('li', { class: 'cell' }, f.btn, f.box, f.dot,
+  f.recipeLabel = el('small', { class: 'recipe-tile-label' });
+  f.cell = el('li', { class: 'cell' }, f.btn, f.box, f.dot, f.recipeLabel,
     el('span', { class: 'cell-name' }, f.name), f.burst ? el('span', { class: 'burst-label', title: 'Photos taken within two seconds of the next frame' }, 'Sequence') : null);
   return f.cell;
 }
@@ -399,11 +449,8 @@ function sidePanel() {
     field('Look', 'look', lookSel, el('button', { type: 'button', class: 'link', on: { click: () => surprise(lookSel) } }, 'Surprise me'),
       el('button', { type: 'button', class: 'link', on: { click: () => openPhotoPresets({
         getOptions: () => ({ look: state.look, intensity: state.strength === null ? dflt : state.strength, sliders: state.folderSliders || {} }),
-        onApply: settings => {
-          state.look = settings.look || ''; state.strength = settings.intensity === undefined ? null : settings.intensity;
-          state.folderSliders = settings.sliders || {}; folderSettingsChanged(); go('folder');
-        },
-      }) } }, 'My presets')),
+        folder: true, repaint: paintAll,
+      }) } }, 'Recipes')),
     genreField,
     el('div', { class: 'field' }, el('div', { class: 'row' }, el('label', { htmlFor: 'strength' }, 'Strength'), out, reset), range),
     field('What to change in every photo', 'runText', text),
@@ -418,7 +465,7 @@ export const folder = {
   mount(root) {
     const findBox = el('input', { type: 'search', placeholder: 'Find', title: 'Words from what the photos show, then Enter', 'aria-label': 'Find',
       on: { keydown: e => { if (e.key === 'Enter') runFind(e.target); } } });
-    setBar(backButton('Start', 'start'),
+    setBar(backButton('Workspace', 'workspace'),
       el('span', { class: 'title' }, baseName(state.dir) + ' · ' + state.files.length + (state.files.length === 1 ? ' photo' : ' photos')),
       el('span', { class: 'grow' }),
       findBox,
@@ -429,7 +476,7 @@ export const folder = {
     const allText = el('span');
     const filter = select([['all', 'All'], ['attention', 'Review queue'], ['review', 'Needs review'], ['failed', 'Failed']], view.filter, v => { view.filter = v; view.page = 0; paintAll(); }, 'show');
     const review = el('button', { type: 'button', class: 'line', on: { click: () => {
-      const index = state.files.findIndex(f => ['review', 'failed'].includes(f.status));
+      const index = state.files.findIndex(f => ['review', 'failed'].includes(visibleStatus(f)));
       if (index >= 0) { view.filter = 'attention'; view.last = index; state.reviewQueue = true; go('photo', { index }); }
     } } }, 'Review');
     const groups = new Map();
@@ -454,11 +501,10 @@ export const folder = {
     root.append(el('div', { class: 'folder' },
       el('div', { class: 'main' },
         el('div', { class: 'folder-guide' },
-          el('div', null, el('strong', null, 'Start with one photo'), el('small', null, 'Preview the automatic edit, make it yours, then reuse your settings across the folder.')),
+          el('strong', null, 'Start with one photo'),
           el('button', { type: 'button', class: 'line', on: { click: () => { const i = state.files.findIndex(file => file.checked); go('photo', { index: i < 0 ? 0 : i }); } } }, 'Preview a photo')),
         el('div', { class: 'tools' }, el('label', null, all, ' ', allText), el('span', { class: 'grow' }),
           burstControl, el('label', { htmlFor: 'show' }, 'Show '), filter, review, findNote, clear),
-        el('small', { class: 'selection-hint' }, 'Shift-click a checkbox to select a range.'),
         line, grid, empty, pager),
       side));
     view.ui = { all, allText, run, note, line, pause, cancel, findNote, clear, filter, review, grid, empty, pageText, prev, next, pager };

@@ -1,13 +1,13 @@
 // Source-coordinate object and framing tools; reviewed assistance and native detail.
 import { el, api, state, nice, openSheet, toast } from './main.js';
 import { getPhoto, updatePhoto } from './project.js';
+import { changesPanel, checkStepCapacity, selectedChanges } from './edit_steps.js';
 import { assistantOptions, setAssistantConsent } from './settings.js';
 
 const IMAGE = /^data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/;
 const round = n => Math.round(n * 10000) / 10000;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const button = (label, click, attrs = {}) => el('button', { type: 'button', ...attrs, on: { click } }, label);
-const valuesOf = photo => photo.sliders === undefined ? state.folderSliders || {} : photo.sliders;
 const valueText = (op, value) => value === 0 ? 'No added change' : (value > 0 ? '+' : '') + Number(value.toFixed(2)) + (op === 'exposure' ? ' EV' : '');
 
 export function createPhotoTools({ path, frame, displayImage, request, alive, onMode, refresh }) {
@@ -18,7 +18,8 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
   const selection = el('div', { class: 'editor-selected-mask' }), brush = el('canvas', { class: 'editor-brush' });
   const crop = el('div', { class: 'editor-crop-box', hidden: true });
   overlay.append(selection, brush, crop); frame.append(overlay);
-  const ui = {};
+  const ui = {}, changes = changesPanel(path);
+  let previewSignature = '';
   const active = () => !disposed && alive();
   const sourceMode = () => ['select', 'add', 'subtract', 'crop', 'mark', 'neutral'].includes(mode);
   const currentGeometry = () => getPhoto(path).photo_geometry || { angle: 0, crop: null };
@@ -64,8 +65,8 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
         note('Use a short object name such as jacket or bouquet. Global, mark and place commands are not object names.'); ui.objectName.focus(); return;
       }
       const photo = getPhoto(path), regions = { ...(photo.region_settings || {}) };
-      const names = new Set([...Object.keys(regions), ...(photo.base?.selected_regions || []), name]);
-      if (names.size > 32) { note('This photo already requests 32 objects. Reset an unused object before finding another.'); return; }
+      try { checkStepCapacity({ ...photo, region_settings: { ...regions, [name]: {} } }, photo.edit_steps || []); }
+      catch (error) { note(error.message); return; }
       selected = name; finding = name; if (!Object.hasOwn(regions, name)) regions[name] = {};
       updatePhoto(path, { region_settings: regions }); setMode('select'); ui.objectName.value = name;
       if (objects.some(o => o.name === name)) { finding = ''; paintObjectList(); }
@@ -90,7 +91,6 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       find, ui.select, ui.objectList, ui.regionTitle, ui.regionSliders,
       el('div', { class: 'editor-history' }, ui.add, ui.subtract),
       el('div', { class: 'sl' }, el('div', { class: 'row' }, el('span', null, 'Brush size'), ui.radiusValue), ui.radius),
-      el('p', { class: 'fine' }, 'Paint on the uncropped photo. Each stroke can be undone.'),
       el('div', { class: 'editor-history' }, reset, button('Done selecting', () => setMode('none'), { class: 'line' })));
     return ui.objectSection;
   }
@@ -125,6 +125,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
   }
   function sync() {
     if (!ui.objectList) return;
+    changes.sync(previewSignature === photoSignature() ? answer : null);
     if (ui.consent) ui.consent.checked = !!assistantOptions().allow_cloud;
     const p = getPhoto(path), found = objects.some(o => o.name === selected && o.found !== false);
     ui.select.setAttribute('aria-pressed', String(mode === 'select'));
@@ -140,7 +141,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
     ui.cropNumbers.forEach((input, i) => { input.value = Math.round(box[i] * 1000) / 10; });
     if (proposal && photoSignature() !== proposalSignature) { proposal = null; ui.proposal.replaceChildren(); ui.assistStatus.textContent = 'The photo changed. Ask again for a suggestion based on this edit.'; }
     if (appliedSuggestion && photoSignature() === appliedSuggestion.before) ui.assistStatus.textContent = 'Suggestion undone. Your previous edit is restored.';
-    else if (appliedSuggestion && photoSignature() === appliedSuggestion.after) ui.assistStatus.textContent = 'Applied as editable adjustments. Undo restores your previous edit.';
+    else if (appliedSuggestion && photoSignature() === appliedSuggestion.after) ui.assistStatus.textContent = 'Applied to the Changes list.';
     paintSelection();
   }
   async function decodeObjects(list, generation) {
@@ -160,6 +161,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
   }
   function acceptPreview(j) {
     if (!active()) return;
+    previewSignature = photoSignature();
     answer = j; sourceReady = j.coordinate_space === 'source' && displayed();
     definitions = j.editor?.sliders || definitions;
     objects = Array.isArray(j.objects) ? j.objects : [];
@@ -223,7 +225,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
     ui.cropNote.textContent = 'Crop saved in the project. Preview framing to see the final edges.';
   }
   function framingPanel() {
-    ui.cropNote = el('p', { class: 'fine', role: 'status' }, 'Draw on the original frame, then preview the crop and angle.');
+    ui.cropNote = el('p', { class: 'fine', role: 'status' });
     ui.aspect = el('select', { id: 'crop_aspect', on: { change: e => {
       aspect = +e.target.value;
       if (aspect) {
@@ -243,7 +245,6 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       el('label', { htmlFor: 'crop_aspect' }, 'Aspect'), ui.aspect,
       el('div', { class: 'editor-crop-edges' }, ...ui.cropNumbers.map((input, i) => el('label', null, ['Left %', 'Top %', 'Right %', 'Bottom %'][i], input))),
       el('div', { class: 'sl' }, el('div', { class: 'row' }, el('label', { htmlFor: 'crop_angle' }, 'Angle'), ui.angleValue), ui.angle),
-      el('p', { class: 'fine' }, 'Rotation trims the edges to keep real image pixels. In crop mode, arrow keys move the rectangle; Shift + arrows resize it.'),
       el('div', { class: 'editor-history' }, button('Preview framing', () => setMode('none'), { class: 'line' }),
         button('Reset framing', () => { updatePhoto(path, { photo_geometry: undefined }); ui.aspect.value = '0'; aspect = 0; setMode('none'); }, { class: 'link' })));
   }
@@ -308,34 +309,47 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
         } catch (e) { if (e.name !== 'AbortError' && active() && current === controller) status.textContent = e.message; }
         finally { if (current === controller) update.disabled = false; }
       };
-      body.append(status, el('p', { class: 'fine' }, 'Close this window and click another point in the photo to inspect it. Detail uses the current local controls and final framing.'),
+      body.append(status,
         el('div', { class: 'editor-detail-position' }, el('label', null, 'Across %', inputs[0]), el('label', null, 'Down %', inputs[1]), update),
         el('div', { class: 'editor-native-grid' }, el('section', null, el('h3', null, 'Original'), el('div', { class: 'editor-native-crop' }, before)),
           el('section', null, el('h3', null, 'Edited'), el('div', { class: 'editor-native-crop' }, after))));
       document.getElementById('sheet').addEventListener('close', () => controller?.abort(), { once: true }); render();
     });
   }
-  function proposalRows(p) {
-    const rows = [];
-    const add = (where, ops) => { for (const [op, delta] of Object.entries(ops || {})) if (delta) rows.push(el('li', null, where + ' · ' + (definitions.find(d => d.op === op)?.name || nice(op)) + ' ' + valueText(op, delta))); };
-    add('Whole photo', p.global); for (const [name, ops] of Object.entries(p.regions || {})) add(nice(name), ops); return rows;
-  }
-  function applyProposal() {
-    if (!proposal) return;
-    if (photoSignature() !== proposalSignature) { proposal = null; ui.proposal.replaceChildren(el('p', { class: 'fine' }, 'Your edit changed. Ask again before applying.')); return; }
-    const p = getPhoto(path), global = { ...valuesOf(p) }, regions = JSON.parse(JSON.stringify(p.region_settings || {}));
-    const add = (base, proposed) => {
-      for (const [op, delta] of Object.entries(proposed || {})) {
-        const bounds = definitions.find(d => d.op === op); if (!bounds || !Number.isFinite(delta)) continue;
-        const value = round(clamp((base[op] || 0) + delta, bounds.min, bounds.max)); if (value) base[op] = value; else delete base[op];
+  function showProposal(response) {
+    proposal = response;
+    const selected = new Set(response.proposal.changes.map((_, i) => i));
+    const apply = button('Apply selected', () => {
+      if (!active() || proposal !== response || !selected.size) return;
+      if (photoSignature() !== proposalSignature) {
+        proposal = null; ui.proposal.replaceChildren();
+        ui.assistStatus.textContent = 'Your edit changed. Ask again before applying.'; return;
       }
-    };
-    add(global, proposal.global);
-    for (const [name, ops] of Object.entries(proposal.regions || {})) { const values = regions[name] || {}; add(values, ops); if (Object.keys(values).length) regions[name] = values; }
-    const before = proposalSignature; proposal = null; appliedSuggestion = null;
-    updatePhoto(path, { sliders: global, region_settings: regions, local_only: true });
-    appliedSuggestion = { before, after: photoSignature() };
-    ui.assistStatus.textContent = 'Applied as editable adjustments. Undo restores your previous edit.'; ui.proposal.replaceChildren();
+      let steps;
+      try { steps = selectedChanges(getPhoto(path), response, selected); }
+      catch (error) { ui.assistStatus.textContent = error.message; return; }
+      const before = proposalSignature;
+      proposal = null; appliedSuggestion = null;
+      updatePhoto(path, { edit_steps: steps, local_only: true });
+      appliedSuggestion = { before, after: photoSignature() };
+      ui.assistStatus.textContent = 'Applied to the Changes list.'; ui.proposal.replaceChildren();
+    }, { class: 'primary', disabled: !selected.size });
+    const rows = response.proposal.changes.map((change, index) => {
+      const checkbox = el('input', { type: 'checkbox', checked: true, on: { change: event => {
+        if (event.target.checked) selected.add(index); else selected.delete(index);
+        apply.disabled = selected.size === 0;
+      } } });
+      const target = change.target === 'photo' ? 'Whole photo' : nice(change.target);
+      const offsets = Object.entries(change.ops).map(([op, value]) =>
+        (definitions.find(def => def.op === op)?.name || nice(op)) + ' ' + valueText(op, value));
+      return el('li', null, el('label', { class: 'check' }, checkbox, change.label),
+        el('small', null, target + ' · ' + offsets.join(', ')), change.why ? el('p', { class: 'fine' }, change.why) : null);
+    });
+    const dismiss = button('Dismiss', () => {
+      proposal = null; ui.proposal.replaceChildren(); ui.assistStatus.textContent = 'Suggestion dismissed.';
+    }, { class: 'line' });
+    ui.proposal.append(el('p', null, response.proposal.explanation), el('ul', { class: 'editor-proposal-list' }, ...rows),
+      el('div', { class: 'editor-history' }, apply, dismiss));
   }
   function assistPanel() {
     ui.assistPrompt = el('textarea', { id: 'assist_prompt', rows: 3, maxLength: 1200, placeholder: 'e.g. Keep the snow natural and warm the foreground', 'aria-label': 'Describe the edit you want' });
@@ -352,24 +366,24 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
         if (!active() || controller !== assistController) return;
         if (j.status !== 'ok' || !j.proposal) { ui.assistStatus.textContent = j.message || 'Gemini could not suggest changes. Your local edit is unchanged.'; return; }
         if (photoSignature() !== start) { ui.assistStatus.textContent = 'Your edit changed while Gemini was working. Ask again for the latest version.'; return; }
-        proposal = j.proposal; proposalSignature = start; ui.assistStatus.textContent = 'Review the suggestion. Nothing changes until you apply it.';
-        const rows = proposalRows(proposal);
-        ui.proposal.append(el('p', null, proposal.explanation || ''), el('ul', { class: 'editor-proposal-list' }, ...rows),
-          el('div', { class: 'editor-history' }, button('Apply suggestion', applyProposal, { class: 'primary', disabled: !rows.length || !definitions.length }),
-            button('Dismiss', () => { proposal = null; ui.proposal.replaceChildren(); ui.assistStatus.textContent = 'Suggestion dismissed. Your edit is unchanged.'; }, { class: 'line' })));
+        proposalSignature = start; ui.assistStatus.textContent = 'Select the changes you want to apply.';
+        showProposal(j);
       } catch (e) { if (e.name !== 'AbortError' && active() && controller === assistController) ui.assistStatus.textContent = e.message; }
       finally { if (active() && controller === assistController) ui.ask.disabled = false; }
     }, { class: 'line' });
     return el('details', { class: 'editor-tool' }, el('summary', null, 'Ask Gemini'),
-      el('p', { class: 'fine' }, 'Get a suggestion you can inspect and adjust. Your full-resolution photo stays on this computer. Set a Gemini key in Settings, or use the configured environment key.'),
       ui.assistPrompt, el('label', { class: 'check' }, ui.consent, ' Send a small preview and editing measurements to Gemini'), ui.ask, ui.assistStatus, ui.proposal);
   }
 
-  const panels = [objectPanel(), framingPanel(), assistPanel()];
+  const panels = [changes.panel, objectPanel(), framingPanel(), assistPanel()];
   ui.sourceNote = el('p', { class: 'fine editor-source-note', role: 'status' });
   for (const [name, fn] of [['pointerdown', down], ['pointermove', move], ['pointerup', up], ['pointercancel', cancel], ['keydown', keys]]) frame.addEventListener(name, fn, true);
   return {
     panels, sourceNote: ui.sourceNote, acceptPreview, sync, setMode, sourceMode,
+    openObjects() {
+      ui.objectSection.open = true; setMode('select');
+      ui.objectName.focus({ preventScroll: true }); ui.objectSection.scrollIntoView({ block: 'nearest' });
+    },
     imageReady() { sourceReady = !!answer && answer.coordinate_space === 'source' && displayed(); paintSelection(); if (sourceReady) paintObjectList(); },
     get mode() { return mode; }, get ready() { return !sourceMode() || sourceReady; },
     detailButton: () => button('Native detail', () => openDetail(), { class: 'line', title: 'Inspect matched original and edited pixels at native resolution' }),

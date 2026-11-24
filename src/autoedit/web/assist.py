@@ -6,6 +6,9 @@ import base64
 import math
 import os
 import re
+import uuid
+
+from ..segment.refine import name as region_name
 
 from ..decide import gemini
 
@@ -25,12 +28,22 @@ def _numbers(value, keys):
             if type(values.get(key)) in (int, float) and math.isfinite(values[key]) and abs(values[key]) <= 1e9}
 
 
+def _suggestible_region(name):
+    if not isinstance(name, str) or not _NAME.fullmatch(name) or name == "photo":
+        return False
+    try:
+        region_name(name)
+    except ValueError:
+        return False
+    return True
+
+
 def _context(render, opts, bounds):
     result = render["result"]
     # Only masks which actually claimed pixels can receive a proposed region adjustment. Marks
     # and generated instruction names are excluded: they aren't named object controls.
     masks = sorted((m for m in render.get("source_overlays", [])
-                    if m.get("coverage", 0) > 0 and isinstance(m.get("name"), str) and _NAME.fullmatch(m["name"])),
+                    if m.get("coverage", 0) > 0 and _suggestible_region(m.get("name"))),
                    key=lambda m: (-m["coverage"], m["name"]))[:gemini.MAX_REGIONS]
     names = list(dict.fromkeys(m["name"] for m in masks))
     stats = {r.name: r for r in (result.post_region_stats or result.region_stats)}
@@ -75,6 +88,8 @@ def suggest(image_path, opts, configs_dir=None, profile=None):
                                opts.get("recipe_model") or None)
         service.check_image(image_path)
         bounds, _ = service.editor_sliders()
+        from . import edit_steps
+        opts, _ = edit_steps.fold(opts, bounds)
         service.check_photo_settings(opts.get("photo_settings"))
         local = {k: v for k, v in opts.items() if k not in _PRIVATE_KEYS}
         local.update(decider="rules", allow_cloud=False, translator="off", preview_edge=640)
@@ -88,8 +103,9 @@ def suggest(image_path, opts, configs_dir=None, profile=None):
             thumbnail = base64.b64decode(preview.split(",", 1)[1], validate=True)
         except Exception:
             raise gemini.Unavailable("local_preview", "A local preview could not be prepared. Your edits are unchanged; try the photo again.") from None
-        return _CLIENT.suggest(thumbnail=thumbnail, prompt=prompt, context=context, bounds=bounds,
-                               names=names, api_key=key, allow_cloud=True)
+        result = _CLIENT.suggest(thumbnail=thumbnail, prompt=prompt, context=context, bounds=bounds,
+                                 names=names, api_key=key, allow_cloud=True)
+        return {**result, "id": uuid.uuid4().hex}
     except gemini.Unavailable as error:
         return {"status": "unavailable", "reason": error.reason, "message": str(error),
                 "proposal": None, "model": gemini.MODEL, "budget": _CLIENT.budget.status()}

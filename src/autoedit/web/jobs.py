@@ -13,10 +13,11 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .. import consistency, emit
 from ..imageio import is_supported
+from . import edit_steps
 
 
 def _list_images(d: str) -> list[str]:
@@ -36,6 +37,8 @@ class Item:
     warn: str = ""
     error: str = ""
     ms: float = 0.0
+    quality_warn: str = ""
+    object_checks: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -53,6 +56,8 @@ class Job:
     photo_edits: dict | None = None  # abspath of a photo -> its follow-up text (F19)
     photo_marks: dict | None = None  # abspath of a photo -> its checked marks (F37)
     photo_hide: dict | None = None   # abspath of a photo -> {"hide": [kinds], "hide_method": m}: what the Hide control asked for (F22)
+    default_change_notes: tuple = ()
+    photo_change_notes: dict | None = None
     photo_options: dict | None = None  # persisted look, neutral/reference and slider offsets per photo
 
 
@@ -161,23 +166,33 @@ def _check_photo_hide(photo_hide, srcs, opts, configs_dir, profile) -> dict[str,
     return out
 
 
-def _check_photo_options(value, srcs, opts, configs_dir, profile):
+def _check_photo_options(value, srcs, opts, configs_dir, profile, table=None):
     from . import photo_base
-    from .service import check_photo_settings, check_region_settings, ensure_allowed, make_cfg
+    from .service import check_photo_settings, check_region_settings, editor_sliders, ensure_allowed, make_cfg
     if value is None:
-        return {}
+        return {}, {}
+    if table is None:
+        table, _ = editor_sliders()
     if not isinstance(value, dict) or len(value) > MAX_PHOTO_EDITS:
         raise ValueError("photo_options must be an object with at most 10000 photos")
     known = {os.path.abspath(s) for s in srcs}
     allowed = {"look", "intensity", "neutral", "reference", "reference_strength", "photo_settings", "photo_base", "hide", "hide_method",
-               "region_settings", "mask_refinements", "photo_geometry", "local_only"}
-    checked = {}
+               "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps"}
+    checked, change_notes = {}, {}
     for path, req in value.items():
         if not isinstance(path, str) or os.path.abspath(path) not in known:
             raise ValueError("photo_options names a photo that is not in the job")
         if not isinstance(req, dict) or set(req) - allowed:
             raise ValueError("photo_options contains unsupported options")
         req = dict(req)
+        if "edit_steps" in req or "edit_steps" in opts:
+            # Inheritance happens before folding: overriding a manual slider or replacing
+            # the folder's change list must not reuse its already folded totals.
+            controls = {k: req.get(k, opts.get(k)) for k in ("photo_settings", "region_settings", "edit_steps")}
+            folded, limited = edit_steps.fold(controls, table)
+            req.pop("edit_steps", None)
+            req.update(folded)
+            change_notes[os.path.abspath(path)] = edit_steps.notes(controls["edit_steps"], limited)
         if "photo_settings" in req:
             req["photo_settings"] = check_photo_settings(req["photo_settings"])
         if "photo_base" in req:
@@ -188,7 +203,7 @@ def _check_photo_options(value, srcs, opts, configs_dir, profile):
             ensure_allowed(req["reference"])
         make_cfg({**opts, **req}, configs_dir, profile)
         checked[os.path.abspath(path)] = req
-    return checked
+    return checked, change_notes
 
 
 def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo_edits=None,
@@ -198,16 +213,20 @@ def start(input_dir, files, out_dir, opts, configs_dir=None, profile=None, photo
     if not srcs:                     # empty/bad dir → surface an error (was a silent 0-item "done")
         raise ValueError("no supported images found to process")
     # Reject invalid options and unapproved reference/LUT paths before a worker is started.
-    from .service import make_cfg
-    make_cfg(opts, configs_dir, profile)
+    from .service import editor_sliders, make_cfg
+    table, _ = editor_sliders()
+    folded, limited = edit_steps.fold(opts, table)
+    default_notes = edit_steps.notes(opts.get("edit_steps", []), limited)
+    make_cfg(folded, configs_dir, profile)
     edits = _check_photo_edits(photo_edits, srcs)
     marks = _check_photo_marks(photo_marks, srcs, opts, configs_dir, profile)
     hides = _check_photo_hide(photo_hide, srcs, opts, configs_dir, profile)
-    options = _check_photo_options(photo_options, srcs, opts, configs_dir, profile)
+    options, notes = _check_photo_options(photo_options, srcs, opts, configs_dir, profile, table)
     if not out_dir:
         base = input_dir or os.path.dirname(srcs[0])
         out_dir = os.path.join(base, "AutoEdit Exports")
-    job = Job(id=uuid.uuid4().hex[:12], out_dir=out_dir, opts=dict(opts),
+    job = Job(id=uuid.uuid4().hex[:12], out_dir=out_dir, opts=dict(folded),
+              default_change_notes=tuple(default_notes), photo_change_notes=notes,
               items=[Item(name=os.path.basename(s), src=s) for s in srcs], created=time.time())
     job.photo_edits = edits
     job.photo_marks = marks
@@ -289,7 +308,8 @@ def _run(job: Job, configs_dir, profile=None) -> None:
                 photo_adjs = photo_base.adjustments(base) + photo_adjs
                 photo_adjs += mark_adjustments(pipe_i, (job.photo_marks or {}).get(key, []))[0]
                 photo_adjs += settings_adjustments((job.photo_options or {}).get(key, {}).get("photo_settings", job.opts.get("photo_settings")))
-                photo_adjs += region_adjustments((job.photo_options or {}).get(key, {}).get("region_settings", job.opts.get("region_settings")))
+                region_offsets = (job.photo_options or {}).get(key, {}).get("region_settings", job.opts.get("region_settings")) or {}
+                photo_adjs += region_adjustments(region_offsets)
                 with INFERENCE_LOCK:
                     out_rgb, result = pipe_i.process_one(item.src, do_apply=True, exposure_bias=base.get("exposure_bias", bias.exposure),
                                                        batch_group=bias.group, wb_bias=tuple(base.get("wb_bias", (bias.temp, bias.tint))),
@@ -298,9 +318,20 @@ def _run(job: Job, configs_dir, profile=None) -> None:
                     job.out_dir, item.src, cfg_i.out_format, taken, name=cfg_i.out_name,
                     subdir=cfg_i.out_subdir, fields={"style": cfg_i.style, "n": i + 1},
                     sources=sources)
+                change_notes = (job.photo_change_notes or {}).get(key, job.default_change_notes)
+                result.notes.extend(change_notes)
                 emit.write_outputs(out_rgb, result, image_out, sidecar, cfg_i, item.src)
                 item.out, item.scene = image_out, result.scene
-                item.status, item.warn = _safety(result)
+                item.status, item.quality_warn = _safety(result)
+                item.warn = item.quality_warn
+                if change_notes:
+                    item.object_checks = {adj.target: adj.status != "not_found" for adj in result.adjustments
+                                          if adj.resolved_only and adj.status and adj.target in region_offsets}
+                    missing = sorted(name for name, found in item.object_checks.items() if not found)
+                    if missing:
+                        warning = "Object not found: " + ", ".join(missing)
+                        item.status = "review"
+                        item.warn = "; ".join(filter(None, (item.warn, warning)))
             except Exception as e:       # isolate per-image failures
                 item.status, item.error = "failed", str(e)
             item.ms = (time.time() - t0) * 1000.0
@@ -346,5 +377,6 @@ def snapshot(job: Job) -> dict:
         "done": done, "review": review, "failed": failed,
         "current": job.cur, "eta_s": eta,
         "items": [{"name": i.name, "status": i.status, "src": i.src, "out": i.out,
-                   "scene": i.scene, "warn": i.warn, "error": i.error} for i in job.items],
+                   "scene": i.scene, "warn": i.warn, "quality_warn": i.quality_warn,
+                   "object_checks": i.object_checks, "error": i.error} for i in job.items],
     }

@@ -21,10 +21,9 @@ function assistantSection() {
     autocomplete: 'off', placeholder: 'Use a server key, or paste your key for this session',
     on: { input: e => { assistantSession.api_key = e.target.value.trim(); } } });
   return el('details', { class: 'settings-section' }, el('summary', null, 'Gemini suggestions'),
-    el('p', { class: 'fine' }, 'Ask for a suggestion from the photo editor, review its changes, then choose whether to apply them. Your saved adjustments remain editable.'),
     el('label', { htmlFor: 'assistant-enabled', class: 'assistant-consent' }, enabled, ' Allow a small preview and editing measurements to be sent to Google when I request a suggestion'),
     el('label', { htmlFor: 'assistant-key' }, 'Gemini API key'), key,
-    el('small', null, 'The key is kept only until this page closes. If the server already has a Gemini key, leave this blank. API usage may be billed by Google.'),
+    el('small', null, 'This key lasts until the page closes. Google may bill your API usage.'),
     el('button', { type: 'button', class: 'link', on: { click: () => { assistantSession.api_key = ''; assistantSession.allow_cloud = false; key.value = ''; enabled.checked = false; } } }, 'Clear key and turn off'));
 }
 
@@ -83,8 +82,13 @@ function control(s) {
   return el('span', { class: 'ctl' }, input, choose);
 }
 
-const row = s => el('div', { class: 'srow' }, el('label', { htmlFor: 'set_' + s.key }, s.label), control(s),
-  s.help ? el('span', { class: 'help' }, s.help) : null);
+function row(s) {
+  const field = control(s);
+  const helpId = 'help_' + s.key;
+  if (s.help) (field.id ? field : field.querySelector('input')).setAttribute('aria-describedby', helpId);
+  return el('div', { class: 'srow' }, el('label', { htmlFor: 'set_' + s.key }, s.label), field,
+    s.help ? el('span', { id: helpId, class: 'help', hidden: s.key !== 'hide_method' }, s.help) : null);
+}
 
 const FINDER = { auto: 'Auto (SAM 3 when it is installed)', sam3: 'SAM 3', stub: 'Stub (no model)' };
 
@@ -120,17 +124,16 @@ function finderSection(by) {
     ...(b.choices || ['auto', 'sam3', 'stub']).map(c => el('label', null,
       el('input', { type: 'radio', name: 'finder', value: c, checked: state.finder === c,
         on: { change: () => { state.finder = c; store.set('finder', c); folderSettingsChanged(); } } }), ' ' + (FINDER[c] || c)))),
-    b.help ? el('small', null, b.help) : null, modelRow());
+    modelRow());
 }
 
-function appearanceSection() {
+function appearanceSection(descriptions) {
   return el('section', null, el('h3', null, 'Appearance'),
     el('label', null, el('input', { type: 'checkbox', checked: !!store.get('dark', false),
       on: { change: e => { store.set('dark', e.target.checked); applySurround(); } } }), ' Dark surround'),
-    el('small', null, 'The area round a photo is mid grey. This makes it near black.'),
     el('label', null, el('input', { type: 'checkbox', checked: !!store.get('labels', false),
-      on: { change: e => store.set('labels', e.target.checked) } }), ' Collect review labels'),
-    el('small', null, 'Shows Good and Not good on each photo and keeps your answers in the AutoEdit Exports folder, for training later.'));
+      on: { change: e => store.set('labels', e.target.checked) } }), ' Save photo ratings for training'),
+    el('label', null, descriptions, ' Show setting descriptions'));
 }
 
 // The local instruction reader (a small model on this computer), in plain words.
@@ -159,7 +162,8 @@ export async function openSettings() {
   try { sc = await getSchema(); } catch (e) { toast('Settings could not be read: ' + e.message); return; }
   const by = Object.fromEntries((sc.settings || []).map(s => [s.key, s]));
   openSheet('Settings', (body, close) => {
-    body.append(appearanceSection(), assistantSection());
+    const descriptions = el('input', { type: 'checkbox' });
+    body.append(appearanceSection(descriptions), assistantSection());
     const setup = el('details', { class: 'settings-section' }, el('summary', null, 'Object selection setup'), finderSection(by));
     body.append(setup);
     for (const g of sc.groups || []) {
@@ -172,6 +176,10 @@ export async function openSettings() {
         ...rows.filter(s => !s.advanced).map(row),
         adv.length ? el('details', null, el('summary', null, 'More'), ...adv.map(row)) : null));
     }
+    const optionalHelp = body.querySelectorAll('.srow .help[hidden]');
+    descriptions.addEventListener('change', () => {
+      for (const hint of optionalHelp) hint.hidden = !descriptions.checked;
+    });
     body.append(el('section', null,
       el('button', { type: 'button', class: 'line', on: { click: () => {
         state.settings = {}; assistantSession.api_key = ''; assistantSession.allow_cloud = false;

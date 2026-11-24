@@ -116,18 +116,30 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
     @api.get("/edit-presets")
     def editing_presets():
         from . import edit_presets
-        return guard(lambda: {"presets": edit_presets.listing(profile=profile)})
+        return guard(lambda: {"presets": edit_presets.listing(profile, configs_dir),
+                              "measures": edit_presets.recipe_conditions.measures(configs_dir, profile)})
 
     @api.post("/edit-presets")
     def save_editing_preset(payload: dict = Body(...)):
         from . import edit_presets
         return guard(lambda: {"preset": edit_presets.save(payload.get("name"), payload.get("settings"),
-                                                          preset_id=payload.get("id"), profile=profile)})
+                                                          preset_id=payload.get("id"), profile=profile,
+                                                          configs_dir=configs_dir, offsets=payload.get("offsets"))})
+
+    @api.get("/edit-presets/{preset_id}/export")
+    def export_editing_preset(preset_id: str):
+        from . import edit_presets
+        return guard(lambda: edit_presets.portable(preset_id, profile, configs_dir))
+
+    @api.post("/edit-presets/import")
+    def import_editing_preset(payload: dict = Body(...)):
+        from . import edit_presets
+        return guard(lambda: {"preset": edit_presets.import_portable(payload, profile, configs_dir)})
 
     @api.delete("/edit-presets/{preset_id}")
     def delete_editing_preset(preset_id: str):
         from . import edit_presets
-        return guard(lambda: {"deleted": edit_presets.remove(preset_id, profile=profile)})
+        return guard(lambda: {"deleted": edit_presets.remove(preset_id, profile, configs_dir)})
 
     @api.get("/genres")
     def genres():
@@ -424,6 +436,8 @@ def create_app(configs_dir: str = "configs", local_only: bool = True, profile: s
             return style.add_to_look(profile, payload["name"], ids, payload.get("look") or None, configs_dir)
         return guard(go)
 
+    from . import lightcraft
+    lightcraft.register(app, api, guard)
     app.include_router(api, prefix="/api/v1")
     return app
 

@@ -25,6 +25,26 @@
     "query": [],
     "body": false
   },
+  "GET /api/v1/edit-presets/{preset_id}/export": {
+    "path": [
+      "preset_id"
+    ],
+    "query": [],
+    "body": false
+  },
+  "GET /api/v1/editor/original": {
+    "path": [],
+    "query": [
+      "as_tiff",
+      "path"
+    ],
+    "body": false
+  },
+  "GET /api/v1/editor/status": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
   "GET /api/v1/genres": {
     "path": [],
     "query": [],
@@ -160,6 +180,26 @@
     "body": true
   },
   "POST /api/v1/edit-presets": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/edit-presets/import": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/editor/assist": {
+    "path": [],
+    "query": [],
+    "body": true
+  },
+  "POST /api/v1/editor/install": {
+    "path": [],
+    "query": [],
+    "body": false
+  },
+  "POST /api/v1/editor/native": {
     "path": [],
     "query": [],
     "body": true

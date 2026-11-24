@@ -127,13 +127,21 @@ choosing the best variants from a batch.
 
 Open the interface with `pip install -e '.[ui]'` and `autoedit ui` (a browser tab on
 `127.0.0.1:8765`), or as a desktop window with `pip install -e '.[app]'` and `autoedit app` (on
-Linux it needs a GTK or Qt web view). Open one photo, a folder, or the generated sample set.
-Refine the automatic result with saved tone/color controls, compare looks, mark a region or match
-a reference. Preview, Save and batch editing use the same per-photo choices. Projects retain
-your changes and undo history when reopened. Split comparison, preview zoom, a filmstrip and the
-review queue help check a shoot; Copy to similar lets you choose recipients and adjustments.
-Find, share checks and gallery tools remain on the same screens. Light or dark follows the system.
-See [APP_GUIDE.md](APP_GUIDE.md).
+Linux it needs a GTK or Qt web view). Choose a mode on the start screen.
+
+- **Automatic** processes a single photo or a folder with local rules. Review the originals,
+  click **Edit and export**, and open the finished images and decision sidecars in `AutoEdit Exports`.
+- **Photo editor** opens Brandon Thomas's LightCraft web editor with curves, color controls,
+  cropping and local masks. Import the original, make adjustments yourself or click **Auto adjust**.
+  The first launch downloads and verifies LightCraft v0.21.1. Later launches use the local cache.
+  Desktop-only features such as JPEG XL export are available in a separately installed native
+  LightCraft. See [LightCraft's web support](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
+
+**Guided workspace** keeps AutoEdit's recipes, editable Gemini suggestions, teaching tools and
+batch review together. A photo opens on its original. Choose **Preview AutoEdit** to begin, select
+**Targeted edits** to adjust an object, or drag the **Before / after** divider to compare the result.
+You can send the original or a saved, flattened export to Photo editor. The guided project retains
+its editable settings and history. See the [app guide](APP_GUIDE.md).
 
 Run without installing:
 ```bash
@@ -154,13 +162,14 @@ to see your current status.
 The photo editor also offers an optional **Gemini assistant**. Enable it explicitly in Settings
 and supply a session-only key or `GEMINI_API_KEY`. Each request sends a stripped thumbnail
 (at most 512 pixels) and numeric editing context to Google. Review the proposed adjustments
-before applying them; they become normal saved controls with undo, and subsequent previews
+and apply selected changes. Each keeps its own switch, amount and undo history, and subsequent previews
 and exports run locally. No key is saved in projects or presets. Provider errors leave the
 local edit usable. Automated checks use a fake provider and do not upload photos.
 
 The guided workspace includes object sliders, **Find an object**, selection brushes, crop and
-straighten, native-resolution detail inspection, and reusable **My presets** for photos and
-folders. Precise object selection requires SAM 3; the stub offers explicitly approximate demo
+straighten, native-resolution detail inspection, and portable **Recipes** for photos and folders. Recipes
+can include object adjustments and match conditions. Preview the folder plan, review missing
+objects, then apply the first matching recipe to each selected photo. Precise object selection requires SAM 3; the stub offers explicitly approximate demo
 regions. The opt-in `natural_clean` look is a candidate for blind comparison, not a new default.
 See [APP_GUIDE.md](APP_GUIDE.md) for the controls and [the F55 plan](docs/plans/F55-guided-photo-workflow.md)
 for validation and remaining limits.

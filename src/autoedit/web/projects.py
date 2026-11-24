@@ -14,14 +14,15 @@ import tempfile
 import threading
 
 from .. import paths
+from . import edit_steps
 
 MAX_BYTES = 8 * 1024 * 1024
 MAX_PHOTOS = 10_000
 MAX_HISTORY = 50
 _LOCK = threading.Lock()
 _PHOTO = {"look", "intensity", "neutral", "sliders", "entries", "reference", "reference_strength", "hide", "hideMethod", "base",
-          "region_settings", "mask_refinements", "photo_geometry", "local_only"}
-_FOLDER = {"look", "genre", "strength", "runText", "exportPreset", "settings", "finder", "folderSliders"}
+          "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps"}
+_FOLDER = {"look", "genre", "strength", "runText", "exportPreset", "settings", "finder", "folderSliders", "recipes"}
 _STATUS = {"", "waiting", "editing", "finished", "review", "failed", "cancelled", "saved"}
 
 
@@ -40,8 +41,7 @@ def _number(value, name, lo, hi):
         raise ValueError(f"{name} must be a number from {lo} to {hi}")
 
 
-def _photo(value, history=True):
-    from .service import check_photo_settings, check_region_settings
+def _photo(value, table, history=True):
     from .photo_base import check as check_base
     from ..segment.refine import check as check_refinements
     from ..geometry import check_manual
@@ -59,12 +59,19 @@ def _photo(value, history=True):
             raise ValueError("neutral must be a pair of coordinates")
         for x in n:
             _number(x, "neutral", 0, 1)
-    if "sliders" in value:
-        check_photo_settings(value["sliders"])
+    if value.get("sliders") is not None:
+        edit_steps.controls(value["sliders"], table)
     if "base" in value:
         check_base(value["base"])
-    if "region_settings" in value:
-        check_region_settings(value["region_settings"])
+    if value.get("region_settings") is not None:
+        edit_steps.regions(value["region_settings"], table, legacy=True)
+    if "edit_steps" in value:
+        options = {"edit_steps": value["edit_steps"], "photo_settings": value.get("sliders"),
+                   "region_settings": value.get("region_settings")}
+        folded, _ = edit_steps.fold(options, table)
+        from ..segment.refine import names
+        base_regions = (value.get("base") or {}).get("selected_regions", [])
+        names(list(dict.fromkeys([*base_regions, *(folded.get("region_settings") or {})])))
     if "mask_refinements" in value:
         check_refinements(value["mask_refinements"])
     if "photo_geometry" in value:
@@ -96,11 +103,11 @@ def _photo(value, history=True):
             if not isinstance(value[key], list) or len(value[key]) > MAX_HISTORY:
                 raise ValueError(f"{key} must have at most {MAX_HISTORY} snapshots")
             for snapshot in value[key]:
-                _photo(snapshot, history=False)
+                _photo(snapshot, table, history=False)
 
 
 def check_project(folder, project):
-    from .service import _ALLOWED, check_photo_settings
+    from .service import _ALLOWED, check_photo_settings, editor_sliders
     from ..settings_schema import described
     _object(project, {"version", "folder", "photos", "files", "last_index"}, "project")
     if type(project.get("version")) is not int or project["version"] != 1:
@@ -110,6 +117,9 @@ def check_project(folder, project):
     for key in ("look", "genre", "runText", "exportPreset", "finder"):
         if key in opts:
             _text(opts[key], "folder." + key)
+    if "recipes" in opts:
+        from .edit_presets import check_order
+        check_order(opts["recipes"])
     if opts.get("strength") is not None:
         _number(opts["strength"], "folder.strength", 0, 2)
     if "folderSliders" in opts:
@@ -132,6 +142,7 @@ def check_project(folder, project):
                 raise ValueError("project setting text is too long")
         for value in opts["settings"].values():
             safe(value)
+    table, _ = editor_sliders()
     root = os.path.realpath(folder)
     for key in ("photos", "files"):
         mapping = project.get(key, {})
@@ -141,9 +152,22 @@ def check_project(folder, project):
             if not isinstance(path, str) or not os.path.isabs(path) or os.path.commonpath([root, os.path.realpath(path)]) != root:
                 raise ValueError(f"{key} names a photo outside the project folder")
             if key == "photos":
-                _photo(value)
+                _photo(value, table)
             else:
-                _object(value, {"checked", "status", "out", "dirty"}, "file")
+                _object(value, {"checked", "status", "out", "dirty", "recipeReview", "qualityReason", "objectChecks"}, "file")
+                if "qualityReason" in value:
+                    _text(value["qualityReason"], "qualityReason", 2048)
+                if "objectChecks" in value:
+                    from ..segment.refine import MAX_CONCEPTS, name
+                    checks = value["objectChecks"]
+                    if not isinstance(checks, dict) or len(checks) > MAX_CONCEPTS:
+                        raise ValueError("Invalid number of checked objects")
+                    for target, found in checks.items():
+                        name(target)
+                        if type(found) is not bool:
+                            raise ValueError("A checked object must be present or absent")
+                if "recipeReview" in value:
+                    _text(value["recipeReview"], "recipeReview", 2048)
                 if "checked" in value and not isinstance(value["checked"], bool):
                     raise ValueError("checked must be true or false")
                 if "dirty" in value and not isinstance(value["dirty"], bool):

@@ -3,6 +3,27 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Automatic and Photo editor
+
+- Automatic can edit and export one photo or a folder in a single local run.
+- Photo editor opens the LightCraft web workspace with curves, color, crop and masking.
+  Compare the original and the edit with a draggable divider. Gemini can suggest changes
+  to the current photo's sliders for review before applying them.
+- Guided photos open on the original. You can preview AutoEdit on request, adjust an object,
+  and open either the original or a saved export in Photo editor.
+
+## [Unreleased] — Editable changes and folder recipes (F56)
+
+- Added a Changes list with individual amounts, toggles, undo and saved provenance.
+- Gemini suggestions now contain individually selectable changes. Applying a selection keeps
+  the manual sliders editable and includes the selected contributions in local preview and export.
+- Extended saved presets into portable recipes with object adjustments and optional conditions.
+  The folder planner previews assignments in priority order, records missing objects for review,
+  and supports replanning while preserving independent edits.
+- Fixed after a check against the plan: recipe **Export** also works in the desktop window, an
+  empty recipe order clears a folder plan, and a suggestion that repeats your request is renamed
+  from its controls instead of refused. The request text is still never stored.
+
 ## [Unreleased] — Guided photo editing and optional Gemini suggestions (F55)
 
 ### Added
@@ -21,6 +42,12 @@ All notable changes to this project are documented here. Format follows
   with honest category coverage. The default recipe is unchanged; owner preference is still required.
 
 Spec and verification: `docs/plans/F55-guided-photo-workflow.md`.
+
+### Fixed
+
+- Reopening a saved folder after restarting the app now offers **Choose folder** instead of
+  a technical access error. The native picker restores access, then the saved controls and
+  history load normally. Canceling leaves the project untouched.
 
 ## [Unreleased] — Saved editing workspace (F54)
 

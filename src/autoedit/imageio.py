@@ -60,6 +60,11 @@ class Image:
         return max(self.height, self.width)
 
 
+def picker_extensions() -> list[str]:
+    """Patterns used by native file pickers, including camera RAW formats."""
+    return ["*" + suffix for suffix in sorted(_SUPPORTED)]
+
+
 def is_supported(path: str) -> bool:
     return any(path.lower().endswith(ext) for ext in _SUPPORTED)
 

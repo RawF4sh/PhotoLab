@@ -18,8 +18,7 @@
 .tlist { display: flex; flex-direction: column; }
 .trow2 { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-height: var(--ctl); }
 .trow2 .grow { flex: 1; min-width: 0; }
-.shrow { display: flex; flex-direction: column; align-items: flex-start; width: 100%; text-align: left; padding: var(--sp-2) var(--sp-3); }
-.shrow small { color: var(--text-2); }
+.shrow { width: 100%; min-height: 44px; text-align: left; padding: var(--sp-2) var(--sp-3); }
 .shres { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; min-height: var(--ctl); }
 .modelrow { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-2); }
 .findnote { color: var(--text-2); }

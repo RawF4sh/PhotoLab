@@ -1,5 +1,6 @@
 // The shell: helpers, shared state, hash router, sheets, toast, keys. No framework; text is never parsed as markup.
-import { screen as start, openFolderDialog, loadFolderPath, folder } from './folder.js';
+import { screen as workspace, openFolderDialog, loadFolderPath, folder } from './folder.js';
+import { automatic, home } from './modes.js';
 import { screen as photo } from './photo.js';
 import { openSettings, applySurround } from './settings.js';
 import { rememberPhoto } from './project.js';
@@ -48,7 +49,11 @@ export async function api(path, body, { signal } = {}) {
     throw new Error('The AutoEdit server is not reachable.');
   }
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.error) throw new Error(j.error || 'The server answered ' + r.status);
+  if (!r.ok || j.error) {
+    const error = new Error(j.error || 'The server answered ' + r.status);
+    error.status = r.status; error.code = j.code;
+    throw error;
+  }
   return j;
 }
 
@@ -105,7 +110,7 @@ export function go(name, params) {
 function render() {
   const [, name = 'start', idx] = location.hash.split('/');
   let target = screens[name] ? name : 'start';
-  if (target !== 'start' && !state.dir) target = 'start';
+  if (!['start', 'automatic', 'workspace'].includes(target) && !state.dir) target = 'start';
   if (current && current.unmount) current.unmount();
   const root = $('#view'); root.replaceChildren(); setBar();
   current = screens[target];
@@ -121,6 +126,7 @@ function showKeys() {
     ...[['Ctrl/Cmd + O', 'Open a folder'], ['← →', 'Previous or next photo'], ['Enter', 'Open the photo, or send what you typed'],
       ['Esc', 'Back, or cancel a mark'], ['B (hold)', 'Show the original'], ['M', 'Mark an oval'],
       ['Enter on the photo (Mark on)', 'Place an oval: arrows move it, Shift + arrows resize'],
+      ['Shift + click a checkbox', 'Select a range of photos'], ['Arrows while cropping', 'Move the crop, or hold Shift to resize it'],
       ['Ctrl/Cmd + S', 'Save this photo'], ['Ctrl/Cmd + Enter', 'Edit the checked photos'], ['?', 'This list']]
       .flatMap(([k, v]) => [el('kbd', null, k), el('span', null, v)]))));
 }
@@ -129,17 +135,20 @@ const typing = e => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.targ
 document.addEventListener('keydown', e => {
   if ($('#sheet').open) return;   // a sheet handles Esc itself
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); openFolderDialog(); return; }
+  if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); if (current === automatic) automatic.openFolder(); else openFolderDialog(); return; }
   if (current && current.key && current.key(e)) return;
   if (typing(e)) { if (e.key === 'Escape') e.target.blur(); return; }
   if (e.key === '?') showKeys();
   else if (e.key === 'Escape') {
-    if (location.hash.startsWith('#/photo') || location.hash === '#/tools') go('folder'); else if (location.hash === '#/folder') go('start');
+    if (location.hash.startsWith('#/photo') || location.hash === '#/tools') go('folder'); else if (location.hash === '#/folder') go('workspace');
+    else if (['#/workspace', '#/automatic'].includes(location.hash)) go('start');
   }
 });
 
 /* ---- start ----------------------------------------------------------------------------------- */
-register('start', start);
+register('start', home);
+register('workspace', workspace);
+register('automatic', automatic);
 register('folder', folder);
 register('photo', photo);
 window.addEventListener('hashchange', render);

@@ -268,3 +268,10 @@ def test_projects_routes_reopen_and_guard(tmp_path):
     assert second.get("/api/v1/project", params={"dir": str(folder)}).json() == {"project": data}
     with patch.object(service, "_ALLOWED_ROOTS", set()), patch.dict(os.environ, {"AUTOEDIT_ALLOW_ANY_PATH": ""}):
         assert second.get("/api/v1/project", params={"dir": str(folder)}).status_code == 403
+        # A restarted app must ask the native picker again; loading saved data alone is no grant.
+        with patch.object(service, "NATIVE_PICKER", lambda kind: None):
+            assert second.post("/api/v1/pick?kind=folder").json() == {"path": None}
+        assert second.get("/api/v1/project", params={"dir": str(folder)}).status_code == 403
+        with patch.object(service, "NATIVE_PICKER", lambda kind: str(folder)):
+            assert second.post("/api/v1/pick?kind=folder").json() == {"path": str(folder)}
+        assert second.get("/api/v1/project", params={"dir": str(folder)}).json() == {"project": data}

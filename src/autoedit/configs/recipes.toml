@@ -1,0 +1,8 @@
+# Statistics from the source photo. Fractions are 0..1.
+[measures]
+mean_lum       = { label = "Mean brightness", min = 0, max = 1 }
+lum_p10        = { label = "Shadow brightness", min = 0, max = 1 }
+highlight_clip = { label = "Clipped highlight fraction", min = 0, max = 1 }
+sky_cov        = { label = "Sky coverage", min = 0, max = 1 }
+snow_cov       = { label = "Snow coverage", min = 0, max = 1 }
+iso            = { label = "Camera ISO", min = 1, max = 6553600 }
