@@ -58,6 +58,45 @@ EXTENSIONS = set(
 )
 
 
+# The most one file may be when its source lists no size (FiveK). The largest file of the first
+# run was 402 MB.
+UNLISTED_FILE_BYTES = 1024**3
+
+
+class BudgetError(ValueError):
+    """The approved byte ceiling would be exceeded; this stops the run."""
+
+
+def same_author(credit):
+    """Two credits that differ only in case, punctuation or spacing are one author."""
+    text = credit.casefold()
+    return "".join(c for c in text if c.isalnum()) or text
+
+
+SIGNATURES = {
+    ("jpg", "jpeg"): (b"\xff\xd8\xff",),
+    ("png",): (b"\x89PNG\r\n\x1a\n",),
+    ("tif", "tiff"): (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"),
+}
+
+
+def not_a_picture(head, suffix):
+    """Reason the first bytes cannot be a picture of this extension, else None."""
+    for bom in (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff"):
+        if head.startswith(bom):
+            head = head[len(bom) :]
+            break
+    if head.lstrip()[:1] in (b"<", b"{", b"["):
+        return "a document, not a picture"
+    suffix = suffix.lstrip(".").lower()
+    for names, signatures in SIGNATURES.items():
+        if suffix in names and not head.startswith(signatures):
+            return f"not a {suffix} picture"
+    if suffix == "webp" and not (head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
+        return "not a webp picture"
+    return None
+
+
 def config():
     return tomllib.loads(CONFIG.read_text())
 
@@ -490,6 +529,10 @@ def verify(root, rows=None):
                 or digest(path) != row["sha256"]
             ):
                 raise ValueError("size or checksum differs")
+            with path.open("rb") as fh:
+                reason = not_a_picture(fh.read(64), path.suffix)
+            if reason:
+                raise ValueError(reason)
         except (OSError, ValueError) as exc:
             errors.append(f"{row['id']}: {exc}")
     if entire:
@@ -526,8 +569,12 @@ def lock(root):
         yield
 
 
-def fetch(root, entries, approved, net_for, cfg=None):
+def fetch(root, entries, approved, net_for, cfg=None, failures=None):
+    """Download entries. A bad file is recorded in `failures` (id, reason) and skipped."""
     cfg = cfg or config()
+    failures = [] if failures is None else failures
+    if any(entry["source"] not in approved for entry in entries):
+        raise ValueError("source needs explicit approval")
     with lock(root):
         rows = manifest(root)
         known = {r["id"]: r for r in rows}
@@ -539,8 +586,6 @@ def fetch(root, entries, approved, net_for, cfg=None):
         dests = [(entry, check_row(entry, cfg, root)) for entry in entries]
         for entry, dest in dests:
             source = entry["source"]
-            if source not in approved:
-                raise ValueError("source needs explicit approval")
             if entry["id"] in known:
                 previous = known[entry["id"]]
                 if any(
@@ -583,6 +628,7 @@ def fetch(root, entries, approved, net_for, cfg=None):
             # The index is published after the verified bytes. After an interruption
             # either there is a manifest entry or the unindexed file can be fetched again.
             try:
+                expected = int(entry.get("bytes") or 0)
                 downloaded = 0
                 checksum = hashlib.sha256()
                 with (
@@ -596,33 +642,46 @@ def fetch(root, entries, approved, net_for, cfg=None):
                     ):
                         raise ValueError("image download returned a document")
                     length = response.headers.get("Content-Length")
-                    if length is not None and int(length) > available:
-                        print(
-                            f"source budget would be exceeded for {entry['id']}",
-                            flush=True,
-                        )
-                        continue
-                    while chunk := response.read(
-                        min(1_048_576, 1 + available - downloaded)
-                    ):
+                    if length is not None:
+                        try:
+                            length = int(length)
+                        except ValueError:
+                            raise ValueError("unusable Content-Length header")
+                        if length > available:
+                            print(
+                                f"source budget would be exceeded for {entry['id']}",
+                                flush=True,
+                            )
+                            continue
+                    # Never read far past the size the source listed. A Commons size is exact.
+                    # The RAW index lists approximate sizes (148 of 149 fetched files differed
+                    # by a few kB, half of them larger), so those get 5 % and 1 MB of room.
+                    ceiling = UNLISTED_FILE_BYTES
+                    if expected:
+                        ceiling = expected if source == "commons" else expected + expected // 20 + 1_048_576
+                    limit = min(ceiling, available) + 1
+                    while chunk := response.read(min(1_048_576, limit - downloaded)):
                         downloaded += len(chunk)
+                        if downloaded > ceiling:
+                            raise ValueError("file is larger than its listed size" if expected
+                                             else "file is larger than the limit for a source that lists no size")
                         if downloaded > available:
-                            raise ValueError(
+                            raise BudgetError(
                                 "download would exceed approved byte ceiling"
                             )
                         out.write(chunk)
                         checksum.update(chunk)
-                if not downloaded or (length is not None and downloaded != int(length)):
+                if not downloaded or (length is not None and downloaded != length):
                     raise ValueError("incomplete download")
-                if (
-                    source == "commons"
-                    and int(entry["bytes"])
-                    and downloaded != int(entry["bytes"])
-                ):
+                if source == "commons" and expected and downloaded != expected:
                     raise ValueError("file changed since discovery")
                 got = checksum.hexdigest()
                 if entry["sha256"] and got != entry["sha256"]:
                     raise ValueError("download differs from source checksum")
+                with part.open("rb") as fh:
+                    reason = not_a_picture(fh.read(64), dest.suffix)
+                if reason:
+                    raise ValueError(reason)
                 os.replace(part, dest)
                 row = dict(
                     entry,
@@ -641,6 +700,11 @@ def fetch(root, entries, approved, net_for, cfg=None):
                     f"{source} {counts[source]} · {row['id']} · {downloaded} bytes",
                     flush=True,
                 )
+            except BudgetError:
+                raise
+            except ValueError as exc:
+                failures.append((entry["id"], str(exc)))
+                print(f"failed {entry['id']}: {exc}", flush=True)
             finally:
                 part.unlink(missing_ok=True)
         return rows
@@ -671,7 +735,7 @@ def partition(rows, seed=60, targets=30, panel=16, holdout=12):
         if identity in seen:
             continue
         seen.add(identity)
-        by_author.setdefault(r["author"].casefold(), []).append(r)
+        by_author.setdefault(same_author(r["author"]), []).append(r)
     for author, photos in sorted(
         by_author.items(), key=lambda kv: (-len(kv[1]), order(kv[0]))
     ):
@@ -744,6 +808,7 @@ def split(root, output, seed=60, targets=30, panel=16, holdout=12):
         )
         by_id = {r["id"]: r for r in rows}
         roles_by_author = {}
+        crossing = set()
         used_hashes = set()
         files = {}
         if set(groups) != set(KINDS):
@@ -769,15 +834,11 @@ def split(root, output, seed=60, targets=30, panel=16, holdout=12):
                         raise ValueError(
                             "saved split includes a different kind or ineligible source"
                         )
-                    author, sha = row["author"].casefold(), row["sha256"]
-                    if (
-                        roles_by_author.setdefault(author, role) != role
-                        or sha in used_hashes
-                        or not sha
-                    ):
-                        raise ValueError(
-                            "duplicate photo or author crossing roles in saved split"
-                        )
+                    author, sha = same_author(row["author"]), row["sha256"]
+                    if roles_by_author.setdefault(author, role) != role:
+                        crossing.add(author)
+                    if sha in used_hashes or not sha:
+                        raise ValueError("duplicate photo in saved split")
                     used_hashes.add(sha)
                     path = (root / row["file"]).resolve()
                     if not path.is_file() or digest(path) != sha:
@@ -789,6 +850,8 @@ def split(root, output, seed=60, targets=30, panel=16, holdout=12):
                 files[crop_path] = "".join(
                     f"{i}\t0.5\t0.5\tcentre\n" for i in roles["panel"]
                 )
+        if crossing:
+            print(f"warning: {len(crossing)} authors appear in more than one role")
         # Validate every group before publishing its paths. Preserve annotated crops on resume.
         for path, value in files.items():
             write_atomic(path, value.encode())
@@ -903,6 +966,7 @@ def main():
     if args.action == "plan":
         discover(args.root, sources, args.limit)
     else:
+        failures = []
         for s in sources:
             net = Transport(s, cfg)
             rows = json.loads((args.root / "metadata" / f"plan-{s}.json").read_text())
@@ -915,7 +979,12 @@ def main():
             if args.limit:
                 known = {r["id"] for r in manifest(args.root)}
                 rows = [r for r in rows if r["id"] not in known][: args.limit]
-            fetch(args.root, rows, sources, {s: net}, cfg)
+            fetch(args.root, rows, sources, {s: net}, cfg, failures)
+        if failures:
+            print(f"{len(failures)} files failed:")
+            for ident, reason in failures:
+                print(f"  {ident}: {reason}")
+            return 1
     return 0
 
 

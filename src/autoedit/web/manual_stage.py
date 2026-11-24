@@ -83,19 +83,32 @@ def _read(folder, path, pointer, profile):
     return {"manual": pointer, **json.loads(data)}
 
 
+def _baseline(photo, path, folder, profile):
+    """The original manual settings of the newest readable snapshot; unreadable ones are skipped."""
+    for snapshot in reversed([*photo.get("future", []), *photo.get("history", [])]):
+        if snapshot.get("manual"):
+            try:
+                return {"baseline": _read(folder, path, snapshot["manual"], profile).get("baseline")}
+            except ValueError:
+                continue
+    return {}
+
+
 def load(path, profile=None):
     folder = _folder(path)
     with projects.transaction(folder, profile):
         project = projects.load(folder, profile) or {}
         photo = project.get("photos", {}).get(os.path.abspath(path), {})
+        lost = None
         if photo.get("manual"):
-            return _read(folder, path, photo["manual"], profile)
+            try:
+                return _read(folder, path, photo["manual"], profile)
+            except ValueError as error:     # a missing or damaged file must not leave the photo stuck
+                lost = str(error)
+                photo.pop("manual")
+                projects.save(folder, project, profile, manual_update=True)
         # Undo can return to the untouched manual stage while LightCraft still caches an edit.
-        for snapshot in reversed([*photo.get("future", []), *photo.get("history", [])]):
-            if snapshot.get("manual"):
-                saved = _read(folder, path, snapshot["manual"], profile)
-                return {"manual": None, "baseline": saved.get("baseline")}
-        return {"manual": None}
+        return {"manual": None, **({"lost": lost} if lost else {}), **_baseline(photo, path, folder, profile)}
 
 
 def save(path, settings, base, expected, profile=None, *, baseline=None):
@@ -144,7 +157,12 @@ def save(path, settings, base, expected, profile=None, *, baseline=None):
                         tmp.unlink(missing_ok=True)
             pointer = {"sha256": sha, "version": VERSION}
         snapshot = {k: v for k, v in photo.items() if k not in ("history", "future")}
-        photo["history"] = (photo.get("history", []) + [snapshot])[-projects.MAX_HISTORY:]
+        last = (photo.get("history") or [None])[-1]
+        # A run of manual saves (the page saves about once a second) is one undo step, so it cannot
+        # push the AI stage out of the history. A reset (no settings) is its own step.
+        if not (pointer and old and last is not None
+                and {k: v for k, v in last.items() if k != "manual"} == {k: v for k, v in snapshot.items() if k != "manual"}):
+            photo["history"] = (photo.get("history", []) + [snapshot])[-projects.MAX_HISTORY:]
         photo["future"] = []
         if pointer:
             photo["manual"] = pointer
@@ -232,14 +250,16 @@ def export(path, ticket, checksum, rendered, out_dir, configs_dir, profile):
             result.global_settings["lut"] = cfg.lut_amount
             result.audit["lut"] = {"name": table.name, "digest": table.digest}
         settings = stage.get("settings", {})
-        kinds = {str(s.get("mode", "")).lower() for s in settings.get("spots", []) if isinstance(s, dict)}
+        spots = settings.get("spots", [])
+        modes = {re.sub(r"[^a-z0-9 _-]", "", s["mode"].lower())[:40].strip() if isinstance(s, dict) and isinstance(s.get("mode"), str) else ""
+                 for s in spots}
         if stage["manual"]:
             result.audit["manual"] = {"engine": "LightCraft", "version": stage["manual"]["version"],
                                   "controls": stage["changed"], "masks": len(settings.get("masks", [])),
-                                  "spot_tools": sorted(kinds & {"heal", "clone", "remove", "fill"}),
+                                  "spots": len(spots), "spot_tools": sorted(m or "spot" for m in modes),
                                   "safety_checked": False}
             result.notes.append("Manual changes were applied after the local AI-stage checks.")
-        image, sidecar = emit.output_paths(out_dir, path, cfg.out_format, name=cfg.out_name, subdir=cfg.out_subdir,
+        image, sidecar = emit.single_output_paths(out_dir, path, cfg.out_format, name=cfg.out_name, subdir=cfg.out_subdir,
                                           fields={"style": cfg.style, "n": 1}, sources=emit.source_ids([path]))
         emit.write_outputs(rgb, result, image, sidecar, cfg, path)
         jobs._note_input_dir(out_dir, [path])

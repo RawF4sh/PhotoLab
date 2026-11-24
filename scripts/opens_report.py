@@ -10,6 +10,7 @@ RAW orientation is measured against the embedded camera preview when one exists.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import csv
 import hashlib
 import io
@@ -55,6 +56,23 @@ COLUMNS = (
     "export",
     "sidecar",
 )
+
+
+@contextmanager
+def unlimited_pixels():
+    """Lift Pillow's pixel limit for one header read, then put it back."""
+    old = PILImage.MAX_IMAGE_PIXELS
+    PILImage.MAX_IMAGE_PIXELS = None
+    try:
+        yield
+    finally:
+        PILImage.MAX_IMAGE_PIXELS = old
+
+
+def header_size(path):
+    """Size from the file header only; no pixels are decoded."""
+    with unlimited_pixels(), PILImage.open(path) as image:
+        return image.size
 
 
 def grid(image):
@@ -153,9 +171,13 @@ def check_written(row, source, image_path):
         row["orientation"] = "indeterminate (no usable reference)"
         return
     row["reference"], row["encoding"] = kind, encoding
-    with PILImage.open(image_path) as written:
-        written.thumbnail((400, 400))
-        pixels = np.asarray(written.convert("RGB"), dtype=np.float32) / 255
+    try:
+        with PILImage.open(image_path) as written:
+            written.thumbnail((400, 400))
+            pixels = np.asarray(written.convert("RGB"), dtype=np.float32) / 255
+    except PILImage.DecompressionBombError:
+        row["orientation"] = "indeterminate (export too large to inspect)"
+        return
     orientation, ev = camera_check(pixels, reference)
     if kind == "embedded camera preview":
         row["export_camera_ev"] = ev
@@ -215,67 +237,69 @@ def report(source, out, *, resume=False, limit=None):
                 row.update(reason=str(exc), seconds=round(time.monotonic() - start, 3))
                 rows.append(row)
                 continue
-            image_path, sidecar = emit.output_paths(
-                str(export_dir), str(p), cfg.out_format, taken, sources=sources
-            )
-            cached = old.get(p.name, {})
-            if (
-                cached.get("status") == "ok"
-                and cached.get("sha256") == row["sha256"]
-                and Path(image_path).is_file()
-                and Path(sidecar).is_file()
-                and not (
-                    p.suffix.lower() in (".tif", ".tiff")
-                    and is_raw(str(p))
-                    and cached.get("encoding") != "camera RAW"
+            try:
+                image_path, sidecar = emit.output_paths(
+                    str(export_dir), str(p), cfg.out_format, taken, sources=sources
                 )
-            ):
-                if not cached.get("reference"):
-                    try:
-                        check_written(cached, p, image_path)
-                    except (OSError, ValueError):
-                        # A damaged cached export gets rendered again from the verified source.
-                        pass
+                cached = old.get(p.name, {})
+                if (
+                    cached.get("status") == "ok"
+                    and cached.get("sha256") == row["sha256"]
+                    and Path(image_path).is_file()
+                    and Path(sidecar).is_file()
+                    and not (
+                        p.suffix.lower() in (".tif", ".tiff")
+                        and is_raw(str(p))
+                        and cached.get("encoding") != "camera RAW"
+                    )
+                ):
+                    if not cached.get("reference"):
+                        try:
+                            check_written(cached, p, image_path)
+                        except Exception:
+                            # A damaged cached export gets rendered again from the verified source.
+                            pass
+                        else:
+                            rows.append(cached)
+                            continue
                     else:
                         rows.append(cached)
                         continue
-                else:
-                    rows.append(cached)
-                    continue
-            try:
-                if not is_supported(str(p)):
-                    raise ValueError(
-                        f"unsupported photo format ({p.suffix.lower() or 'no extension'})"
+                try:
+                    if not is_supported(str(p)):
+                        raise ValueError(
+                            f"unsupported photo format ({p.suffix.lower() or 'no extension'})"
+                        )
+                    photo = load_image(str(p), raw_opts_from(cfg))
+                    row.update(
+                        width=photo.width, height=photo.height, bits=photo.source_bits
                     )
-                photo = load_image(str(p), raw_opts_from(cfg))
-                row.update(
-                    width=photo.width, height=photo.height, bits=photo.source_bits
-                )
-                proxy = downscale_long_edge(photo, 400).rgb
-                row["orientation"], row["camera_ev"] = camera_check(
-                    proxy, camera_preview(str(p), 400)
-                )
-                rgb, result = pipe.process_one(str(p), image=photo)
-                emit.write_outputs(rgb, result, image_path, sidecar, cfg, str(p))
-                with PILImage.open(image_path) as written:
-                    written.load()
-                    row["output_width"], row["output_height"] = written.size
-                    if result.geometry is None and written.size != (
-                        photo.width,
-                        photo.height,
-                    ):
+                    proxy = downscale_long_edge(photo, 400).rgb
+                    row["orientation"], row["camera_ev"] = camera_check(
+                        proxy, camera_preview(str(p), 400)
+                    )
+                    rgb, result = pipe.process_one(str(p), image=photo)
+                    emit.write_outputs(rgb, result, image_path, sidecar, cfg, str(p))
+                    size = header_size(image_path)
+                    row["output_width"], row["output_height"] = size
+                    if size[0] * size[1] <= (PILImage.MAX_IMAGE_PIXELS or size[0] * size[1]):
+                        with PILImage.open(image_path) as written:
+                            written.load()      # the export must decode, not only exist
+                    if result.geometry is None and size != (photo.width, photo.height):
                         raise ValueError(
                             "export dimensions differ from the developed photo"
                         )
-                row.update(
-                    status="review"
-                    if row["orientation"].startswith("possible")
-                    else "ok",
-                    export=Path(image_path).name,
-                    sidecar=Path(sidecar).name,
-                )
-                check_written(row, p, image_path)
-            except Exception as exc:
+                    row.update(
+                        status="review"
+                        if row["orientation"].startswith("possible")
+                        else "ok",
+                        export=Path(image_path).name,
+                        sidecar=Path(sidecar).name,
+                    )
+                    check_written(row, p, image_path)
+                except Exception as exc:
+                    row.update(status="failed", reason=str(exc) or type(exc).__name__)
+            except Exception as exc:  # one file never stops the run
                 row.update(status="failed", reason=str(exc) or type(exc).__name__)
             row["seconds"] = round(time.monotonic() - start, 3)
             rows.append(row)

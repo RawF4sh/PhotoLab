@@ -2,9 +2,11 @@
 
 AutoEdit is a **local-first, open-vocabulary batch photo editor** with a full photography workflow
 built around it: cull a shoot, edit it, review/label the results, build a training set, and learn
-your own look — all on your machine. Local AI Edit adjusts exposure, tone, white balance and
-individual regions. In Photo editor you can refine those decisions, draw masks or retouch a spot
-yourself. AutoEdit records manual retouching in the exported sidecar.
+your own look — all on your machine. AutoEdit's own editing is **non-generative**: it only moves
+bounded, explainable photographic sliders (exposure, tone, white balance, dehaze, region
+grades…). It never invents or replaces content. In Photo editor you can refine those decisions
+and draw masks. The spot tools of Fine-tune are yours to use by hand, and the exported sidecar
+records every retouched spot.
 
 - **UI:** one local interface — `autoedit ui` in the browser at `http://127.0.0.1:8765/`, or `autoedit app` in a desktop window.
 - **CLI:** `autoedit run/curate/dataset/rank-variants/train-recipe/train-aesthetic/…`.
@@ -394,6 +396,9 @@ The result screen links to the saved files. The gear controls the region finder,
 and output settings. Use **Match a reference photo** when you have a finished image you want to
 aim for. For a before/after screenshot use only the finished rendition. A photo with a saved
 LightCraft stage must finish in Photo editor so its manual work appears in the export.
+Automatic edit exports each photo on its own. It does not even a folder's brightness from photo
+to photo, so a photo comes out the same here, in Photo editor and from `autoedit run` on that one
+file.
 
 #### Photo editor
 
@@ -417,8 +422,11 @@ or use **Tools** on a narrow screen.
   If a browser copy is cleared, pick the same original and the saved manual stage is restored.
 - In Fine-tune, **Before / After** compares the photo and **Export** writes the developed file
   and its decision sidecar to AutoEdit Exports. The sidecar records changed controls, masks and
-  spot tools. The automated image checks cover the local AI stage. **Back to Photo editor**
-  returns to the linked photo.
+  every retouched spot. The automated image checks cover the local AI stage. **Back to Photo
+  editor** returns to the linked photo.
+- **Export** in Photo editor saves the AI edit. A photo with a saved Fine-tune stage is exported
+  from Fine-tune, and a photo with no edit yet shows a notice. `autoedit run`, `autoedit adjust`
+  and Automatic edit leave a photo with a Fine-tune stage alone and say "Finish in Photo editor".
 
 Standard is available by default. A specialized local style appears in the normal menu after
 the blind evaluation passes. To try the experimental landscape edits on your own photos,

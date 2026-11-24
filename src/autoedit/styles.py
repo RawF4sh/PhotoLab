@@ -45,6 +45,9 @@ def load_styles(path: str) -> dict[str, Style]:
             raise ValueError(f"{name}: unsupported style intent")
         if intent and (not body.get("target") or name in ("natural", "standard")):
             raise ValueError(f"{name}: intent requires an explicitly chosen specialist target")
+        if name in ("natural", "standard") and any(body.get(key) for key in ("target", "moves", "run")):
+            # Standard is what a default run renders: it changes by a blind vote, never by a target.
+            raise ValueError(f"{name}: the standard style takes no target, moves or run settings")
         run = body.get("run", {})
         if set(run) - {"denoise", "palette", "palette_strength"}:
             raise ValueError(f"{name}: unsupported style run options")
@@ -74,7 +77,9 @@ def style_for(name: str | None, styles: dict[str, Style]) -> Style:
 
 
 def offered_styles(styles):
-    return {s.name: s for s in styles.values() if s.available and (not s.label or s.tested)}
+    """The styles of the normal lists. A specialist (it has a label or a target) joins them only
+    once it is tested; until then it runs when named explicitly."""
+    return {s.name: s for s in styles.values() if s.available and (s.tested or not (s.label or s.target))}
 
 
 def local_catalog(styles, candidates=False):

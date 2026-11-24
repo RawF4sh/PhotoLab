@@ -9,14 +9,12 @@ from PIL import Image
 import pytest
 
 from autoedit import imageio
-from autoedit.web import editor_files, service
+from autoedit.web import editor_files, projects, service
 
 
 def test_editor_import_preserves_raw_depth_settings_identity_and_direct_formats(tmp_path):
-    try:
-        import tifffile
-    except ImportError:
-        return
+    pytest.importorskip("tifffile")
+    import tifffile
     path = tmp_path / "Camera.CR2"
     path.write_bytes(b"camera source")
     service.approve_root(str(tmp_path))
@@ -116,10 +114,8 @@ def test_handoff_keeps_rotated_crop_in_source_coordinates():
 
 
 def test_camera_tiff_uses_raw_development_in_the_picker_and_native_editor(tmp_path):
-    try:
-        import tifffile
-    except ImportError:
-        return
+    pytest.importorskip("tifffile")
+    import tifffile
     camera = tmp_path / 'capture.tif'
     jpeg = tmp_path / 'capture.jpg'
     print_tiff = tmp_path / 'print.tif'
@@ -145,3 +141,24 @@ def test_camera_tiff_uses_raw_development_in_the_picker_and_native_editor(tmp_pa
         with patch.object(service, '_preview_images', return_value=(sensor, sensor)):
             assert editor_files.source_preview(str(camera), {})['working_copy']
             assert not editor_files.source_preview(str(print_tiff), {})['working_copy']
+
+
+def test_a_photos_saved_hide_reaches_every_picture_made_for_the_editor(tmp_path):
+    pytest.importorskip("tifffile")
+    path = tmp_path / "input" / "frame.jpg"
+    path.parent.mkdir()
+    Image.new("RGB", (60, 40), "#918365").save(path)
+    service.approve_root(str(tmp_path))
+    profile = str(tmp_path / "profile")
+    with patch.dict("os.environ", {"XDG_CACHE_HOME": str(tmp_path)}):
+        assert editor_files.import_photo(str(path), {}, None, profile)["url"].startswith("/api/v1/editor/original")
+        projects.save(str(path.parent), {"version": 1, "photos": {str(path): {"hide": ["face"], "hideMethod": "blur"}}}, profile)
+        seen = []
+        real = service._edit
+        with patch.object(service, "_edit", lambda p, opts, *a, **k: (seen.append(opts), real(p, opts, *a, **k))[1]):
+            picture = editor_files.import_photo(str(path), {}, None, profile)
+            editor_files.import_photo(str(path), {"hide": "people, face"}, None, profile)
+            editor_files.working_picture(str(path), {"editor_original": True}, None, profile)
+        assert picture["url"].startswith("/api/v1/editor/pictures/")
+        assert [o["hide"] for o in seen] == [["face"], ["people", "face"], ["face"]]
+        assert {o["hide_method"] for o in seen} == {"blur"}

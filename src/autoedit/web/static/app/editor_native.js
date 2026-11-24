@@ -62,7 +62,7 @@ export function nativeStage({command, api, tell, importPicture, removePicture}) 
       const rebased = persisted.manual && (signature(live) !== signature(persisted.settings) ||
         (persisted.base !== base && persisted.baseline));
       record = {id:photo.id, path, options, useAI, fullSize, base, source,
-        baseline, manual:persisted.manual, saved:legacyEdit || rebased ? null : signature(live), photo};
+        baseline, manual:persisted.manual, lost:persisted.lost, saved:legacyEdit || rebased ? null : signature(live), photo};
       blocked = false;
       if (legacyEdit || rebased) await store(record);
       if (previous && previous.id !== photo.id) await removePicture(previous.photo);

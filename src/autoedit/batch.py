@@ -125,7 +125,15 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
     os.makedirs(out_dir, exist_ok=True)
     images = list_images(input_dir)
     from .web.projects import manual_sources, require_automatic_export
-    manual = manual_sources(input_dir, cfg.profile_dir) if do_apply else set()
+    try:
+        manual = manual_sources(input_dir, cfg.profile_dir) if do_apply else set()
+    except (OSError, ValueError, AttributeError, TypeError) as exc:
+        # Running on would export a photo without the work done on it by hand in Photo editor
+        # (F58, D11). The app's own exports and `autoedit adjust` refuse here too.
+        raise ValueError(
+            f"The app's saved project for this folder cannot be read ({exc}), so photos finished by "
+            "hand in Photo editor cannot be told apart. Repair or remove that project file in your "
+            "AutoEdit profile, then run again.") from exc
     pipeline = Pipeline.build(cfg)
     cfg = pipeline.cfg   # "auto" is resolved to the backend that actually runs
     n_workers, why = _effective_workers(cfg, cfg.workers if workers is None else workers)

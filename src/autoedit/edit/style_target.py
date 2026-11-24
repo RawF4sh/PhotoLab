@@ -70,9 +70,34 @@ def held_settings(settings, frame_ev, base_ev, ceiling=None):
     return {**settings, "exposure": max(OP_BOUNDS["exposure"][0], held)}
 
 
-def fit(source, base, ranges, strength, limits, safety, mask=None, global_after=None, held_regions=()):
+def over_budget(regions, frame_ev, base_ev, cap, held=()):
+    """One lift budget for the frame and a region (F59: 2 EV on a JPEG or an 8-bit preview).
+
+    `fit` keeps its own search inside the budget. This finds what it cannot see: a lift the rules
+    gave a region before the style raised the frame from `base_ev` to `frame_ev`. Such a region
+    may keep `cap - frame_ev`, and never loses more than the frame gained, so the rules' own
+    result is the floor. `held` regions are left to `held_settings`.
+    Returns {region: (exposure now, exposure allowed)} for the regions to reduce."""
+    lift = frame_ev - base_ev
+    if cap is None or lift <= 0:
+        return {}
+    found = {}
+    for name, settings in regions.items():
+        ev = settings.get("exposure", 0.0)
+        allowed = max(cap - frame_ev, ev - lift)
+        if name not in held and ev > allowed:
+            found[name] = (ev, allowed)
+    return found
+
+
+def fit(source, base, ranges, strength, limits, safety, mask=None, global_after=None, held_regions=(),
+        caps=None, forbidden=()):
     """Search the existing edit controls toward the nearest edges. A successful step must
     improve the requested measurements without crossing its target or the clipping budget.
+
+    `caps` ({op: largest magnitude}) and `forbidden` (op names) are the region's own rails from
+    concepts.toml. The search stays inside them, so what it measures and reports is what the
+    region policy lets through afterwards.
     """
     if not ranges or ranges.get("hold") or strength <= 0:
         return base, []
@@ -106,7 +131,11 @@ def fit(source, base, ranges, strength, limits, safety, mask=None, global_after=
         start = features[key]
         if abs(goal - start) < 1e-5:
             continue
+        if control in forbidden:
+            continue
         lower, upper = OP_BOUNDS[control]
+        if caps and control in caps:
+            lower, upper = max(lower, -caps[control]), min(upper, caps[control])
         if control in limits:
             frame_amount = (global_after or {}).get(control, 0.0)
             lower = max(lower, -limits[control] - frame_amount)

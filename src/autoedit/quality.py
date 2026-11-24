@@ -75,6 +75,10 @@ def load_quality_config(path=None) -> dict:
     if path is not None:
         with Path(path).open("rb") as fh:
             cfg.update(tomllib.load(fh))
+    if "richer" in cfg:
+        # Only a style's declared intent may skip the relative colour check, per result
+        # (quality_runner.style_thresholds). A config file would switch it off for every run.
+        raise ValueError("quality richer is declared by a style, not in a quality config file")
     return _validate_quality_config(cfg)
 
 

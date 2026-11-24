@@ -1,7 +1,13 @@
 # F60 · The web photo loop
 
-The first evaluation closed on 2026-11-24. The implementation record below reports RAW coverage, the results for three landscape styles and the galleries awaiting the owner’s vote. It is the test for [F59](F59-local-styles.md) and the standing form of
-release check 3 in [F58](F58-editor-sidebar-and-cr2.md).
+**Status on 2026-11-24.** The tools are built and the first run is done: 491 files fetched inside
+the approved budgets, 186 of 190 format samples opened and exported, one round for each of the
+three landscape styles, and six blind galleries that wait for the owner's vote. No style passed
+its bars ([F59](F59-local-styles.md) has the table). A second session checked the tools the same
+day ([what it found](#check-of-the-tools-2026-11-24)).
+
+The loop is the test for [F59](F59-local-styles.md) and the standing form of release check 3 in
+[F58](F58-editor-sidebar-and-cr2.md).
 
 ## What it is
 
@@ -52,8 +58,9 @@ Not fetched by a script:
 | PPR10K, RAISE | Non-commercial research only |
 | Any web page with a before and after | The copyright is unknown |
 
-The owner may put such files into `curated-web/owner/` by hand, as briefs for private use. They
-never leave the computer.
+The owner may put such files into `curated-web/owner/briefs/` by hand, to look at. They never
+leave the computer, and no tool measures them. The owner's own finished photos go into
+`curated-web/owner/photos/`, the only owner folder a style target is made from.
 
 Rules for every source:
 
@@ -76,7 +83,8 @@ curated-web/
   opens/            Track O: RAW samples by maker and model, odd JPEG, PNG, TIFF, HEIC, AVIF
   looks/<kind>/     Track L: photos of one kind
   pairs/<id>/       a before and its finished after
-  owner/            the owner's briefs and photos
+  owner/photos/     the owner's own finished photos (a style target may use these)
+  owner/briefs/     examples put there by hand, to look at and never to measure
 out-webloop/
   LEDGER.md         the record; a new session resumes from its last row
   panel-<kind>.txt  holdout-<kind>.txt  crops-<kind>.txt
@@ -131,7 +139,7 @@ One round tunes one style on one kind of photo. An iteration:
 5. **Look, blind.** Sheets of Original | A | B | Reference, at most four rows each, and a sheet
    of 100 % crops of the risky places: lamps, mask edges, skin, smooth sky, lifted shadows. A
    Checker writes Better, Same or Worse per photo with a reason in the rubric's terms, then the
-   key is read.
+   key is read. A Worse whose reason says "clear" or "clearly" is a clear loss.
 6. **Keep** only if all of these hold. Otherwise the iteration folder goes to `rejected/`.
    - Better outnumbers Worse, and no photo is clearly worse.
    - The gates pass, with no new native flag and no fewer safe proposals.
@@ -279,7 +287,7 @@ You are running AutoEdit's web photo loop. Read `CLAUDE.md`, `docs/AGENT_ROUTING
 
 ## Implementation record, 2026-11-24
 
-The owner approved the three sources and byte ceilings above. The portrait group requires owner-supplied photographs. The first acquisition reserved 30 target photographs, 16 tuning photographs and 24 held-back photographs for each of the four other kinds. Roles are disjoint by photographer across all four kinds. The hashes and exact split are local. FiveK pairs are restricted to measuring the two renders against the expert edit.
+The owner approved the three sources and byte ceilings above. The portrait group requires owner-supplied photographs. The first acquisition reserved 30 target photographs, 16 tuning photographs and 24 held-back photographs for each of the four other kinds. Roles were drawn disjoint by photographer across all four kinds. The check of 2026-11-24 found one exception: one photographer's credit is spelled in two ways. Under one spelling two of their photos are in the Blue hour target group, and under the other they are in the Sunset held-back group. The split stays frozen with its scores; what happens to those two photos is the owner's decision. The hashes and exact split are local. FiveK pairs are restricted to measuring the two renders against the expert edit.
 
 Use the repository interpreter with isolated imports. Acquisition is resumable. The discovery plan fetches metadata only. Selection reserves individual IDs before downloading the photographed scenes.
 
@@ -304,15 +312,14 @@ On the first 16-photo Blue hour tuning panel, the independent blind checker pref
 
 **Blue hour on unseen photographs.** Two independent checkers recorded preferences across the frozen 24-photo holdout, with a separate random assignment for each comparison. The measured settings won five, tied nine and lost ten against the starting settings. Against Standard, the counts were also five, nine and ten. On the preregistered first ten against Standard, the candidate won two, tied three and lost five. A high-key snow scene developed a pale outline around the ridge and visible spots in the sky in both comparisons. Across eleven photographer groups, three favoured the measured settings, four preferred the comparison and four tied. The measured settings remain private, and Blue hour keeps its preview status. Holdout votes inform the release decision only.
 
-The local owner gallery at `out-webloop/blind/blue_hour/index.html` compares the measured edit with Standard. The second gallery at `out-webloop/blind/blue_hour_vs_start/index.html` compares it with round start. Both include all 24 pictures and a credits table. To score the first gallery after voting, download the results and run the following from the checkout.
+The local owner gallery at `out-webloop/blind/blue_hour/index.html` compares the measured edit with Standard. The second gallery at `out-webloop/blind/blue_hour_vs_start/index.html` compares it with round start. Both include all 24 pictures and a credits table. To score the first gallery after voting, download the results and run the following from the repository root.
 
 ```sh
-cd /Users/david/Documents/Projects/AutoEdit
 cp "$HOME/Downloads/results.csv" out-webloop/blind/blue_hour/results.csv
 .venv/bin/python -I scripts/blindtest.py --score out-webloop/blind/blue_hour/results.csv --pair autoedit baseline
 ```
 
-For a future corpus, group bursts and visually similar compositions from the same viewpoint before drawing the target, tuning and holdout lists. Reserve distinct views within each panel. Retain the existing photographer separation and report preference by photographer as well as by frame. The present split has disjoint photographers across roles, but includes multiple frames of some viewpoints within individual panels. Its original assignments and scores stay frozen.
+For a future corpus, group bursts and visually similar compositions from the same viewpoint before drawing the target, tuning and holdout lists. Reserve distinct views within each panel. Retain the existing photographer separation and report preference by photographer as well as by frame. The present split has disjoint photographers across roles, with the one exception named above, but includes multiple frames of some viewpoints within individual panels. Its original assignments and scores stay frozen.
 
 **Sunset glow tuning.** Three consecutive private trials failed the keep rule. The first won three photographs, tied five and lost eight, including two clear losses. Safe proposals fell from 14 to 12 out of 16, and median paired brightness error rose from 0.623 to 0.642 EV. A second trial tied on all 16, with 14 of the resulting style JPEGs byte-identical. A third also tied on all 16, with 13 byte-identical; its paired error rose slightly. All three trials preserved the 16 Standard controls. The starting Sunset settings remain the final settings for this round.
 
@@ -327,3 +334,65 @@ All six galleries were opened in Chrome. The browser decoded both images for eac
 **App check after the Moody changes.** A separate evaluation profile enabled the packaged Moody settings in the normal picker. Chrome exercised Run AI Edit, the comparison slider, Isolate, Learn, undo and full-size export on four tuning photos and two Canon CR2s. With the repeatable stub detector, all six exports matched byte-for-byte across Photo editor, Automatic edit and the CLI. The private record is `out-webloop/app/moody/parity.json`. The release picker offers Standard.
 
 The same six photos also went through a visible Chrome window with real SAM 3 masks. The model produced the masks offline on the Apple GPU. The repeat run required an exact match of source proxy and concept to reuse a mask. Five photos had a sky to adjust. On the indoor Canon CR2 the user action **Find an object** located a hair dryer instead. Its exposure change appeared in Learn, and undo removed both the change and the newly requested object. The browser exported all six JPEGs byte-for-byte identically to the standalone CLI. The 42 step screenshots, onscreen window capture, source checksums and results are in `out-webloop/app/moody-sam/visible/`.
+
+## Check of the tools (2026-11-24)
+
+A second session reviewed the loop tools with an independent checker, ran its probes again, and
+tested each fix against the real manifest and key files of the first run.
+
+**What holds**
+
+- A request carries a client name and the public repository address, and nothing personal. There
+  is one request at a time with a pause, certificates are verified, and a redirect to another host
+  or to plain http is refused.
+- The budgets are worked out from the manifest on every run, so they hold across resumed runs.
+  `plan` fetches descriptions only.
+- A licence that is non-commercial, no-derivatives, missing or mixed is refused. A target made
+  from the manifest leaves out FiveK, the held-back photos and their photographers.
+- A fetched file is named by a hash of its address, written to a part file and then renamed, and
+  must resolve inside the corpus folder. Pillow's pixel limit is switched off nowhere.
+- The facts and distances name only A and B. `score` reads the key only when every vote is in
+  with a reason.
+- No committed file holds a photo, an author, a fetched file's name or a checksum from the corpus.
+
+**Fixed after the check**
+
+- `score` checks that the judged sheets, the controls and the pairs come from the same two config
+  folders, and from two different ones. Before, a control run of one folder against itself was
+  trivially identical and could end in "keep".
+- A pair whose candidate side cannot be compared blocks "keep". Before, such a pair left the
+  median for both sides, so a candidate that turned or cropped a photo removed its own bad pair.
+- "Clearly worse" counts wherever the word "clear" or "clearly" stands in the reason of a Worse
+  verdict, not only as its first word. A reason that denies it ("not clearly worse") does not.
+- Photographers are compared by a normalised credit when a split is drawn. The split of the
+  first run was drawn with the plain comparison, so `split` and `style_target.py` print a warning
+  with a count for it and stay usable.
+- `fetch` checks every source's approval before the first download. A download stops shortly
+  after the size the source listed: exactly for Commons, with 5 % and 1 MB of room for the RAW
+  index, whose sizes are approximate (148 of the 149 fetched files differed by a few kilobytes).
+  A source that lists no size, as FiveK does, gets a ceiling of 1 GB per file. One bad file is
+  skipped and listed at the end, where before it stopped every later file on each run. A file
+  that is a web page is refused, whatever its extension says.
+- `scripts/style_target.py` runs isolated (`python -I`), and takes owner files only from
+  `owner/photos/`.
+- `scripts/opens_report.py` cannot be stopped by one file, and reads an export's size from its
+  header.
+- `scripts/contact_sheet.py` draws its seed at random unless one is given, and records it.
+- `scripts/check_public_repo.py` now fails on an absolute home-folder path in a tracked file. This
+  document held one, which is removed.
+
+**Open**
+
+- The key and the captioned sheets lie in the folder of the blind sheets. A judge must be handed
+  the sheet files only.
+- "CC0 only" for raw.pixls.us is read from the text of its index. Whether that equals its
+  masterset could not be checked without the network.
+- A run has no cap of its own unless `--limit` is given, and a dropped connection still stops a
+  run. The source budget is the bound.
+- The orientation check compares thumbnails of 24 × 24 pixels and drops the aspect ratio, so a
+  squeezed export can pass.
+- The distance measure floors a cell at 0.0001 linear. One near-black cell can then add 2 stops,
+  which is 0.06 stops over 36 cells: the size of some recorded gains.
+- The filter for people is a list of words in titles and categories.
+- Not checked: how `scripts/blindtest.py` builds the owner's galleries, and whether the recorded
+  counts reproduce from the saved votes.

@@ -119,9 +119,27 @@ def source_preview(path, options, configs_dir=None, profile=None):
             "source_bits": source.source_bits, "working_copy": not _direct_source(path)}
 
 
+def _with_saved_hide(path, options, profile):
+    """F22: this photo's own Hide (saved in the project) always reaches the picture made for the editor."""
+    from . import projects
+    try:
+        photo = (projects.load(os.path.dirname(os.path.abspath(path)), profile) or {}).get("photos", {}).get(os.path.abspath(path)) or {}
+    except (OSError, ValueError):
+        return options
+    saved = [k for k in photo.get("hide") or [] if isinstance(k, str)]
+    method = photo.get("hideMethod") or None
+    if not saved:
+        return options      # a method alone hides nothing
+    asked = options.get("hide")
+    asked = re.split(r"[,\s]+", asked) if isinstance(asked, str) else list(asked or [])
+    return {**options, "hide": list(dict.fromkeys(k for k in [*asked, *saved] if k)),
+            **({"hide_method": method} if method and not options.get("hide_method") else {})}
+
+
 def import_photo(path, options, configs_dir=None, profile=None, full_size=False):
     service.ensure_allowed(path)
     service.check_image(path)
+    options = _with_saved_hide(path, options, profile)
     if options.get("hide"):
         return working_picture(path, options, configs_dir, profile, full_size)
     if _direct_source(path):
@@ -182,6 +200,7 @@ def working_picture(path, options, configs_dir=None, profile=None, full_size=Fal
     from . import edit_steps
     service.ensure_allowed(path)
     service.check_image(path)
+    options = _with_saved_hide(path, options, profile)
     service._preview_request(options, register=True)
     if options.get("editor_original") is True and not options.get("hide"):
         from ..contract import Result

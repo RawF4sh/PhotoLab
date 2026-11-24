@@ -18,13 +18,14 @@ from collections import Counter
 import csv
 import hashlib
 import json
+import re
 from pathlib import Path
 import statistics
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blindtest import render_comparison
-from web_corpus import write_atomic
+from web_corpus import same_author, write_atomic
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from autoedit import tonemetrics as tm
@@ -124,6 +125,19 @@ def check_native_backend(key, expected, label):
                 )
 
 
+def check_same_arms(sheets, controls, pairs):
+    """The judged sheets, the controls and the pairs must compare the same two config folders,
+    and two different ones. Their render folders differ by design (controls run under Standard),
+    so the recorded config folders are what is compared."""
+    want = {role: sheets[role] for role in ROLES}
+    for label, key in (("sheets", sheets), ("controls", controls), ("pairs", pairs)):
+        arms = {role: key[role] for role in ROLES}
+        if len(set(arms.values())) != 2:
+            raise ValueError(f"the {label} key compares a config folder with itself")
+        if arms != want:
+            raise ValueError(f"the {label} key was built from other config folders than the sheets")
+
+
 def check_tone(doc, panel):
     rows = doc["rows"]
     ids = [Path(row["name"]).stem for row in rows]
@@ -164,10 +178,15 @@ def score(directory):
             else "Worse"
         )
         counts[result] += 1
-        if result == "Worse" and reason.upper().startswith("CLEAR"):
+        if result == "Worse" and (
+            reason.upper().startswith("CLEAR")
+            or re.search(r"(?<!not )(?<!n't )\bclear(ly)?\b", reason, re.I)
+        ):
             clearly_worse.append(stem)
     flags = native_flags(key)
     controls = read_json(directory / "controls/key.json")
+    pairs = read_json(directory / "pairs/key.json")
+    check_same_arms(key, controls, pairs)
     check_native_backend(controls, expected_controls, "Standard controls")
     changed = [
         stem
@@ -180,16 +199,21 @@ def score(directory):
         )
         != 1
     ]
-    pairs = read_json(directory / "pairs/key.json")
     check_native_backend(pairs, expected_pairs, "expert pairs")
     distances = read_json(directory / "pairs/distances.json")
     if set(distances) != set(pairs["rows"]):
         raise ValueError("reference coverage missing")
     measures = {role: [] for role in ROLES}
     excluded = []
+    candidate_lost = []
     for stem, values in distances.items():
         if not all(values[side]["comparable"] for side in "AB"):
             excluded.append(stem)
+            if any(
+                values[side]["comparable"] and pairs["rows"][stem][side] == "best"
+                for side in "AB"
+            ):
+                candidate_lost.append(stem)
             continue
         for side in "AB":
             role = pairs["rows"][stem][side]
@@ -209,6 +233,7 @@ def score(directory):
         >= tone["best"]["safe_as_rendered"],
         "standard": not changed,
         "expert_distance": median["candidate"] <= median["best"],
+        "candidate_comparable": not candidate_lost,
     }
     summary = dict(
         keep=all(gates.values()),
@@ -220,6 +245,10 @@ def score(directory):
         changed_controls=changed,
         reference_pairs=len(measures["best"]),
         excluded_pairs=excluded,
+        reasons=[
+            f"pair {stem}: the candidate side cannot be compared with the expert edit"
+            for stem in candidate_lost
+        ],
         median_36_cell_ev=median,
     )
     write_atomic(directory / "gates.json", json.dumps(summary, indent=2).encode())
@@ -261,7 +290,7 @@ def gallery(sheets, listed, manifest, out, seed):
                 "path": str(root / f"{path.stem}.jpg"),
                 "sidecar": str(root / f"{path.stem}.autoedit.json"),
             }
-        group = hashlib.sha256(row["author"].casefold().encode()).hexdigest()[:16]
+        group = hashlib.sha256(same_author(row["author"]).encode()).hexdigest()[:16]
         entries.append(
             dict(
                 capture_id=path.stem,

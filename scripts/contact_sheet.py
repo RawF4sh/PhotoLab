@@ -37,6 +37,7 @@ import json
 import os
 import pickle
 import random
+import secrets
 import sys
 import tempfile
 import textwrap
@@ -351,7 +352,7 @@ def _write_sheets(rows: list[list[tuple[PILImage.Image, str]]], prefix: str, col
 
 
 def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, backend: str = "stub",
-                crops_path: str | None = None, seed: int = 1, cache: str | None = None,
+                crops_path: str | None = None, seed: int | None = None, cache: str | None = None,
                 picks: list[str] | None = None, style: str | None = None,
                 best_style: str | None = None, cached_only: bool = False, require_cached_masks: bool = False,
                 render_max_px: int | None = None) -> dict:
@@ -387,6 +388,8 @@ def build_panel(panel_path: str, best_dir: str, cand_dir: str, out_dir: str, bac
     orig_dir = os.path.join(cache, "original-" + decode["raw_mode"] + scale)
     os.makedirs(orig_dir, exist_ok=True)
 
+    if seed is None:  # an unpredictable draw, recorded in key.json like an explicit seed
+        seed = secrets.randbits(32)
     rng = random.Random(seed)
     key = {"seed": seed, "best": os.path.abspath(best_dir), "candidate": os.path.abspath(cand_dir),
            "renders": render_dirs, "rows": {}}
@@ -499,7 +502,7 @@ def main() -> int:
     ap.add_argument("--candidate", help="configs dir of the candidate")
     ap.add_argument("--out-dir", dest="out_dir", help="where panel-mode sheets and key.json go")
     ap.add_argument("--crops", help="crops.txt: 100%% crops of risky areas")
-    ap.add_argument("--seed", type=int, default=1, help="A/B side assignment")
+    ap.add_argument("--seed", type=int, default=None, help="A/B side assignment (default: random, recorded in key.json)")
     ap.add_argument("--style", help="panel mode: render both arms with this style (default: the dirs' own)")
     ap.add_argument("--best-style", dest="best_style",
                     help="panel mode: style for the --best arm only (e.g. natural vs a style of one dir)")

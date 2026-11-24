@@ -79,10 +79,10 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F53 | Reveal check precision for the seven unmeasured kinds | M | measuring tools built (`scripts/eval_reveal.py`); waits for the owner's photos and labels (about 20 per kind) before any threshold changes; spec [F53](plans/F53-reveal-check-precision.md) |
 | F55 | Guided photo workflow and Gemini suggestions | L | done: object selection/sliders/brushes, framing/native detail, portable presets, first-use guidance and reviewable Gemini adjustments. Reopening after an app restart has a guided recovery step. 1,233 tests and stub/browser checks pass; both earlier 110-photo RAW gates pass. Natural-clean candidate stays opt-in pending owner blind preference; spec [F55](plans/F55-guided-photo-workflow.md) |
 | F56 | Editable changes, adjustable suggestions and recipes | L | done: Changes list, individually selectable suggestions, portable recipes and folder planning. Browser and export checks pass, and an independent check on 2026-11-23 found and fixed three gaps (see the spec). Open, both the owner's steps: the live Gemini assessment and the [LightCraft measurements](plans/F56-lightcraft-check.md); spec [F56](plans/F56-connected-editor-and-lightcraft.md), first and larger version [F56 full vision](plans/F56-full-vision.md) |
-| F57 | AI editing modes with Gemini, and photographer references | M | built on 2026-11-24: Automatic and the editor ask Gemini for a style (`configs/ai_edits.toml`); not checked by a second session; F58 renames its buttons and makes the local edit the default; spec [F57](plans/F57-ai-editing-modes.md) |
-| F58 | Original-first photo editor and RAW import | L | Done. Automatic and Photo editor share the local edit. The editor includes split comparison, Isolate, Learn and optional Gemini. Fine-tune restores LightCraft adjustments and exports full-size photos. The RAW brightness choice awaits the owner's vote. [Editor results](plans/F58-editor-sidebar-and-cr2.md) |
-| F59 | Photographer-directed local styles | L | Done, off by default for specialized styles. Against Standard on 24 held-back photos each, Blue hour won 5, Sunset glow won 2 and Moody landscape won 3. Standard remains the released choice. Natural portrait needs paired reference portraits. [Style results](plans/F59-local-styles.md) |
-| F60 | Web photo evaluation loop | L | Done through independent review. The local evaluation verified 491 licensed files, exported 186 of 190 format samples at full size and produced six blind galleries for the owner's vote. FiveK is used only for research measurements. [Evaluation results](plans/F60-web-photo-loop.md) |
+| F57 | AI editing modes with Gemini, and photographer references | M | built on 2026-11-24 and replaced in the interface by F58 the same day: no page asks Gemini from Automatic any more, and **Ask Gemini** in the editor is the optional path. The server side was checked on 2026-11-24 for what leaves the computer; spec [F57](plans/F57-ai-editing-modes.md) |
+| F58 | Original-first photo editor and RAW import | L | built on 2026-11-24 on the fallback of its decision D1 (AutoEdit's photo screen is the editor, LightCraft opens as Fine-tune), then checked by a second session with eight fixes. Automatic edit and Photo editor share the local edit. The editor has the split comparison, Isolate, Learn and optional Ask Gemini. Fine-tune restores LightCraft's settings from the project and exports at full size through AutoEdit. Open, the owner's: the RAW brightness default (D6), whether Automatic evens a folder's brightness (D12), and LightCraft's remove and fill tools (D4); spec and results [F58](plans/F58-editor-sidebar-and-cr2.md), [probe](plans/F58-probe.md) |
+| F59 | Photographer-directed local styles | L | engine built on 2026-11-24 and checked by a second session with six fixes; **no specialized style is released**. Each landscape candidate ran one round and missed its bars. Against Standard on 24 held-back photos, better / same / worse was 5 / 9 / 10 for Blue hour, 2 / 19 / 3 for Sunset glow and 3 / 0 / 21 for Moody landscape. Standard is unchanged. Open: the owner's blind vote on six galleries, finished portraits for Natural portrait, and a design question on the `burn_ev` op before Moody's next round; spec and results [F59](plans/F59-local-styles.md) |
+| F60 | Web photo evaluation loop | L | tools built and first run done on 2026-11-24, checked by a second session with eleven fixes: 491 files fetched inside the approved budgets, 186 of 190 format samples opened and exported at full size, one round per landscape style, six blind galleries for the owner's vote. FiveK is used for measuring only. Open: one photographer is on both sides of the frozen split (the owner's decision); spec and results [F60](plans/F60-web-photo-loop.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -666,53 +666,59 @@ mechanism and the new tools that several kinds need.
 The owner asked for three things: the editor redesign of F58 planned through, the features that
 take the result to the level of a person editing by hand, and a loop that takes photos from the
 web and makes them come out well. The owner supplied three before-and-after examples. Measured
-against them, today's rules make moves of about half the size, cannot shape light inside the
-frame, and clip the lamps when asked to match (the numbers are in [F59](plans/F59-local-styles.md)).
+against them, the rules of that day made moves of about half the size, could not shape light
+inside the frame, and clipped the lamps when asked to match (the numbers are in
+[F59](plans/F59-local-styles.md)).
 
-### F58. One editor (L)
+All three were planned, built and checked on 2026-11-24. The editor works. The loop works. No
+specialized style has passed yet.
 
-- **Why:** the Photo editor keeps its edits in the browser, exports past AutoEdit, and its
-  **AI Edit** button asks Gemini. Isolate and Learn live on another screen. Some Canon RAW files
-  do not open.
-- **Build:** two stages per photo in a fixed order. AutoEdit's pipeline renders the AI stage, as
-  Automatic does. LightCraft renders the manual stage on top. The AutoEdit project is the record
-  for both, and every export goes through AutoEdit. A RAW file opens through AutoEdit's decoder.
-  A sidebar of the host page holds Adjust, AI Edit, Isolate, Learn and Ask Gemini.
-- **First:** M0, a proving step on one photo with numbers, before any panel moves. It decides
-  whether LightCraft's canvas is the editor's home or the Guided photo screen takes that place.
-- **Done when:** the release checks of the spec pass, among them: the edit survives a cleared
-  browser, and a photo without manual changes exports byte for byte as Automatic does.
+### F58. One editor (L): built and checked
 
-### F59. Local styles (L)
+- **Why:** the Photo editor kept its edits in the browser, exported past AutoEdit, and its
+  **AI Edit** button asked Gemini. Isolate and Learn lived on another screen. Some Canon RAW files
+  did not open.
+- **Built:** the proving step measured LightCraft as too slow to sit behind **Run AI Edit**
+  (4.70 s against 4 s), so AutoEdit's own photo screen is the editor, with a sidebar of Adjust, AI
+  Edit, Isolate, Learn and Ask Gemini. LightCraft opens from Adjust as Fine-tune. The AutoEdit
+  project is the record for both stages, every export goes through AutoEdit, and a RAW file opens
+  through AutoEdit's decoder.
+- **Checked:** a photo without manual changes exports byte for byte as the command line does.
+  Eight things were fixed, among them a Hide setting that did not reach Fine-tune and a retouched
+  spot that the edit declaration could miss.
+- **Open:** three decisions of the owner (D4, D6, D12).
+
+### F59. Local styles (L): engine built and checked, no style released
 
 - **Why:** the local engine needs real settings for Blue hour, Sunset glow, Moody landscape and
   Natural portrait. Mood words barely move a picture, and stronger settings alone fail the checks.
-- **Build:** a style carries a target, as ranges measured on finished photos, and the existing
-  reference search pulls a photo toward it inside the clipping budgets. Light is shaped inside a
-  region, with a band at a waterline and a new op `burn_ev` that darkens with black pinned.
-  Lamps and lit windows hold while the frame is lifted. A style may declare that it means to be
-  darker or richer; that skips only the matching relative check.
+- **Built:** a style carries a target, as ranges measured on finished photos, and a search pulls a
+  photo toward it inside the clipping budgets. Light is shaped inside a region, with a band at a
+  waterline and a new op `burn_ev` that darkens with black pinned. Lamps and lit windows hold
+  while the frame is lifted. A style may declare that it means to be darker or richer; that skips
+  only the matching relative check.
+- **Result of the first rounds:** all three landscape candidates lost to Standard on held-back
+  photos, Moody landscape clearly. They stay candidates, to be run by name only.
 - **Done when:** per style, the loop's held-back photos and the owner's blind vote pass it.
 
-### F60. The web photo loop (L)
+### F60. The web photo loop (L): built, first run done, checked
 
-- **Why:** every corpus in the repository is the owner's mountain landscapes. Genre packs, night
-  sky, upright and now the styles all wait for other photos.
-- **Build:** a fetch tool with a manifest of licence and author per file, and a loop with three
+- **Why:** every corpus in the repository was the owner's mountain landscapes. Genre packs, night
+  sky, upright and the styles all waited for other photos.
+- **Built:** a fetch tool with a manifest of licence and author per file, and a loop with three
   tracks. It opens: one RAW file per camera. It looks right: one round per style, blind sheets
-  judged by a Checker, distance from a photographer's result on pairs. It works in the app: the
-  same photos through the editor in a browser.
-- **Done when:** a first round ends with a ledger, a held-back sheet and a gallery the owner can
-  vote in, and no fetched file is in any commit.
+  judged by a checker, distance from a retoucher's result on pairs. It works in the app: the same
+  photos through the editor in a browser.
+- **First run:** 491 files, 186 of 190 format samples exported, RAW picker support for six more
+  formats, three rounds, six galleries for the owner. No fetched file is in any commit.
 
-### Order
+### Next
 
-1. F60's tools (L1 to L3) and F58's M0. Neither needs the other.
-2. The owner's answers: F58's D1 after M0, the sources of F60, the two "may a style" questions
-   of F59, and the RAW default (open since F8) before the editor ships.
-3. F58's M1 (RAW opening) and F60's Track O, which tests it on every camera's file.
-4. F59's S1 to S3, then a loop round per style, Blue hour first.
-5. F58's M2 to M6. Each style joins the editor's menu when it has passed (M7).
+1. The owner's blind vote on the six galleries, and the open decisions listed below.
+2. The planner's answer on `burn_ev` and single colour channels, then the limits for the frame's
+   search ([F59](plans/F59-local-styles.md), "Check of the build").
+3. A second round for Blue hour, which came closest, on a split that also separates viewpoints.
+4. Finished portraits from the owner or a photographer, for Natural portrait.
 
 ## Ideas, not planned yet (added 2026-11-16)
 
@@ -819,9 +825,9 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Which of F24's eight looks stay, and are the casts of `film_warm`, `film_cool` and `cross_process` strong enough? A stronger red filter? Should the prompt words "black and white" use the new op? (F24, unattended run) | `out-features/F24/bw_*.jpg`, `film_*.jpg`; [F24 result](plans/F24-bw-film-looks.md) | The values in `looks.toml`; `bw = 100` in `intents.toml` |
 | Is grain 25 the right light grain, and should a packaged look carry grain? (F23, unattended run) | `out-features/F23/crops.jpg`; [F23 result](plans/F23-grain.md) | `_GRAIN_SIGMA` in `edit/ops.py`; `grain = N` in a look of `looks.toml` |
 | Fill the holes inside a marked thing? | [F37 result](plans/F37-point-and-tell.md), "Found on the way": SAM 3's mask has holes on dark, even surfaces. Filling them changes what a mark edits against what SAM 3 returned | A small task of its own |
-| The editor (F58): which canvas is its home, is the AutoEdit project the record for manual edits, does every export go through AutoEdit, are heal and clone allowed in the manual stage, and seven more | [F58](plans/F58-editor-sidebar-and-cr2.md), "Decisions for the owner", D1 to D11; D1 after the proving step M0 | The milestones of F58 |
-| Styles (F59): may a style declare that it means to be richer in colour, how far may its colour go, is a lift of 3 EV from a RAW file acceptable, is a lighter band where haze already is "tone"? The moody question above belongs here too. | [F59](plans/F59-local-styles.md), "The evidence" and "Decisions for the owner" | `intent` and `limits` per style in `styles.toml` |
-| The web photo loop (F60): which sources and how much, FiveK for measuring only (its licence says research), photos of people, the disk budget | [F60](plans/F60-web-photo-loop.md), "Where the photos come from" and "Decisions for the owner" | A yes per source, recorded in the loop's ledger |
+| The editor (F58): the RAW brightness default (D6); should Automatic edit even a folder's brightness again, or keep exporting each photo on its own as the build does (D12); may LightCraft's remove and fill tools be used in the manual stage (D4) | [F58](plans/F58-editor-sidebar-and-cr2.md), "Decisions for the owner" | The editor's neutral original, Automatic's exports, the edit declaration |
+| Styles (F59): the blind vote on the six galleries of the first round. Before Moody's next round: how the `burn_ev` op treats single colour channels | [F59](plans/F59-local-styles.md), "Where each style stands" and "Check of the build" | `tested` per style in `styles.toml`; the op math |
+| The web photo loop (F60): one photographer's photos are in a target group and in a held-back group of the frozen split, under two spellings of the credit. Keep the split, or drop that photographer's two photos from the Blue hour target | [F60](plans/F60-web-photo-loop.md), "Check of the tools" | The split of the next round |
 
 Things only the owner can do, left open by the unattended run:
 

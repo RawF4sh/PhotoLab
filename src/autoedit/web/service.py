@@ -927,9 +927,9 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
                                            wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))))
     result.notes.extend(edit_steps.notes(entries, limited))
     os.makedirs(out_dir, exist_ok=True)
-    image_out, sidecar = emit.output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,
-                                           subdir=cfg.out_subdir, fields={"style": cfg.style, "n": 1},
-                                           sources=emit.source_ids([image_path]))
+    image_out, sidecar = emit.single_output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,
+                                                  subdir=cfg.out_subdir, fields={"style": cfg.style, "n": 1},
+                                                  sources=emit.source_ids([image_path]))
     emit.write_outputs(out_rgb, result, image_out, sidecar, cfg, image_path)
     # Single-photo saves must be replayable by Copy to similar just like a batch export.
     from .jobs import _note_input_dir

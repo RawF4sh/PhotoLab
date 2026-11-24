@@ -14,6 +14,34 @@ All notable changes to this project are documented here. Format follows
   existing processing. Specialized styles require a passing blind evaluation to enter the menu.
 - Added local tools to assemble licensed evaluation panels, verify file provenance, check
   decoding, and compare style candidates against a frozen baseline.
+- Changed: Automatic edit exports each photo on its own. It no longer evens a folder's brightness
+  from photo to photo, so its file equals the editor's and the command line's for one photo.
+- Unchanged from the earlier Automatic and Photo editor work: a photo marked for review or as
+  failed opens on its edit, Automatic follows the choices in Settings, and the first Fine-tune
+  launch asks before it downloads LightCraft (about 75 MB).
+- Fixed after a check of this work by a second session:
+  - `autoedit adjust` and `autoedit sync` refuse a photo that was finished by hand in Photo
+    editor. They used to write its export again without the manual changes.
+  - A photo's own Hide setting reaches every picture made for Fine-tune.
+  - A single export never replaces a file AutoEdit did not write, and never another photo's
+    export of the same name: the second photo gets `-2`.
+  - A run of saves in Fine-tune is one undo step. A lost manual-edit file no longer blocks its
+    photo. Every retouched spot is recorded, so the edit declaration cannot miss one.
+  - Export on a photo without an edit shows a notice. It used to jump into Fine-tune.
+  - With a style, the frame's lift and a region's own lift share one limit (2 EV on a JPEG), and a
+    region's search stays inside that region's limits. A candidate style without a label stays
+    hidden, a quality config file cannot switch off the colour check, and the optional LLM decider
+    is not offered the new burn op.
+  - When the saved project of a folder cannot be read, `autoedit run` stops before the first
+    photo and says why: it could not tell which photos were finished by hand.
+  - Loop tools: a round is scored only when its sheets, controls and pairs come from the same two
+    config folders; a download is bounded by the size its source listed, one bad file no longer
+    stops a run, and a web page saved under a photo extension is refused; photographers are
+    compared by a normalised credit; `style_target.py` runs isolated and takes owner files only
+    from `owner/photos/`.
+- `tests/run_all.py` prints SKIP for a test whose optional library is missing (it used to count
+  as passed), and takes test file names to run a part of the suite.
+- `scripts/check_public_repo.py` also fails on an absolute home-folder path in a tracked file.
 
 ## [Unreleased] — Editable changes and folder recipes (F56)
 

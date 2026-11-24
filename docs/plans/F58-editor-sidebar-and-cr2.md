@@ -1,6 +1,13 @@
 # F58 · One editor sidebar and reliable Canon RAW opening
 
-The plan was proposed on 24 November 2026. The editor now uses the Guided-primary fallback selected by the pinned-build probe. The [implementation result](#implementation-result--24-november-2026) and [probe measurements](F58-probe.md) record the delivered architecture and test evidence.
+**Status on 2026-11-24.** Built, on the fallback of decision D1: AutoEdit's own photo screen is
+the editor, and LightCraft opens from **Adjust → Fine-tune in LightCraft**. The
+[probe](F58-probe.md) chose that path. A second session checked the build the same day and fixed
+eight things ([what the check found](#check-of-the-build-2026-11-24)). Three decisions are still
+the owner's: D4's last question, D6 and D12.
+
+The sections from "What the photographer sees" to "Release checks" are the plan as it was written
+before the build. [As built](#as-built) says what exists.
 
 This plan supersedes the AI button names and default workflow in F57. **AI Edit** means AutoEdit's
 built-in local photo pipeline. **Ask Gemini** is a separate, optional assistant. The on-device path
@@ -97,19 +104,20 @@ Rules:
 
 ## Decisions for the owner
 
-| # | Decision | Proposed |
-| --- | --- | --- |
-| D1 | Which canvas is the editor's home? | LightCraft's, as this plan says, if M0 passes. If M0 fails: the Guided photo screen becomes the editor, with its own canvas and sliders, and LightCraft opens from Adjust as a "Fine-tune" step on the current picture. |
-| D2 | Is the AutoEdit project the record for manual edits too? | Yes. |
-| D3 | Does every export go through AutoEdit? | Yes. |
-| D4 | Heal and clone in the manual stage | Allowed as the photographer's own tools. The sidecar records that they were used, and `autoedit declare` says so. AutoEdit itself still generates nothing. |
-| D5 | Size of the working picture | 2,560 px on the long edge while editing; full size at export and for a 100 % view. |
-| D6 | The RAW default (`raw_mode`, open since F8). With today's default the editor's "neutral original" is about 1.3 EV darker than the camera's own picture. | Decide with the existing blind gallery before M1 ships. |
-| D7 | This plan replaces three earlier rules for the editor page: F56's "LightCraft is a one-day check" and "no new top-level areas", and UI-minimal's "never a sidebar of modes". Start → Folder → Photo stays a stack. | Yes. |
-| D8 | `rawpy` and `tifffile` become part of the `app` extra, because opening a RAW in the editor needs both. | Yes. |
-| D9 | Names | Start screen: **Automatic edit** and **Photo editor**. Buttons: **Run AI Edit** and **Ask Gemini**. **Local auto** leaves the top bar; LightCraft's own Auto stays in its panel. |
-| D10 | Upgrading the pinned LightCraft | Only together with a repeat of M0. |
-| D11 | A photo with manual changes cannot be exported by Automatic or the command line. | Accept. The Folder screen marks such a photo "finish in Photo editor". |
+| # | Decision | Proposed | Outcome on 2026-11-24 |
+| --- | --- | --- | --- |
+| D1 | Which canvas is the editor's home? | LightCraft's, if M0 passes. If not: the Guided photo screen becomes the editor, and LightCraft opens from Adjust as a "Fine-tune" step. | The fallback. M0 measured 4.70 s from Run AI Edit to the picture in LightCraft, against a budget of 4 s. |
+| D2 | Is the AutoEdit project the record for manual edits too? | Yes. | Built. |
+| D3 | Does every export go through AutoEdit? | Yes. | Built. A Fine-tune export gets its sidecar and the chosen metadata rule. |
+| D4 | Heal and clone in the manual stage | Allowed as the photographer's own tools. The sidecar records that they were used, and `autoedit declare` says so. AutoEdit itself still generates nothing. | Built: the sidecar counts every retouched spot and names its tool, and the declaration changes its statement. **Open:** LightCraft also has **remove** and **fill**, which replace content. They are recorded like heal and clone. Allow them, or refuse an export that used them? |
+| D5 | Size of the working picture | 2,560 px on the long edge while editing; full size at export and for a 100 % view. | Fine-tune works on 2,560 px. The editor's own canvas previews at 1,600 px. Export and **Inspect at 100%** use every pixel. |
+| D6 | The RAW default (`raw_mode`, open since F8). With today's default the editor's "neutral original" is about 1.3 EV darker than the camera's own picture. | Decide with the existing blind gallery before M1 ships. | **Open.** Measured again: a median of 1.33 EV darker on 110 RAW files. |
+| D7 | This plan replaces three earlier rules for the editor page: F56's "LightCraft is a one-day check" and "no new top-level areas", and UI-minimal's "never a sidebar of modes". Start → Folder → Photo stays a stack. | Yes. | Taken by building. |
+| D8 | `rawpy` and `tifffile` become part of the `app` extra, because opening a RAW in the editor needs both. | Yes. | Done. An installation made earlier needs `pip install -e '.[app]'` once more. Without `tifffile`, Fine-tune answers a RAW with an install hint. |
+| D9 | Names | Start screen: **Automatic edit** and **Photo editor**. Buttons: **Run AI Edit** and **Ask Gemini**. **Local auto** leaves the top bar; LightCraft's own Auto stays in its panel. | Done. |
+| D10 | Upgrading the pinned LightCraft | Only together with a repeat of M0. | Stands. |
+| D11 | A photo with manual changes cannot be exported by Automatic or the command line. | Accept. The Folder screen marks such a photo "finish in Photo editor". | Built for `autoedit run`, Automatic and a single export. Since the check also for `autoedit adjust` and `autoedit sync`. |
+| D12 | New: **Automatic edit** exports each photo on its own, without evening a folder's brightness from photo to photo. That makes its file equal to the editor's and the command line's for one photo. Before this build it evened the folder. | Was not asked. | **Open.** Keep it, or give Automatic a switch for shoot consistency. |
 
 ## The work, in order
 
@@ -265,31 +273,22 @@ selected. Export, and the change is in the file and inside its feathered mask.
 a time, each when F59 has built it and F60's loop and the owner's blind vote have passed it. Give
 each local style a tested look, relevant region choices and data-driven rules.
 
-## Tasks
+## As built
 
-Tiers as in [AGENT_ROUTING.md](../AGENT_ROUTING.md). A Python task and a page task of the same
-milestone may run together; their files do not overlap.
+Another tool built the plan in one pass on 2026-11-24. The task list of the first version named
+files for the LightCraft-first design, and most of them were never needed.
 
-| Task | Tier | Files | Proof |
-| --- | --- | --- | --- |
-| M0 | The session, with a visible browser | none in `src/`; `docs/plans/F58-probe.md` | The eight answers with numbers |
-| M1-T1 | Builder (Sonnet, medium) | `web/lightcraft.py`, `web/service.py` (the picker), `pyproject.toml` (D8), `tests/test_lightcraft_web.py` | New tests for the import decision, the cache cap, the RAW settings and the picker list; then the full suite |
-| M1-T2 | Builder (Sonnet, medium) | `static/app/editor_host.js`, `editor.html`, `editor_host.css`, a new `tests/js/editor_open.cjs` | The page test covers one Open button, the waiting state and the four failures; a browser check with a real CR2 |
-| M1-T3 | Checker (Opus, high) | read-only | M1's acceptance; the original's hash; findings as `file:line` |
-| M2-T1 | Builder (Sonnet, medium) | `web/projects.py`, `static/app/project.js`, a new `web/manual_stage.py`, tests | Check, cap, atomic write, rebuild; a size test with 1,000 photos |
-| M2-T2 | Builder (Sonnet, medium) | `web/lightcraft.py` (the export route), `static/app/editor_host.js`, tests | The three acceptance checks of M2 as tests where they need no browser |
-| M2-T3 | Checker (Opus, high) | read-only | What leaves through export; nothing secret stored; findings as `file:line` |
-| M3-T1 | Builder (Sonnet, medium) | `web/service.py` (a working-picture function beside `preview`), `web/lightcraft.py`, tests | Tests for the 16-bit result and the stale-result rule |
-| M3-T2 | Builder (Sonnet, medium) | `static/app/editor_host.js`, a new `editor_ai.js`, `editor_compare.js`, `editor_assist.js`, `modes.js`, page tests | Page tests for the renames and the old links; a browser check with the network off |
-| M3-T3 | Checker (Opus, high) | read-only | Automatic and editor exports compared byte for byte; no request without Ask Gemini |
-| M4 | Builder (Sonnet, medium) | `editor.html`, a new `editor_sidebar.js`, `editor_host.css`, page tests | A keyboard walk through every control |
-| M5-T1 | Planner (in place) | an addendum to this spec | The exact form of a stored mask in the pinned version, with test values |
-| M5-T2 | Builder (Sonnet, high) | a new `web/lightcraft_masks.py`, `web/lightcraft.py`, a new `editor_isolate.js`, tests | A made-up mask survives the round trip at 95 % overlap; a browser check |
-| M6 | Builder (Sonnet, medium) | a new `editor_learn.js`, page tests | A browser check: step on and off, practice applied and discarded |
-| Docs | Tweaker (Haiku, low), per milestone | `CHANGELOG.md`, the row in `FEATURE_PLAN.md`, `APP_GUIDE.md`, `README.md` | none |
-
-No task touches a protected file. A task that seems to need `pipeline.py`, `edit/ops.py`, the
-gates or `quality.toml` stops and reports.
+| Milestone | What exists | Where |
+| --- | --- | --- |
+| M0 | The eight answers with numbers. All passed except the time from Run AI Edit to the picture in LightCraft, which decided D1. | [F58-probe.md](F58-probe.md) |
+| M1. Open | One import decision on the server. A RAW file, also one inside a TIFF container, opens through AutoEdit's decoder with the RAW choices of Settings. One list of file types for both pickers. Working pictures live in a cache capped at 4 GB. A dropped file is kept as a local copy until its original is linked. | `web/editor_files.py`, `web/editor_routes.py`, `imageio.py` |
+| M2. Record and export | The manual stage of a photo is a file beside the project (2 MB at most, checked by its checksum, written atomically), with a pointer in the project and undo across both stages. A full-size export needs a receipt from AutoEdit's own render. The sidecar has a `manual` block. | `web/manual_stage.py`, `web/projects.py` |
+| M3. Run AI Edit | Photo editor and Automatic edit run the local pipeline. **Ask Gemini** is separate and optional. A **Before / After** divider, also by keyboard. | `static/app/photo.js`, `static/app/modes.js`, `web/jobs.py` |
+| M4. Sidebar | Five sections on AutoEdit's own page: Adjust, AI Edit, Isolate, Learn, Ask Gemini. One is open at a time, and a narrow screen gets a drawer. Adjust holds crop and straighten and the way into Fine-tune. LightCraft's sliders were not rebuilt as page controls. | `static/app/photo.js`, `static/app/editor_sidebar.js` |
+| M5. Isolate | On AutoEdit's canvas, with its masks, brush and sliders: the fallback of M5. The probe showed that LightCraft accepts a SAM 3 mask (overlap 0.994), and the build does not use that. | `static/app/photo.js`, `static/app/photo_tools.js` |
+| M6. Learn | **What changed**, step by step, and practice on a temporary copy. | `static/app/photo.js` |
+| Fine-tune | LightCraft on the current stage, with its settings restored from the project, **Inspect at 100%**, and export through AutoEdit. | `static/app/editor_host.js`, `static/app/editor_native.js` |
+| M7. Styles | Standard only. No specialized style has passed ([F59](F59-local-styles.md)). | |
 
 ## Release checks
 
@@ -334,3 +333,56 @@ The RAW brightness decision (D6) is still with the owner. The current Standard r
 - A browser drop stayed marked as a browser copy until the original was linked. A different file was rejected and the exact original was accepted. Cross-stage undo and redo persisted the corresponding manual-stage pointer, including the return to the original. The library surfaced **Finish in Photo editor** for a saved manual stage.
 
 The primary editor gave both Canon TIFFs a 1,600-pixel neutral preview and exported the complete 2,496 × 1,662 and 4,082 × 2,718 developed frames. Fine-tune separately reopened the 4,082 × 2,718 source and a third Canon TIFF at 1,736 × 1,160. Inspect at 100%, an exposure adjustment of +0.15 EV and full native export preserved those dimensions. Source checksums matched across both tests. See the private `out-webloop/app/opens-canon-tiff.json` and `camera-tiff-native.json` records.
+
+## Check of the build (2026-11-24)
+
+A second session reviewed the commit against this plan, with an independent checker for the
+server and page code and a second one for the fixes.
+
+**What holds**
+
+- Every new route sits behind the loopback host check, and every new POST behind the local-origin
+  check. A file path reaches code only after the folder check and the image check.
+- The size limit of an export upload comes from the server's own full-size render, never from the
+  page. The upload is then checked again: one page, 16 bits, three channels, the saved crop.
+- A manual stage is written atomically, capped at 2 MB and verified by its checksum when read.
+  Two photos with the same file stem get separate folders.
+- With no key and **Ask Gemini** unused, nothing leaves the computer. Automatic calls Gemini only
+  when three settings are given together, and no page sends them.
+- Messages from the embedded editor are checked for their source and origin. No file name is
+  inserted as HTML.
+- A walk through the app on a scratch profile: a JPEG and a Canon CR2 opened on the original,
+  **Run AI Edit**, the divider by keyboard, Isolate, Learn with 12 steps, Export. The CR2's export
+  at 5,796 × 3,870 was byte-identical to the command line's for the same settings, the originals
+  kept their checksums, and the console stayed empty.
+
+**Fixed after the check**
+
+- `autoedit adjust` and `autoedit sync` refuse a photo that has a manual stage. Before, they
+  wrote the export again without it.
+- A photo's own **Hide** reaches every picture made for Fine-tune. The server adds it now, so it
+  no longer depends on what the page sends. Before, a photo whose only edit was Hide went to
+  LightCraft uncovered.
+- A single export never replaces a file AutoEdit did not write, and never another photo's export.
+  Before, an export into the photo's own folder could replace an original with the same stem.
+- A run of saves in Fine-tune is one undo step. Before, a minute of slider work pushed the AI
+  stage's own steps out of the history of 50.
+- A missing or damaged manual-stage file no longer leaves the photo stuck. The pointer is
+  dropped, Fine-tune says so, and the photo opens and exports again.
+- Every retouched spot is recorded. Before, a spot without a named tool was left out, and the
+  edit declaration then kept its plain statement.
+- **Export** on a photo with no edit shows a notice. Before, it jumped into Fine-tune.
+- One failed request while LightCraft starts no longer leaves **Open** disabled.
+
+**Open**
+
+- The decisions D4 (remove and fill), D6 and D12.
+- A slow RAW decode holds one lock, so the picture of another photo waits for it. An upload is
+  written inside the request handler.
+- The manual-stage files of photos that left a project are never deleted, and temporary folders a
+  crash leaves in the cache are not pruned.
+- An export is matched to its photo by the source's file name. Two photos of the same name from
+  different folders, exported into one shared folder, still replace each other.
+- No page test covers opening and exporting in Fine-tune. Inside the test suite nothing compares
+  the editor's export with Automatic's; that was checked by hand and in the builder's records.
+- Not checked: LightCraft's own behaviour in Fine-tune, touch, and a screen reader.

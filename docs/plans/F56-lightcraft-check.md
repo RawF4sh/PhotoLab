@@ -63,3 +63,8 @@ window.
 **Taken up on 2026-11-24.** [F58](F58-editor-sidebar-and-cr2.md) turns the four open points into
 work: exports and browser storage in its M2, RAW files in its M1, and the disagreement between
 plan and build in its decision D7. The feature plan has rows for F57 and F58 since that day.
+
+**Built on 2026-11-24.** F58 was built and checked the same day. A Fine-tune export goes through
+AutoEdit with its sidecar and the metadata rule, the project keeps the manual edit, and a RAW file
+opens through AutoEdit's decoder. The five-RAW desktop measurements of the table above are still
+unmeasured. The browser probe of [F58](F58-probe.md) answered the questions the editor depends on.

@@ -48,7 +48,9 @@ def round_fixture(root):
     for role in web_round.ROLES:
         save(directory / f"tone-{role}.json", tone)
     for name, ids in (("sheets", panel), ("controls", controls), ("pairs", pairs)):
-        key = {
+        key = {   # as contact_sheet.py writes it: the two config folders, then where each arm was rendered
+            "best": str(directory / "baseline"),
+            "candidate": str(directory / "configs"),
             "rows": {i: {"A": "best", "B": "candidate"} for i in ids},
             "renders": {role: str(directory / role) for role in web_round.ROLES},
         }
@@ -138,3 +140,71 @@ def test_duplicate_and_missing_votes_never_unmask_a_partial_round(tmp_path):
     (tmp_path / "verdicts.txt").write_text("")
     with pytest.raises(ValueError, match="required before"):
         web_round.score(tmp_path)
+
+
+def no_flags():
+    return patch.object(
+        web_round, "native_flags", return_value={"best": set(), "candidate": set()}
+    )
+
+
+def test_inputs_of_the_keep_rule_must_belong_together(tmp_path):
+    directory = round_fixture(tmp_path)
+    with no_flags():
+        web_round.score(directory)      # the three keys of one round name the same two folders
+        key = directory / "controls/key.json"
+        original = json.loads(key.read_text())
+        save(key, {**original, "candidate": str(tmp_path / "another-round" / "configs")})
+        with pytest.raises(ValueError, match="controls key was built from other config folders"):
+            web_round.score(directory)
+        # One folder against itself: the two arms are trivially identical, which proves nothing.
+        save(key, {**original, "candidate": original["best"]})
+        with pytest.raises(ValueError, match="controls key compares a config folder with itself"):
+            web_round.score(directory)
+        save(key, original)
+        pairs = directory / "pairs/key.json"
+        save(pairs, {**json.loads(pairs.read_text()), "best": str(tmp_path / "elsewhere")})
+        with pytest.raises(ValueError, match="pairs key was built from other config folders"):
+            web_round.score(directory)
+
+
+def test_uncomparable_candidate_side_blocks_keep(tmp_path):
+    directory = round_fixture(tmp_path)
+    dist = json.loads((directory / "pairs/distances.json").read_text())
+    for v in dist.values():
+        v["A"]["cells_ev"], v["B"]["cells_ev"] = 0.3, 0.2
+    dist["expert-2"]["B"]["comparable"] = False
+    save(directory / "pairs/distances.json", dist)
+    with no_flags():
+        result = web_round.score(directory)
+    assert not result["gates"]["candidate_comparable"]
+    assert "expert-2" in result["reasons"][0]
+    assert not result["keep"]
+
+
+def test_clearly_worse_in_any_case_counts(tmp_path):
+    directory = round_fixture(tmp_path)
+    lines = (directory / "verdicts.txt").read_text().splitlines()
+    ident = lines[0].split()[0]
+    (directory / "verdicts.txt").write_text(
+        f"{ident} A Clearly worse: halo\n" + "\n".join(lines[1:]) + "\n"
+    )
+    with no_flags():
+        assert web_round.score(directory)["clearly_worse"] == [ident]
+        (directory / "verdicts.txt").write_text(
+            f"{ident} A CLEAR halo\n" + "\n".join(lines[1:]) + "\n"
+        )
+        assert web_round.score(directory)["clearly_worse"] == [ident]
+
+
+def test_a_reason_that_denies_a_clear_loss_is_not_one(tmp_path):
+    directory = round_fixture(tmp_path)
+    verdicts = directory / "verdicts.txt"
+    lines = verdicts.read_text().splitlines()
+    # Side A is "best" in the fixture, so a vote for A calls the candidate worse.
+    lines[0] = lines[0].split()[0] + " A Slightly flatter, not clearly worse"
+    lines[1] = lines[1].split()[0] + " A Worse, clearly: a halo on the ridge"
+    verdicts.write_text("\n".join(lines) + "\n")
+    with no_flags():
+        result = web_round.score(directory)
+    assert result["clearly_worse"] == [lines[1].split()[0]]

@@ -1,8 +1,13 @@
 # F59 · Local styles that make a photographer's moves
 
-Status (2026-11-24). The local engine and evaluation tools are implemented. Standard is released. All three landscape candidates completed their first held-back evaluation and fell below the release thresholds. Their blind galleries are ready for the owner. Natural portrait awaits finished portraits. This work connects to [F58](F58-editor-sidebar-and-cr2.md),
-which offers these styles behind **Run AI Edit**, and [F60](F60-web-photo-loop.md), the loop that
-tunes and tests them.
+**Status on 2026-11-24.** The engine and the measuring tools are built, and a second session
+checked them the same day ([what the check found](#check-of-the-build-2026-11-24)). Standard is
+the only released style. The three landscape candidates each ran one round of the loop, and all
+three missed the release bars, so none is offered in the normal lists. Their blind galleries wait
+for the owner's vote. Natural portrait waits for finished portraits.
+
+This work connects to [F58](F58-editor-sidebar-and-cr2.md), which offers these styles behind
+**Run AI Edit**, and [F60](F60-web-photo-loop.md), the loop that tunes and tests them.
 
 ## Goal
 
@@ -13,24 +18,65 @@ glow**, **Moody landscape** and **Natural portrait**.
 A style is done when the loop's held-back photos and the owner's blind vote say so, not when its
 code is merged.
 
+## Where each style stands
+
+Counts are better / same / worse, as an independent checker judged them blind.
+
+| | Blue hour | Sunset glow | Moody landscape |
+| --- | --- | --- | --- |
+| Tuning on 16 photos, candidate against the round's start | 5 / 8 / 3, kept | 3 / 5 / 8, then two trials that tied on all 16. Nothing kept. | Three changes kept: 6 / 9 / 1, then 10 / 6 / 0, then 3 / 13 / 0 |
+| Distance from the retoucher on 9 pairs, median in stops | 0.623 to 0.537 | 0.623, unchanged | 0.792 to 0.607 |
+| 24 held-back photos, against Standard | 5 / 9 / 10 | 2 / 19 / 3 | 3 / 0 / 21, three of them clear defects |
+| The first ten of those, which count for the bar | 2 / 3 / 5 | 0 / 10 / 0 | 2 / 0 / 8 |
+| Photos marked for review, Standard and the style | 6 and 4 | 3 and 2 | 1 and 2. Both of the style's are new: RGB shadow clipping. |
+| Bar: 0.35 stops or less on pairs | missed | missed | missed |
+| Bar: better than Standard on 7 of 10, clearly worse on none | missed | missed | missed |
+| Bar: no new review mark against Standard | met | met | missed |
+| Packaged in `configs/` | the seed values | the seed values | the seed values and the round's three changes |
+| The owner's blind vote | open | open | open |
+
+What the rounds showed:
+
+- **Blue hour** reads as an improvement on some photos and a loss on more. A high-key mountain
+  showed conspicuous mask artifacts. Of eleven photographer groups, three favoured it, four
+  preferred the comparison and four tied.
+- **Sunset glow** is mostly indistinguishable from Standard. Its final and starting settings gave
+  byte-identical pictures on all 24 held-back photos.
+- **Moody landscape** improved on its own start on 21 of 24 photos and still lost to Standard on
+  21. Two smooth skies showed mottled patches, and a hazy mountain had an unnaturally dark sky and
+  a pale rim.
+
+The galleries show the first round's pictures. The check of 2026-11-24 then changed how a style
+treats a region (see below), so a style is rendered again before its next round, and a vote on
+these galleries judges the first round.
+
 ## Implementation and evaluation
 
 Standard uses the existing natural style. The normal editor and settings lists expose released styles. The evaluation catalog at `GET /api/v1/local-styles?candidates=true` also lists the three landscape candidates. An explicit CLI style selects one for local testing.
 
 ```sh
 PYTHONPATH=src .venv/bin/python -m autoedit.cli run ./photos ./out --backend sam3 --style blue_hour
-PYTHONPATH=src .venv/bin/python scripts/style_target.py --manifest curated-web/manifest.csv --list out-webloop/target-blue_hour.txt --style blue_hour --out .tmp/f59/target-blue.toml
+.venv/bin/python -I scripts/style_target.py --manifest curated-web/manifest.csv --list out-webloop/target-blue_hour.txt --style blue_hour --out .tmp/f59/target-blue.toml
 ```
 
 The second command verifies every selected file against its recorded checksum, role and source licence. It measures finished pixels through the pipeline's resolved masks and writes quartiles for the photographic features used by the style. Each photo contributes one observation per detected region. Counts accompany the ranges. The same tool accepts `--owner-files` in place of the manifest for a photographer's own finished images.
+A photographer's own finished photos belong in `curated-web/owner/photos/`. Inside the corpus
+folder the tool takes owner files from nowhere else, and it refuses a file named like a fetched
+one wherever it lies.
 
 The owner approved richer colour for Sunset glow and Moody landscape, and deeper shadows for Moody landscape when explicitly selected. Clipping, skin and snow protection, banding and edge checks still apply. The exposure search on a JPEG or embedded eight-bit preview is capped at two stops across the frame and the selected region together. Sunset glow enables denoising unless the caller supplies a different setting. Its three-stop limit applies only to RAWs with denoising enabled.
+
+### What was measured for the targets
 
 The first Blue hour target run measured 30 eligible finished photographs with the cached local SAM model. The middle half of frame medians was 0.259–0.366 in encoded luma. Sky medians were 0.317–0.567 across 28 frames and water medians were 0.228–0.346 across 12. Lamp masks met the measurement area floor on 22. On a separate tuning set, ten originals contained identifiable lamps or illuminated windows. Before viewing the outputs, a reviewer marked 25 light sources on those originals. The actual lamp mask intersected 22 of the 25 points and at least one point in every eligible frame. The threshold for adding the compact-spot fallback was not reached. The Blue hour round evaluated these measurements using the copied configuration in `out-webloop/iter-01/configs`. The seed range was brighter at 0.392–0.490.
 
 The two later fits also used 30 finished photographs apiece and the local SAM model. Sunset glow's whole-frame median range was 0.339–0.458. It identified 29 skies, 18 water regions, 28 mountains and 24 tree regions. The corresponding median ranges were 0.561–0.766, 0.414–0.530, 0.213–0.284 and 0.112–0.167. Sky warmth ranged from −0.097 to +0.041 in the reference descriptor. Moody landscape's whole-frame p10 was 0.078–0.217, with chroma 0.086–0.151. Its 27 detected skies had medians of 0.711–0.903. Those bright skies motivated the test of a lighter sky burn. The frozen measurement tables and per-photo details remain in each private evaluation round.
 
+### Suggesting a style (S6): not built
+
 Default and explicit Standard produced identical JPEG bytes to a clean HEAD archive on both smoke fixtures. The held-back comparisons reported below fell short of the release thresholds. The owner’s blind vote remains open. The S6 experiment tested two-threshold rules on whole-image brightness, shadow brightness, warmth and chroma. Only Blue hour qualified on its 30-photo development set (24 fits and two false positives on 30 ordinary controls). On separate author-disjoint panels it identified 8 of 16 Blue hour photos, one of 16 ordinary controls, three of 16 Sunset and five of 16 Moody. Recall fell below the 8-in-10 bar. Sunset and Moody produced no qualifying development rule. The editor therefore offers no automatic suggestion.
+
+### Safety on the 110 RAW files
 
 Before tuning, all three packaged seed configurations were checked separately on 110 local RAWs per style. The stub segmenter and the rendered 1024-pixel tone report made these repeatable CPU checks. All 330 assessments completed with zero introduced highlight clipping, shadow clipping, unexpected darkness or hard pixel failures. A source blend could be used by the normal quality workflow. One photo per style fell back to identity.
 
@@ -43,6 +89,8 @@ Before tuning, all three packaged seed configurations were checked separately on
 The engine and packaged seed inputs for this run have SHA-256 fingerprint `d1cacb44bf032fedccf6f1874663517c1a2c62e45576635496117c4a4ee8b0e3`. The isolated web rounds run separate native comparisons on their measured configurations.
 
 After the three retained Moody adjustments entered the packaged preview preset, the 110-RAW check ran again. Moody accepted 100 edits as proposed, blended nine toward the original and used the original for one. Eleven edits were recorded as intentionally darker. Standard accepted 98 as proposed, blended 11 and used the original for one. Both completed with zero unexpected darkness, new highlight or shadow clipping, or hard failures. The same code passed all 1,305 tests and reproduced both pre-change Standard smoke exports byte-for-byte. The independent visual review below used different photos and actual SAM masks.
+
+### The rounds in the builder's words
 
 Blue hour's first tuning comparison improved the median distance on the nine research pairs from 0.623 to 0.537 EV. It gained five visual preferences, tied eight and lost three. On the independent 24-photo held-back comparison, the retained Blue edit won five, tied nine and lost ten against Standard. The first ten counted toward the release bar yielded two wins, three ties and five losses. A high-key mountain showed conspicuous mask artifacts. This round failed the release criteria. On those same 24 images, Standard flagged six edits for review and Blue hour flagged four. It introduced no warning category on an image that lacked that warning under Standard. All three original tone flags stayed clear. The owner gallery keeps the full result available for inspection. The held-back photos stay outside the tuning set.
 
@@ -162,6 +210,13 @@ photos = 0                # how many finished photos the ranges come from
   brightness instead of a review mark.
 - `scripts/style_target.py` writes a target table from a list of finished photos, through the
   real pipeline's masks. It writes numbers only, never a photo, a file name or an author.
+- A region's search stays inside that region's own rails from `concepts.toml`: a sky takes at
+  most 4 of temperature, and a lamp no colour change at all. The notes then report what is
+  applied. (Added by the check of 2026-11-24.)
+- The frame's lift and a region's own lift share one budget, `limits.exposure`, which is at most
+  2 EV on a JPEG or an 8-bit preview. A lift the rules gave a region is reduced by what the style
+  added to the frame, and never by more. The shoot-consistency nudge is bound by the same budget.
+  (Made complete by the check of 2026-11-24.)
 
 A fixed target would force every photo to one brightness. Ranges, `pull` below 1, `limits`, and
 the fact that the photographer chose the style keep that in check. The loop's control photos show
@@ -182,7 +237,9 @@ Three additions to the compose moves, and one new op.
   A style's move replaces the packaged move of the same name. The packaged whispers stay as they
   are for Standard.
 - **A new op, `burn_ev`** (0 to 2): darker middle and bright tones with black pinned. A vignette
-  or burn made with it cannot add shadow clipping.
+  or burn made with it cannot add shadow clipping in luma. One channel of a saturated colour can
+  still fall under the per-channel level, which the check of 2026-11-24 measured and left as an
+  open design question (below).
 
   ```
   u    = clamp( ln(l / t0) / ln(t1 / t0), 0, 1 )      t0 = 0.03, t1 = 0.50
@@ -218,6 +275,10 @@ means the change says so.
 
 `limits.chroma` raises the oversaturation limit of `rules.toml` (`[guard] max_chroma_increase`,
 0.30) for a style that declares `richer`, to at most 0.90. No threshold in `quality.toml` changes.
+
+An intent reaches a check only through the declaration of the style that was chosen for that
+photo. A quality config file that sets `richer` is refused, and Standard takes no target, moves
+or run settings at all.
 
 ### S5. The five styles
 
@@ -258,6 +319,9 @@ the kind and wrong on at most 1 of 10 control photos.
 | Standard | Unchanged unless a blind vote says otherwise. |
 
 ## Tasks
+
+Another tool built every task below in one pass on 2026-11-24. S6 was measured and not built,
+because its two rates were missed. The Check ran afterwards, as recorded below.
 
 Tiers as in [AGENT_ROUTING.md](../AGENT_ROUTING.md). S1-T1, S2-T1 and S4 touch protected files
 (`pipeline.py`, `edit/ops.py`, `quality.py`, `edit/gates.py`). This spec is their Planner spec, and
@@ -301,6 +365,51 @@ For a style (S5), on photos of its kind in the loop:
 | The owner's blind vote | decides; only then `tested = true` |
 
 The first round may correct the first values with evidence. The ledger records it.
+
+## Check of the build (2026-11-24)
+
+A second session reviewed the commit against this spec. An independent checker read the protected
+files (`edit/ops.py`, `edit/gates.py`, `edit/banding.py`, `quality.py`, `pipeline.py`), and a
+second one read the fixes.
+
+**What holds**
+
+- A default run and Standard render as before the build: the two smoke photos and eight RAW files
+  of the corpus are byte-identical to the commit before it.
+- TONE_LINE
+- `quality.toml` is untouched, and the order of the pipeline's stages is unchanged.
+- `darker` skips only the relative darkness check, and `richer` only the two relative colour
+  checks. Clipping, banding, texture and halo checks still fire for both.
+- A candidate is hidden from every normal list and runs only when named.
+- `burn_ev` at zero is the identity, keeps tone order up to its bound of 2, and leaves a pixel
+  whose luma is at or below 0.03 unchanged.
+- An ordinary TIFF decodes as before. A camera RAW inside a TIFF container is found by content.
+
+**Fixed after the check**
+
+- The lift budget covers a region's own lift too. Before, a region the rules had lifted by 0.6 EV
+  ended at 2.6 EV on a JPEG once the style raised the frame to 2.0.
+- A region's search stays inside the region's rails. Before, a sky's note could say "temp +30"
+  while the region policy applied 4.
+- A style with a target is a candidate even without a label, and Standard takes no target.
+- `richer` cannot be switched on from a quality config file.
+- When a folder's saved project cannot be read, a batch run stops before the first photo with a
+  message that says why and what to do. Before, it stopped with the raw error. It does not run
+  on, because it could then export a photo without the work done on it by hand.
+- The optional LLM decider is not offered `burn_ev`: its prompt describes a scale of 100, and
+  this op is in stops.
+- Tests added: a golden test for the lamp rules, the `richer` branch of the post-edit gate, the
+  budget, the rails, and one assertion that could never fail was replaced.
+
+**Open, for the planner before the next round**
+
+| What | Measured | Choices |
+| --- | --- | --- |
+| `burn_ev` and single channels | At 2 EV on random colours the share of pixels with a channel under 0.02 rose from 37 % to 55 %. The share in luma did not move. This is behind Moody's two review marks. | Weight from the darkest channel: safe, but the gain then follows that channel's noise at large amounts, and a saturated sky burns less. Or keep the luma weight and take colour out where a channel would cross. Or bring a style's shaped moves under the clipping budget the search already has, so they are scaled back before the render. |
+| Limits for the frame's search | Only exposure and shadows have a limit. On a flat photo Moody chose vibrance +66 and shadows −1.0 EV. | A `vibrance` and a `temp` limit per style. |
+| The search adds up its measures | A control may move one measure away from its range when the sum improves: raising saturation to reach `sat` moved `warmth` further off. | Refuse a step that moves any listed measure away from its range. |
+| A profile's style table | One malformed table refuses every run, Standard included. | Refuse only the style that is wrong. |
+| The optional LLM decider's wording | Its prompt says every op but exposure runs on a scale of 100. `shadows_ev` is in stops too, and has been since before this build. A model that answers on the wrong scale is held at the op's bound, 2.5 EV. | Name the ops in stops in the prompt and give them the small step exposure has. A change of the protected network path, with its own check. |
 
 ## Left out, and what would bring each back
 

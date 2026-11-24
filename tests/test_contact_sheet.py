@@ -56,6 +56,11 @@ def test_panel_sheets_are_blind_and_the_key_scores_verdicts(tmp_path):
     replay = cs.build_panel(str(tmp_path / "panel.txt"), str(best), str(cand), str(tmp_path / "replay"),
                             crops_path=str(tmp_path / "crops.txt"), seed=9, cached_only=True)
     assert len(replay["blind"]) == 1
+    assert json.loads((tmp_path / "replay/key.json").read_text())["seed"] == 9
+    cs.build_panel(str(tmp_path / "panel.txt"), str(best), str(cand), str(tmp_path / "unseeded"),
+                   crops_path=str(tmp_path / "crops.txt"), cached_only=True)
+    drawn = json.loads((tmp_path / "unseeded/key.json").read_text())["seed"]
+    assert isinstance(drawn, int) and 0 <= drawn < 2**32 and drawn != 1  # recorded, not the old default
 
     candidate_side = {}
     for stem, row in key["rows"].items():

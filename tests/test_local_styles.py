@@ -112,7 +112,7 @@ def test_lamp_aliases_and_hold_have_named_settings(tmp_path):
     assert lamps.ops["exposure"] + report.global_settings.get("exposure", 0) <= .7 + 1e-6
     assert np.isclose(lamps.coverage, (mask|other).mean())
     assert any("Blue hour" in note and "frame" in note for note in report.notes)
-    assert not any("lights: p50" in note for note in report.notes)
+    assert not any(note.startswith("Blue hour, lights:") for note in report.notes)   # a held region is never fitted
 
 
 def test_declared_intent_only_relaxes_relative_checks():
@@ -154,31 +154,26 @@ def test_target_extraction_quartiles_and_no_paths(tmp_path):
 def test_reference_manifest_rejects_holdout_and_research(tmp_path):
     import csv
     import json
-    import sys
 
     scripts = Path(__file__).resolve().parents[1] / "scripts"
     spec = importlib.util.spec_from_file_location("target_role_tool", scripts / "style_target.py")
     target = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(target)
-    sys.path.insert(0, str(scripts))
-    try:
-        manifest = tmp_path / "manifest.csv"
-        with manifest.open("w", newline="") as f:
-            writer = csv.DictWriter(f,fieldnames=["id","source","role","kind"])
-            writer.writeheader()
-            writer.writerow(dict(id="research",source="fivek",role="after",kind="blue_hour"))
-        listed = tmp_path / "target-blue_hour.txt"
-        listed.write_text(str(tmp_path / "photo.jpg"))
-        freeze = {"blue_hour": {"target": ["research"], "panel": [], "holdout": []}}
-        (tmp_path / "split.json").write_text(json.dumps(freeze))
-        with pytest.raises(ValueError, match="eligible finished"):
-            target.finished_files(listed, manifest, "blue_hour")
-        freeze["blue_hour"]["holdout"] = ["research"]
-        (tmp_path / "split.json").write_text(json.dumps(freeze))
-        with pytest.raises(ValueError, match="held-back"):
-            target.finished_files(listed, manifest, "blue_hour")
-    finally:
-        sys.path.remove(str(scripts))
+    spec.loader.exec_module(target)     # the script finds its neighbour web_corpus.py by itself
+    manifest = tmp_path / "manifest.csv"
+    with manifest.open("w", newline="") as f:
+        writer = csv.DictWriter(f,fieldnames=["id","source","role","kind"])
+        writer.writeheader()
+        writer.writerow(dict(id="research",source="fivek",role="after",kind="blue_hour"))
+    listed = tmp_path / "target-blue_hour.txt"
+    listed.write_text(str(tmp_path / "photo.jpg"))
+    freeze = {"blue_hour": {"target": ["research"], "panel": [], "holdout": []}}
+    (tmp_path / "split.json").write_text(json.dumps(freeze))
+    with pytest.raises(ValueError, match="eligible finished"):
+        target.finished_files(listed, manifest, "blue_hour")
+    freeze["blue_hour"]["holdout"] = ["research"]
+    (tmp_path / "split.json").write_text(json.dumps(freeze))
+    with pytest.raises(ValueError, match="held-back"):
+        target.finished_files(listed, manifest, "blue_hour")
 
 
 def test_blue_hour_lifts_the_frame_without_clipping_lamp_pixels():
@@ -258,3 +253,136 @@ def test_frame_and_region_share_the_style_lift_budget():
     settings, _ = style_target.fit(src, {}, {"p50": [.60, .75]}, 1.0, {"exposure": 2.0},
                                    load_quality_config(), mask=mask, global_after={"exposure":1.25})
     assert .70 <= settings["exposure"] <= .75
+
+
+def test_a_regions_own_lift_shares_the_budget_with_the_frame():
+    # The rules gave the water +0.6 EV before the style raised the frame from 0.54 to 1.99 on a JPEG.
+    regions = {"water": {"exposure": .6, "contrast": 4}, "lights": {"exposure": .9}, "sky": {"exposure": -.2}}
+    found = style_target.over_budget(regions, 1.99, .54, 2.0, held=["lights"])
+    assert set(found) == {"water"} and found["water"][0] == .6 and np.isclose(found["water"][1], .01)
+    # Never more than the frame gained: what the rules alone gave stays the floor.
+    assert np.isclose(style_target.over_budget({"water": {"exposure": .7}}, 1.6, 1.5, 2.0)["water"][1], .6)
+    assert style_target.over_budget(regions, 1.99, .54, None) == {}      # no limit for this source
+    assert style_target.over_budget(regions, .40, .54, 2.0) == {}        # the style lowered the frame
+    # Through the pipeline: no region of a JPEG ends above the style's limit together with the frame.
+    # The rules lift a mountain that is darker than the frame, which the budget has to take back.
+    rgb = frame(.14, (96, 128))
+    mountain = np.zeros(rgb.shape[:2], bool)
+    mountain[48:] = True
+    rgb[mountain] = .04
+    pipe = Pipeline.build(RunConfig(backend="stub", style="sunset_glow", intensity=1))
+    pipe.segmenter = Mock()
+    pipe.segmenter.segment.return_value = [RegionMask("mountain", mountain, .9)]
+    _, result = pipe.process_one("scene.jpg", image=Image(rgb), do_apply=False)
+    frame_ev = result.global_settings.get("exposure", 0.0)
+    assert frame_ev > 1.5
+    assert any("mountain lift reduced by" in note and "within 2 EV" in note for note in result.notes)
+    for region in result.masks:
+        assert frame_ev + max(0.0, region.ops.get("exposure", 0.0)) <= 2.0 + 1e-6, region.target
+    # The shoot-consistency nudge is bound by the same budget, and its note says what it did.
+    _, nudged = pipe.process_one("scene.jpg", image=Image(rgb), do_apply=False, exposure_bias=.6)
+    assert nudged.global_settings["exposure"] <= 2.0 + 1e-6
+    assert any(note.startswith("batch normalize:") and "limited by the style's lift budget" in note
+               for note in nudged.notes)
+    # Without a style target the nudge and its note are what they always were.
+    plain = Pipeline.build(RunConfig(backend="stub"))
+    _, default = plain.process_one("scene.jpg", image=Image(rgb), do_apply=False, exposure_bias=.6)
+    assert "batch normalize: +0.60 EV toward group ?" in default.notes
+
+
+def test_region_search_stays_inside_the_regions_own_rails():
+    # A cool patch, and targets that ask for more warmth and colour than a sky may take.
+    rng = np.random.default_rng(3)
+    src = np.clip(np.array([.30, .38, .52], np.float32) + rng.normal(0, .03, (64, 64, 3)).astype(np.float32), 0, 1)
+    mask = np.ones(src.shape[:2], bool)
+    quality = load_quality_config()
+    warmer, richer = {"warmth": [.10, .20]}, {"sat": [.60, .80]}
+    free, _ = style_target.fit(src, {}, warmer, 1.0, {}, quality, mask=mask)
+    assert free["temp"] > 4
+    railed, why = style_target.fit(src, {}, warmer, 1.0, {}, quality, mask=mask, caps={"temp": 4})
+    assert 0 < railed["temp"] <= 4 + 1e-6
+    assert any(line.startswith("temp +") and float(line.split("+")[1]) <= 4.05 for line in why)   # the note is what is applied
+    assert style_target.fit(src, {}, richer, 1.0, {}, quality, mask=mask)[0]["saturation"] > 0
+    assert style_target.fit(src, {}, richer, 1.0, {}, quality, mask=mask, forbidden=("saturation",)) == ({}, [])
+
+
+def test_candidates_stay_hidden_and_standard_takes_no_target(tmp_path):
+    packaged = Path(RunConfig().styles_path).read_text()
+    styles = tmp_path / "styles.toml"
+    # A specialist without a label is still a candidate until it is tested.
+    styles.write_text(packaged + '\n[quiet_dusk]\ntarget = "blue_hour"\npull = 0.5\n')
+    loaded = load_styles(str(styles))
+    assert "quiet_dusk" in loaded and "quiet_dusk" not in offered_styles(loaded)
+    styles.write_text(packaged + '\n[quiet_dusk]\ntarget = "blue_hour"\npull = 0.5\ntested = true\n')
+    assert "quiet_dusk" in offered_styles(load_styles(str(styles)))
+    for extra in ('target = "blue_hour"', "run = { denoise = true }", 'moves = { sky_grad = { ops = { burn_ev = 0.2 } } }'):
+        styles.write_text('[natural]\nlook = "natural"\n' + extra + "\n")
+        with pytest.raises(ValueError, match="standard style takes no"):
+            load_styles(str(styles))
+
+
+def test_richer_is_declared_by_a_style_never_by_a_config_file(tmp_path):
+    custom = tmp_path / "quality.toml"
+    custom.write_text("richer = true\n")
+    with pytest.raises(ValueError, match="declared by a style"):
+        load_quality_config(str(custom))
+    custom.write_text("preserve_exposure = true\n")
+    assert load_quality_config(str(custom))["preserve_exposure"] is True
+    # The post-edit gate: only the relative colour warning is skipped, clipping still counts.
+    from autoedit.contract import GlobalStatsModel
+    pre = GlobalStatsModel(mean_lum=.4, mean_sat=.20, shadow_clip=0, highlight_clip=0, haze=.2)
+    vivid = pre.model_copy(update={"mean_sat": .45})
+    assert any("saturation rose" in w for w in gates.assess(pre, vivid)[3])
+    assert not any("saturation rose" in w for w in gates.assess(pre, vivid, richer=True)[3])
+    clipped = vivid.model_copy(update={"highlight_clip": .30})
+    score, review, _, warnings = gates.assess(pre, clipped, richer=True)
+    assert review and warnings and score < gates.assess(pre, vivid, richer=True)[0]
+
+
+def test_lights_rules_golden():
+    """[opt_in.lights]: the lamps take back the frame's lift by how dark the whole frame is, and
+    pull their highlights down by how much of them is clipped. The same numbers in every scene."""
+    from autoedit.contract import GlobalStatsModel, RegionStatsModel
+    from autoedit.paths import config_path
+    from autoedit.rules import apply, load
+
+    path = config_path("rules.toml")
+    plain = load(path)
+    assert all("lights" not in plain.get(scene, {}) for scene in ("people", "landscape", "other"))
+    rules = load(path, require=["lights"])
+    for scene in ("people", "landscape", "other"):
+        for mean_lum, clip, exposure, highlights in ((.10, 0.0, -.3444, -12.0), (.30, .5, -.1804, -22.0),
+                                                     (.52, 1.0, 0.0, -32.0), (.80, 2.0, 0.0, -32.0)):
+            whole = GlobalStatsModel(mean_lum=mean_lum, mean_sat=.2, shadow_clip=0, highlight_clip=0, haze=.2)
+            lamps = {"lights": RegionStatsModel(name="lights", lum=.8, sat=.3, clip_low=0, clip_high=clip, coverage=.01)}
+            got = apply(rules, scene, whole, lamps, {}, intensity=1.0)[1]["lights"]
+            assert abs(got["exposure"] - exposure) < 1e-9 and abs(got["highlights"] - highlights) < 1e-9, (scene, mean_lum)
+
+
+def test_the_model_is_not_offered_the_burn():
+    import json
+
+    from autoedit.decide import llm_decider
+
+    assert "burn_ev" in ops.OP_BOUNDS and "burn_ev" not in llm_decider._MODEL_OPS
+    assert set(llm_decider._MODEL_OPS) == set(ops.OP_BOUNDS) - {"burn_ev"}
+    assert "burn_ev" not in json.dumps(llm_decider._edits_tool(["sky"]))
+
+
+def test_a_batch_stops_with_a_reason_when_the_saved_project_cannot_be_read(tmp_path):
+    from autoedit import batch
+    from autoedit.web import projects
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    PILImage.fromarray(np.uint8(255 * frame(.3))).save(photos / "one.png")
+    profile = tmp_path / "profile"
+    saved = Path(projects._project_file(str(photos), str(profile)))
+    saved.parent.mkdir(parents=True)
+    saved.write_text("{ this is not a project")
+    cfg = RunConfig(backend="stub", profile_dir=str(profile))
+    with pytest.raises(ValueError, match="saved project for this folder cannot be read"):
+        batch.run(cfg, str(photos), str(tmp_path / "out"))
+    assert not list((tmp_path / "out").glob("*.jpg"))
+    # A plan without pixels never needed the project.
+    assert batch.run(cfg, str(photos), str(tmp_path / "plan"), do_apply=False)

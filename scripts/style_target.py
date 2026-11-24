@@ -6,9 +6,14 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import re
+import sys
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import web_corpus
 from autoedit.contract import RunConfig
 from autoedit.edit.reference import reference_features
 from autoedit.edit.style_target import CONTROLS
@@ -22,11 +27,6 @@ KINDS = {"blue_hour": "blue_hour", "sunset_glow": "sunset", "moody_landscape": "
 
 def finished_files(list_path, manifest_path, style):
     """Verify the frozen role, provenance and bytes before using a target photo."""
-    try:
-        from scripts import web_corpus
-    except ImportError:  # invoked as python scripts/style_target.py
-        import web_corpus
-
     freeze = list_path.parent / "split.json"
     if not freeze.exists():
         freeze = list_path.parent / "planned-partitions.json"
@@ -40,7 +40,9 @@ def finished_files(list_path, manifest_path, style):
         records = {r["id"]: r for r in csv.DictReader(stream)}
     other = [records[key] for key in reserved if key in records]
     excluded_hashes = {r.get("sha256") for r in other}
-    excluded_authors = {r.get("author", "").casefold() for r in other if r.get("author")}
+    excluded_authors = {r["author"].casefold() for r in other if r.get("author")}
+    near_authors = {web_corpus.same_author(r["author"]) for r in other if r.get("author")}
+    near = 0
     by_path = {}
     cfg = web_corpus.config()
     for photo in eligible:
@@ -49,6 +51,7 @@ def finished_files(list_path, manifest_path, style):
             raise ValueError("target requires an eligible finished photo")
         if row["sha256"] in excluded_hashes or row["author"].casefold() in excluded_authors:
             raise ValueError("a tuning or held-back photo or photographer overlaps the target set")
+        near += web_corpus.same_author(row["author"]) in near_authors
         path = web_corpus.check_row(row, cfg, manifest_path.parent)
         by_path[path] = row
     if not paths or len(paths) != len(set(paths)) or set(paths) != by_path.keys():
@@ -59,21 +62,38 @@ def finished_files(list_path, manifest_path, style):
         if actual != by_path[path]["sha256"] or actual in seen_hashes:
             raise ValueError("duplicate or changed target photo")
         seen_hashes.add(actual)
+    if near:
+        # A split drawn before credits were normalised. `web_corpus.py split` warns the same way.
+        print(f"warning: {near} target photos are by an author who is in a tuning or held-back set "
+              "under another spelling of the credit")
     return paths
 
 
+CORPUS_ID = re.compile(rf"(?:{'|'.join(web_corpus.SOURCES)})-[0-9a-f]{{8,}}")
+
+
 def owner_files(list_path):
-    """Owner photos may live anywhere, including the owner's area inside a web corpus."""
+    """Only the owner's own photographs: never a corpus file, wherever it was copied."""
     photos = [Path(line.strip()).expanduser().resolve() for line in list_path.read_text().splitlines() if line.strip()]
     for path in photos:
         if path.suffix.lower() == ".toml":
             raise ValueError("expected an owner photograph")
+        if CORPUS_ID.match(path.stem):
+            raise ValueError("a web corpus file cannot be marked as an owner target")
         for folder in path.parents:
-            if (folder / "manifest.csv").is_file() and (folder / "SOURCES.md").is_file():
-                parts = path.relative_to(folder).parts
-                if parts[0] != "owner" or "briefs" in parts:
-                    raise ValueError("a web corpus or an illustrative brief cannot be marked as an owner target")
+            if _is_corpus(folder) and path.relative_to(folder).parts[:2] != ("owner", "photos"):
+                raise ValueError("inside a web corpus only owner/photos holds the owner's photographs")
     return photos
+
+
+def _is_corpus(folder):
+    """A folder of this tool: its manifest.csv has the licence and checksum columns. Any other
+    manifest.csv (a blind gallery has one too) says nothing about where a photo came from."""
+    try:
+        with (folder / "manifest.csv").open(newline="") as stream:
+            return {"licence", "sha256"} <= set(next(csv.reader(stream), []))
+    except OSError:
+        return False
 
 
 def ranges_from_samples(samples, fields):

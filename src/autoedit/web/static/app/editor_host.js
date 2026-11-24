@@ -223,9 +223,10 @@ async function openPhoto(path, options = localOptions(), useAI = false) {
   $('open').disabled = true;
   tell(/\.(?:cr[23]|nef|arw|raf|dng|rw2|orf|pef|srw)$/i.test(path) ? 'Opening RAW…' : 'Opening photo…', true);
   try {
-    await stage.open(path, options, useAI);
+    const opened = await stage.open(path, options, useAI);
     $('filename').textContent = path.split(/[/\\]/).pop();
-    tell('');
+    if (opened?.lost) tell('The saved manual edit for this photo could not be read and was removed. Fine-tune continues from what this browser still has.', true);
+    else tell('');
   } finally {
     $('open').disabled = !ready;
     lockPhotoActions(!ready || !stage.current);
@@ -317,8 +318,10 @@ window.addEventListener('message', async ({source, origin, data}) => {
       recovery = false;
       $('retry').textContent = 'Try again';
     } else if (filter) {
-      const library = await command('library.state');
-      displayFilter(library.filter.text === filter ? filter : '');
+      try {
+        const library = await command('library.state');
+        displayFilter(library.filter.text === filter ? filter : '');
+      } catch (error) { tell(error.message || String(error)); }
     }
     $('open').disabled = false;
     lockPhotoActions(true);

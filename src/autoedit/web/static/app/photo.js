@@ -1065,7 +1065,11 @@ export const screen = {
     u.title = el('span', { class: 'title' });
     u.orig = el('button', { type: 'button', hidden: true, 'aria-pressed': 'false', title: 'Hold B to see the original', on: { click: () => setHold(!v.hold) } }, 'Original');
     if (editor) setBar(backButton('Library', 'folder'), u.title, el('span', {class:'grow'}),
-      u.exportButton = button('Export', () => getPhoto(file.path).manual || !me.editing ? openInEditor(false) : save(), {class:'primary'}));
+      u.exportButton = button('Export', () => {
+        if (getPhoto(file.path).manual) openInEditor(false);
+        else if (!me.editing) toast('Nothing to export yet. Choose Run AI Edit, or Adjust \u2192 Fine-tune in LightCraft to develop the photo by hand.');
+        else save();
+      }, {class:'primary'}));
     else setBar(backButton('Folder', 'folder'), u.title, el('span', { class: 'grow' }),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Previous photo to review' : 'Previous photo', disabled: neighbourIndex(-1) < 0, on: { click: () => neighbour(-1) } }, '‹'),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Next photo to review' : 'Next photo', disabled: neighbourIndex(1) < 0, on: { click: () => neighbour(1) } }, '›'),
@@ -1198,7 +1202,7 @@ export const screen = {
     document.addEventListener('keyup', me.up); window.addEventListener('blur', me.blur);
     // A photo that waits for a look opens on its edit and the reason, as the Review queue steps through them.
     const existing = getPhoto(file.path);
-    const hasStage = existing.ai_enabled || ['look','intensity','base','edit_steps','sliders','region_settings','mask_refinements','entries','photo_geometry'].some(k =>
+    const hasStage = existing.ai_enabled || ['look','intensity','base','edit_steps','sliders','region_settings','mask_refinements','entries','photo_geometry','hide'].some(k =>
       existing[k] !== undefined && (typeof existing[k] !== 'object' || Object.keys(existing[k] || {}).length));
     if ((editor && hasStage) || state.reviewQueue || file.recipeReview || ['review', 'failed'].includes(file.status)) startEditing();
   },

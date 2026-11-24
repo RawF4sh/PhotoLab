@@ -546,6 +546,7 @@ class Pipeline:
                     region_ref_note = "reference match (region): " + ", ".join(r["name"] for r in rep)
 
         style_notes = []
+        style_cap = None    # the style's lift budget in EV, when one applies to this photo
         if self.style_target:
             strength = min(1.0, style.pull * cfg.intensity)
             limits = dict(style.limits)
@@ -572,11 +573,21 @@ class Pipeline:
                         reduction = current.get("exposure", 0.0) - held["exposure"]
                         style_notes.append(f"{style.label}: held {region.name} back from the frame lift by {reduction:.2f} EV")
                     continue
+                rails = meta_for(region.name, self.meta)
                 fitted, changes = style_target.fit(proxy.rgb, current, ranges, strength, limits, self.style_safety,
-                                                   mask=region.mask, global_after=global_settings)
+                                                   mask=region.mask, global_after=global_settings,
+                                                   caps=rails.max_ops, forbidden=rails.forbidden_ops)
                 if changes:
                     region_settings[region.name] = fitted
                     style_notes.append(f"{style.label}, {region.name}: " + ", ".join(changes))
+            # One budget for the whole lift (F59: a JPEG or 8-bit preview is capped at 2 EV).
+            style_cap = limits.get("exposure")
+            held_names = [n for n, ranges in self.style_target.items() if ranges.get("hold")]
+            for name, (ev, allowed) in style_target.over_budget(
+                    region_settings, global_settings.get("exposure", 0.0), before_ev, style_cap, held_names).items():
+                region_settings[name] = {**region_settings[name], "exposure": allowed}
+                style_notes.append(f"{style.label}: {name} lift reduced by {ev - allowed:.2f} EV, "
+                                   f"frame and region together stay within {style_cap:g} EV")
 
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
@@ -657,9 +668,19 @@ class Pipeline:
         # so a folder doesn't drift in brightness photo-to-photo (batch normalization, F5).
         if exposure_bias:
             base = global_settings.get("exposure", 0.0)
-            global_settings["exposure"] = float(np.clip(base + exposure_bias, -3.0, 3.0))
-            policy_notes.append(
-                f"batch normalize: {exposure_bias:+.2f} EV toward group {batch_group or '?'}")
+            top = 3.0
+            if style_cap is not None and exposure_bias > 0:     # the style's lift budget binds this nudge too
+                most = max((s.get("exposure", 0.0) for s in region_settings.values()), default=0.0)
+                top = max(base, style_cap - max(0.0, most))
+            moved = float(np.clip(base + exposure_bias, -3.0, top))
+            global_settings["exposure"] = moved
+            if top < 3.0 and moved - base < exposure_bias - 1e-9:
+                policy_notes.append(
+                    f"batch normalize: {moved - base:+.2f} EV of {exposure_bias:+.2f} EV toward group "
+                    f"{batch_group or '?'}, limited by the style's lift budget")
+            else:
+                policy_notes.append(
+                    f"batch normalize: {exposure_bias:+.2f} EV toward group {batch_group or '?'}")
 
         if pick is not None and (wb_bias[0] or wb_bias[1]):
             wb_bias = (0.0, 0.0)

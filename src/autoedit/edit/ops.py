@@ -271,7 +271,13 @@ def shadow_lift(rgb: np.ndarray, ev: float) -> np.ndarray:
 
 
 def burn(rgb: np.ndarray, ev: float) -> np.ndarray:
-    """Reduce mid and bright luma with a smooth log ramp, leaving deep blacks and hue intact."""
+    """Reduce mid and bright luma with a smooth log ramp, leaving deep blacks and hue intact.
+
+    The weight is read from luma: a pixel whose luma is at or below 0.03 is unchanged, tone order
+    is kept, and the share of pixels under the luma shadow level cannot grow. The guarantee is for
+    luma only. In a saturated colour a single channel can still fall below that level (a deep blue
+    sky's red channel), which the per-channel clipping check counts.
+    """
     if not ev:
         return rgb
     l = luma(rgb)
