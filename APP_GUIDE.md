@@ -391,12 +391,15 @@ Choose **Automatic** to finish a photo or a folder in one pass. Choose **Photo e
 Use **Choose photo** or **Choose folder**. The selection shows the originals and the photo count.
 **Edit and export** runs AutoEdit's local rules and writes finished files and decision sidecars into
 a new dated folder inside `AutoEdit Exports`. You can follow progress, stop the run, see which files
-need attention and use **Show exports** to open the results.
+need attention and use **Show exports** to open the results. The run follows what **Settings** (the
+gear) shows, such as the region finder, the RAW choices and the export format. A Guided folder's
+own look, strength and sentence do not apply here.
 
 #### Photo editor
 
 The manual workspace embeds Brandon Thomas's LightCraft web editor, pinned to version 0.21.1.
-On first use, AutoEdit downloads the official release, checks its SHA-256 digest and caches it locally.
+On first use, AutoEdit asks before it downloads the official release (about 75 MB). **Download and
+open** starts it. AutoEdit then checks the SHA-256 digest and caches the editor locally.
 Opening photos and using develop controls then work offline. The editor needs a browser or desktop
 web view with WebGL 2. See [LightCraft's web edition](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
 
@@ -448,6 +451,8 @@ done, look at this, failed. The side panel holds what applies to the whole folde
 
 Click a tile to see the original. Arrow keys and the filmstrip move between originals. Choose
 **Preview AutoEdit** to generate the first edit, or **Resume guided edit** to reopen one with saved work.
+A photo marked for review or as failed, and every photo in the review queue, opens straight on its
+edit. The status line gives the reason, and a missing object is named in the Changes list.
 
 - A quick local preview arrives first, followed by a sharp preview (up to 2560 pixels). **Hold the photo
   or press B** to see the original. Choose **Before / after** and drag directly across the image,

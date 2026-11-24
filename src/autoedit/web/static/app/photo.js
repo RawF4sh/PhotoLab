@@ -988,6 +988,8 @@ export const screen = {
     me.up = e => { if (e.key.toLowerCase() === 'b') setHold(false); };
     me.blur = () => setHold(false);
     document.addEventListener('keyup', me.up); window.addEventListener('blur', me.blur);
+    // A photo that waits for a look opens on its edit and the reason, as the Review queue steps through them.
+    if (state.reviewQueue || file.recipeReview || ['review', 'failed'].includes(file.status)) startEditing();
   },
   focus() { if (v) v.u.frame.focus({ preventScroll: true }); },
   unmount() {

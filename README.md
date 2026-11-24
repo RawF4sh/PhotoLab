@@ -131,16 +131,19 @@ Linux it needs a GTK or Qt web view). Choose a mode on the start screen.
 
 - **Automatic** processes a single photo or a folder with local rules. Review the originals,
   click **Edit and export**, and open the finished images and decision sidecars in `AutoEdit Exports`.
+  It follows the choices in **Settings**, such as the region finder and the export format.
 - **Photo editor** opens Brandon Thomas's LightCraft web editor with curves, color controls,
   cropping and local masks. Import the original, make adjustments yourself or click **Auto adjust**.
   For a camera RAW the web editor cannot develop, **Open RAW as TIFF** opens a full-resolution
   16-bit working copy using the local `accel` extra.
-  The first launch downloads and verifies LightCraft v0.21.1. Later launches use the local cache.
+  The first launch asks before it downloads LightCraft v0.21.1 (about 75 MB) and verifies it.
+  Later launches use the local cache.
   Desktop-only features such as JPEG XL export are available in a separately installed native
   LightCraft. See [LightCraft's web support](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
 
 **Guided workspace** keeps AutoEdit's recipes, editable Gemini suggestions, teaching tools and
-batch review together. A photo opens on its original. Choose **Preview AutoEdit** to begin, select
+batch review together. A photo opens on its original, and a photo marked for review opens on its
+edit. Choose **Preview AutoEdit** to begin, select
 **Targeted edits** to adjust an object, or drag the **Before / after** divider to compare the result.
 You can send the original or a saved, flattened export to Photo editor. The guided project retains
 its editable settings and history. See the [app guide](APP_GUIDE.md).

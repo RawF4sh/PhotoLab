@@ -1,5 +1,5 @@
 // Automatic jobs use the same local editing pipeline as the guided workspace with their own output folder.
-import { el, api, go, setBar, backButton, baseName, joinPath, thumbUrl, toast } from './main.js';
+import { el, api, go, state, setBar, backButton, gearButton, baseName, joinPath, thumbUrl, toast } from './main.js';
 import { runTool } from './tools.js';
 
 const button = (label, action, cls = 'line', disabled = false) =>
@@ -68,8 +68,10 @@ async function startJob() {
   try {
     const stamp = new Date().toISOString().replaceAll(':', '-');
     const out = joinPath(selection.dir, 'AutoEdit Exports/Automatic ' + stamp + ' ' + crypto.getRandomValues(new Uint32Array(1))[0].toString(16));
-    snapshot = await api('/jobs', { input_dir: selection.dir, files: selection.files.map(f => f.path),
-      out_dir: out, backend: 'auto', local_only: true, translator: 'off' });
+    // What the Settings sheet shows applies here too: the region finder, RAW, quality and export choices.
+    // A Guided folder's own look, strength and sentence do not, and nothing is sent to a cloud model.
+    snapshot = await api('/jobs', { ...state.settings, backend: state.finder, input_dir: selection.dir,
+      files: selection.files.map(f => f.path), out_dir: out, local_only: true, translator: 'off' });
     remember(snapshot.id);
   } catch (err) { error = err.message; }
   finally { pending = ''; paint(); }
@@ -157,7 +159,7 @@ function paint() {
 
 export const automatic = {
   mount(root) {
-    setBar(backButton('Start', 'start'), el('span', { class: 'title grow' }, 'AutoEdit'));
+    setBar(backButton('Start', 'start'), el('span', { class: 'title grow' }, 'AutoEdit'), gearButton());
     panel = el('section', { class: 'automatic-panel' });
     root.append(panel); paint();
     if (jobId && !finished(snapshot)) refresh();

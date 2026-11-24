@@ -17,6 +17,7 @@ VERSION = "0.21.1"
 BUNDLE = f"lightcraft-web-{VERSION}"
 URL = f"https://github.com/storytold/lightcraft/releases/download/v{VERSION}/{BUNDLE}.zip"
 DIGEST = "57147383a46eaab3b0cc036acf9443b221450c6a19f5dc303ae165bb9678b8cb"
+BYTES = 74_569_049   # the size of that release file: what the page tells the user before it asks to download
 _LIMIT = 90 * 1024 * 1024
 _LOCK = threading.Lock()
 _ENGINE_FILES = {"index.html", "lightcraft_web.js", "lightcraft_web_bg.wasm", "worker.js", "lightcraft_zh_hans.otf",
@@ -142,7 +143,8 @@ def register(app, api, guard):
 
     @api.get("/editor/status")
     def status():
-        return {"ready": available(), "version": VERSION, "native": bool(native_app())}
+        return {"ready": available(), "version": VERSION, "native": bool(native_app()),
+                "download_mb": round(BYTES / 1e6)}
 
     @api.post("/editor/install")
     def install_editor():

@@ -11,6 +11,9 @@ All notable changes to this project are documented here. Format follows
   to the current photo's sliders for review before applying them.
 - Guided photos open on the original. You can preview AutoEdit on request, adjust an object,
   and open either the original or a saved export in Photo editor.
+- Fixed after a check of this work: a photo marked for review or as failed, and every photo in the
+  review queue, opens on its edit again. Automatic follows the choices in Settings (it had always
+  used the automatic region finder). Photo editor asks before it downloads LightCraft, about 75 MB.
 
 ## [Unreleased] — Editable changes and folder recipes (F56)
 

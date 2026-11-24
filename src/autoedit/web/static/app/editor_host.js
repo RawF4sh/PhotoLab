@@ -11,6 +11,7 @@ let bootWatch;
 let toastTimer;
 let monitor;
 let recovery = false;
+let downloadAllowed = false;   // set by "Download and open", for this page only
 let filter = localStorage.getItem('autoedit.lightcraft.filter') || '';
 const outstanding = new Set();
 const approvedPaths = new Map();
@@ -218,6 +219,7 @@ function showBoot(title, message = '', retry = false) {
   $('boot-title').textContent = title;
   $('boot-message').textContent = message;
   $('retry').hidden = !retry;
+  $('install').hidden = true;
 }
 
 function failed(message) {
@@ -259,6 +261,14 @@ async function start() {
     const state = await api('/editor/status');
     $('native').hidden = !state.native;
     if (!state.ready) {
+      if (!downloadAllowed) {   // like the SAM 3 weights: a download never starts by itself
+        const size = state.download_mb ? ' (about ' + state.download_mb + ' MB)' : '';   // absent until the app restarts
+        showBoot('Download the photo editor?', 'Photo editor is LightCraft ' + state.version +
+          ', a separate open-source editor. AutoEdit downloads it once from its GitHub releases' + size +
+          ', checks it against the published checksum and keeps it on this computer.');
+        $('install').hidden = false;
+        return;
+      }
       showBoot('Installing photo editor…', 'Downloading LightCraft ' + state.version + ' for local use.');
       await api('/editor/install', {});
     }
@@ -315,6 +325,7 @@ setupEditorAssist({command, renderThumbnail: async id => {
 }});
 
 act('retry', start);
+act('install', () => { downloadAllowed = true; return start(); });
 act('open', async () => {
   const {path} = await api('/pick?kind=file', {});
   if (path) await openPhoto(path);

@@ -89,5 +89,19 @@ async function check() {
   assert.equal(stored.get('autoedit.editor.open'), files[1].path);
   assert.equal(destination, '/editor/');
   screen.unmount();
+  // A photo that waits for a look opens on its edit: a review or failed mark, a missing recipe object, the Review queue.
+  const shared = routes['./main.js'].state;
+  for (const flag of [{ status: 'review' }, { status: 'failed' }, { recipeReview: 'Object not found: coat' }, { queue: true }]) {
+    requests.length = 0;
+    Object.assign(files[1], { status: flag.status || '', recipeReview: flag.recipeReview || '' }); shared.reviewQueue = !!flag.queue;
+    screen.mount(root, { index: 1 });
+    assert.equal(requests[0]?.[0], '/preview', 'a flagged photo should open on its edit: ' + JSON.stringify(flag));
+    assert.equal(find(n => n.class === 'pv-frame').dataset.showing, 'after');
+    screen.unmount();
+  }
+  shared.reviewQueue = false; requests.length = 0;
+  screen.mount(root, { index: 1 });
+  assert.equal(requests.length, 0, 'an unflagged photo still opens on the original');
+  screen.unmount();
 }
 check().catch(error => { console.error(error); process.exitCode = 1; });

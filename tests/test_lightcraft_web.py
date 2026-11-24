@@ -61,7 +61,10 @@ def test_manual_editor_only_reads_approved_originals(tmp_path):
         assert client.get('/api/v1/editor/original', params={'path': str(text)}).status_code == 400
 
     with patch.dict('os.environ', {'XDG_CACHE_HOME': str(tmp_path)}):
-        assert not client.get('/api/v1/editor/status').json()['ready']
+        status = client.get('/api/v1/editor/status').json()
+        # The page asks before it downloads, and names the size: one the download accepts.
+        assert not status['ready'] and status['download_mb'] == round(lightcraft.BYTES / 1e6)
+        assert lightcraft.BYTES < lightcraft._LIMIT
         assert client.get('/editor/release/index.html').status_code == 404
         archive = tmp_path / 'release.zip'
         with patch.object(lightcraft, 'DIGEST', _make_bundle(archive)):

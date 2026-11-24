@@ -22,3 +22,40 @@ port, separately licensed weights, asset credits, and restricted ArtCraft brandi
 Photo editor runs the official LightCraft v0.21.1 web release locally. Guided can open the
 original or a saved, flattened export there. Photo editor keeps its own editable library.
 The five-RAW desktop measurements above are still pending.
+
+## Check of the editor work (2026-11-24)
+
+A second session reviewed the Automatic and Photo editor work on a frozen copy of its commit.
+
+What holds: the full test suite passes, default pictures are byte-identical to the commit before,
+and no protected file changed. The pinned checksum equals the one GitHub publishes for
+`lightcraft-web-0.21.1.zip` (74,569,049 bytes). Only a fixed list of files is unpacked and served.
+A photo outside an opened folder is refused, and so is a request from another site or host name.
+
+Fixed after the check:
+
+- A photo marked for review or as failed, and every photo in the review queue, opens on its edit
+  again. Other photos still open on the original.
+- Automatic follows what Settings shows, such as the region finder and the export format. It had
+  always asked for the automatic region finder, which loads SAM 3 when that is installed.
+- Photo editor asks before it downloads LightCraft and names the size. Like the SAM 3 weights, the
+  download never starts by itself.
+
+Open, for the owner to decide:
+
+- **Exports from Photo editor are outside AutoEdit.** They are saved as a browser download, with
+  no sidecar and outside `AutoEdit Exports`. The `metadata = "shareable"` default, which drops GPS
+  and serial numbers, does not reach them. What LightCraft writes into its files was not tested.
+- **Edits made in Photo editor live in browser storage.** LightCraft calls its browser version
+  experimental and warns that the browser may delete the library. Each opened original is copied
+  there; one 22-megapixel RAW opened as TIFF was 135 MB.
+- **RAW files.** The host now recovers from "LightCraft stopped" after a RAW it cannot decode.
+  That is the first question of the table above, and it is still unmeasured. **Open RAW as TIFF**
+  needs `tifffile` (the `accel` extra); without it the button answers with an install hint, and
+  its test is skipped.
+- **The plan and the build disagree.** The F56 decisions say "a one-day check", "no LightCraft code
+  in `src/`" and "no new top-level areas", and [UI-minimal.md](UI-minimal.md) says "never a
+  sidebar of modes". This work has no feature number, spec or row in the feature plan.
+
+Not checked: Compare, Ask Gemini, Masking and Export inside the embedded editor, and the desktop
+window.
