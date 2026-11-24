@@ -1,5 +1,5 @@
 // The shell: helpers, shared state, hash router, sheets, toast, keys. No framework; text is never parsed as markup.
-import { screen as workspace, openFolderDialog, loadFolderPath, folder } from './folder.js';
+import { screen as workspace, openFolderDialog, loadFolderPath, loadPhotoPath, folder } from './folder.js';
 import { automatic, home } from './modes.js';
 import { screen as photo } from './photo.js';
 import { openSettings, applySurround } from './settings.js';
@@ -155,3 +155,10 @@ window.addEventListener('hashchange', render);
 window.autoedit = { loadFolderPath, go, state };
 applySurround();
 render();
+if (location.hash === '#/workspace') {
+  try {
+    const path = sessionStorage.getItem('autoedit.guided.open');
+    sessionStorage.removeItem('autoedit.guided.open');
+    if (path) loadPhotoPath(path).catch(error => toast(error.message));
+  } catch (_) { /* The ordinary folder and file pickers are also available. */ }
+}

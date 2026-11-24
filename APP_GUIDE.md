@@ -401,6 +401,9 @@ Opening photos and using develop controls then work offline. The editor needs a 
 web view with WebGL 2. See [LightCraft's web edition](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
 
 - **Open photo** imports the original into LightCraft's local library. Set exposure, adjust the tone curve or color mixer, crop and straighten, or use **Masking** to limit a change to part of the picture. **Auto adjust** runs LightCraft's automatic development on request.
+- **Open RAW as TIFF** opens a full-resolution 16-bit copy using AutoEdit's local RAW decoder (the `accel` extra). Use it for a camera file that LightCraft can only display as a thumbnail. White balance and demosaicing are baked into this copy. Your RAW stays on disk.
+- If an unsupported RAW has stopped the editor, choose **Recover photo editor**, then **Open RAW as TIFF**. Recovery can filter the library to the TIFF to avoid reloading the failed RAW thumbnail. **Show all photos** clears that search.
+- **Guided tools** opens the original selected through AutoEdit in the Guided workspace. That workspace keeps its own adjustments. Photos added directly inside LightCraft can be selected with the Guided file picker.
 - **Compare** opens a before/after view with a draggable divider. Use the arrow keys to fine-tune its position. **Export** saves the developed image through the browser or desktop window.
 - **Ask Gemini** lets you review suggested whole-photo adjustments and apply supported values to LightCraft's editable controls. The guided workspace also supports named-region suggestions and recipes.
 - LightCraft keeps its catalog and adjustment history in local storage for this browser and app address. Clearing site data removes that catalog. The native LightCraft app has additional capabilities including JPEG XL export. **Open desktop editor** is available when AutoEdit finds an installed copy.

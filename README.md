@@ -133,6 +133,8 @@ Linux it needs a GTK or Qt web view). Choose a mode on the start screen.
   click **Edit and export**, and open the finished images and decision sidecars in `AutoEdit Exports`.
 - **Photo editor** opens Brandon Thomas's LightCraft web editor with curves, color controls,
   cropping and local masks. Import the original, make adjustments yourself or click **Auto adjust**.
+  For a camera RAW the web editor cannot develop, **Open RAW as TIFF** opens a full-resolution
+  16-bit working copy using the local `accel` extra.
   The first launch downloads and verifies LightCraft v0.21.1. Later launches use the local cache.
   Desktop-only features such as JPEG XL export are available in a separately installed native
   LightCraft. See [LightCraft's web support](https://github.com/storytold/lightcraft/blob/v0.21.1/docs/web.md).
