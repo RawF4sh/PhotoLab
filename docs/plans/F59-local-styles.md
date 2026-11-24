@@ -403,7 +403,7 @@ second one read the fixes.
 - Tests added: a golden test for the lamp rules, the `richer` branch of the post-edit gate, the
   budget, the rails, and one assertion that could never fail was replaced.
 
-**Open, for the planner before the next round**
+**Open, for the planner before the next round** (answered in [F61](F61-style-round-two.md))
 
 | What | Measured | Choices |
 | --- | --- | --- |
@@ -413,7 +413,7 @@ second one read the fixes.
 | A profile's style table | One malformed table refuses every run, Standard included. | Refuse only the style that is wrong. |
 | The optional LLM decider's wording | Its prompt says every op but exposure runs on a scale of 100. `shadows_ev` is in stops too, and has been since before this build. A model that answers on the wrong scale is held at the op's bound, 2.5 EV. | Name the ops in stops in the prompt and give them the small step exposure has. A change of the protected network path, with its own check. |
 
-**What the sheets of the first round show, as hypotheses for the next one**
+**What the sheets of the first round show, as hypotheses for the next one** (taken up in [F61](F61-style-round-two.md))
 
 Seen on the comparison sheets of the held-back photos. Those 24 photos per style are spent by
 this: a second round needs a new held-back set.

@@ -81,8 +81,9 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F56 | Editable changes, adjustable suggestions and recipes | L | done: Changes list, individually selectable suggestions, portable recipes and folder planning. Browser and export checks pass, and an independent check on 2026-11-23 found and fixed three gaps (see the spec). Open, both the owner's steps: the live Gemini assessment and the [LightCraft measurements](plans/F56-lightcraft-check.md); spec [F56](plans/F56-connected-editor-and-lightcraft.md), first and larger version [F56 full vision](plans/F56-full-vision.md) |
 | F57 | AI editing modes with Gemini, and photographer references | M | built on 2026-11-24 and replaced in the interface by F58 the same day: no page asks Gemini from Automatic any more, and **Ask Gemini** in the editor is the optional path. The server side was checked on 2026-11-24 for what leaves the computer; spec [F57](plans/F57-ai-editing-modes.md) |
 | F58 | Original-first photo editor and RAW import | L | built on 2026-11-24 on the fallback of its decision D1 (AutoEdit's photo screen is the editor, LightCraft opens as Fine-tune), then checked by a second session with eight fixes. Automatic edit and Photo editor share the local edit. The editor has the split comparison, Isolate, Learn and optional Ask Gemini. Fine-tune restores LightCraft's settings from the project and exports at full size through AutoEdit. Open, the owner's: the RAW brightness default (D6), whether Automatic evens a folder's brightness (D12), and LightCraft's remove and fill tools (D4); spec and results [F58](plans/F58-editor-sidebar-and-cr2.md), [probe](plans/F58-probe.md) |
-| F59 | Photographer-directed local styles | L | engine built on 2026-11-24 and checked by a second session with six fixes; **no specialized style is released**. Each landscape candidate ran one round and missed its bars. Against Standard on 24 held-back photos, better / same / worse was 5 / 9 / 10 for Blue hour, 2 / 19 / 3 for Sunset glow and 3 / 0 / 21 for Moody landscape. Standard is unchanged. Open: the owner's blind vote on six galleries, finished portraits for Natural portrait, and a design question on the `burn_ev` op before Moody's next round; spec and results [F59](plans/F59-local-styles.md) |
-| F60 | Web photo evaluation loop | L | tools built and first run done on 2026-11-24, checked by a second session with eleven fixes: 491 files fetched inside the approved budgets, 186 of 190 format samples opened and exported at full size, one round per landscape style, six blind galleries for the owner's vote. FiveK is used for measuring only. Open: one photographer is on both sides of the frozen split (the owner's decision); spec and results [F60](plans/F60-web-photo-loop.md) |
+| F59 | Photographer-directed local styles | L | engine built on 2026-11-24 and checked by a second session with six fixes; **no specialized style is released**. Each landscape candidate ran one round and missed its bars. Against Standard on 24 held-back photos, better / same / worse was 5 / 9 / 10 for Blue hour, 2 / 19 / 3 for Sunset glow and 3 / 0 / 21 for Moody landscape. Standard is unchanged. Next: round two in [F61](plans/F61-style-round-two.md). Open: finished portraits for Natural portrait; spec and results [F59](plans/F59-local-styles.md) |
+| F60 | Web photo evaluation loop | L | tools built and first run done on 2026-11-24, checked by a second session with eleven fixes: 491 files fetched inside the approved budgets, 186 of 190 format samples opened and exported at full size, one round per landscape style, six blind galleries for the owner's vote. FiveK is used for measuring only. One photographer is on both sides of the frozen split; round two does not use the group that crossed; spec and results [F60](plans/F60-web-photo-loop.md) |
+| F61 | Style round two: unedited originals and four engine changes | L | spec (2026-11-24), nothing built. The first round tuned and judged the styles on finished photos, where the right edit is close to none, so round two tests on RAW originals and starts from the owner's examples again. Four engine changes come first: a style aims inside its range, every searched control has a limit, a move may work inside several regions, and a band is placed on a waterline only. Six decisions are the owner's, the first before anything is fetched; spec [F61](plans/F61-style-round-two.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -712,12 +713,22 @@ specialized style has passed yet.
 - **First run:** 491 files, 186 of 190 format samples exported, RAW picker support for six more
   formats, three rounds, six galleries for the owner. No fetched file is in any commit.
 
+### F61. Style round two (L): spec
+
+- **Why:** the first round tuned and judged the styles on finished web photos. On those, Blue
+  hour's exposure differs from Standard's by a median of 0.00 EV, and two of Moody's three kept
+  changes made a move smaller. On the owner's own examples the candidates now barely differ from Standard.
+- **Plan:** test on RAW originals, with a retoucher's or the owner's finished version as the
+  reference. Measure a target on finished photos the owner picks. Start each style from the
+  owner's example again. Four engine changes first: aim inside a range, a limit per control, a
+  move inside several regions, a band on a waterline only.
+- **Done when:** per style, the held-back originals and the owner's blind vote pass it.
+
 ### Next
 
-1. The owner's blind vote on the six galleries, and the open decisions listed below.
-2. The planner's answer on `burn_ev` and single colour channels, then the limits for the frame's
-   search ([F59](plans/F59-local-styles.md), "Check of the build").
-3. A second round for Blue hour, which came closest, on a split that also separates viewpoints.
+1. The owner's decisions in [F61](plans/F61-style-round-two.md), O1 first.
+2. F61's engine changes (T1 to T4) and loop tools (T5 to T8), then the Check.
+3. The round: Blue hour, Moody landscape, Sunset glow.
 4. Finished portraits from the owner or a photographer, for Natural portrait.
 
 ## Ideas, not planned yet (added 2026-11-16)
@@ -826,8 +837,7 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Is grain 25 the right light grain, and should a packaged look carry grain? (F23, unattended run) | `out-features/F23/crops.jpg`; [F23 result](plans/F23-grain.md) | `_GRAIN_SIGMA` in `edit/ops.py`; `grain = N` in a look of `looks.toml` |
 | Fill the holes inside a marked thing? | [F37 result](plans/F37-point-and-tell.md), "Found on the way": SAM 3's mask has holes on dark, even surfaces. Filling them changes what a mark edits against what SAM 3 returned | A small task of its own |
 | The editor (F58): the RAW brightness default (D6); should Automatic edit even a folder's brightness again, or keep exporting each photo on its own as the build does (D12); may LightCraft's remove and fill tools be used in the manual stage (D4) | [F58](plans/F58-editor-sidebar-and-cr2.md), "Decisions for the owner" | The editor's neutral original, Automatic's exports, the edit declaration |
-| Styles (F59): the blind vote on the six galleries of the first round. Before Moody's next round: how the `burn_ev` op treats single colour channels | [F59](plans/F59-local-styles.md), "Where each style stands" and "Check of the build" | `tested` per style in `styles.toml`; the op math |
-| The web photo loop (F60): one photographer's photos are in a target group and in a held-back group of the frozen split, under two spellings of the credit. Keep the split, or drop that photographer's two photos from the Blue hour target | [F60](plans/F60-web-photo-loop.md), "Check of the tools" | The split of the next round |
+| Styles (F61): may FiveK RAW originals be the tuning and held-back photos (its licence says research); which finished photos have the look you mean, per style; own RAW files per kind; a bar that counts only the photos where a difference is seen; skip the vote on the six galleries of round one; Standard's review marks on low-key photos as an item of its own | [F61](plans/F61-style-round-two.md), "Decisions for the owner", O1 to O6 | The photos, the targets and the bar of round two |
 
 Things only the owner can do, left open by the unattended run:
 
