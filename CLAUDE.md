@@ -62,3 +62,17 @@ auto-mask fixed regions).
 - When the owner asks for work without supervision ("do the rest, don't ask me"), follow
   `docs/UNATTENDED_RUN.md`: no questions, no git writes, default pixels unchanged, owner decisions
   recorded instead of asked, and one commit block at the end.
+
+## Agent skills
+
+### Issue tracker
+
+Specs as `docs/plans/F<N>-<slug>.md` with a row in `docs/FEATURE_PLAN.md`, tickets as `docs/plans/F<N>-tickets/NN-<slug>.md`; never GitHub Issues, never a commit. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels, written as a `Status:` line in each ticket. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

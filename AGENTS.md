@@ -50,3 +50,17 @@ auto-mask fixed regions).
 - Config/docs updated if behavior changed.
 - Any exposure/tone/decode change: `PYTHONPATH=src python scripts/tone_report.py <raw-folder> --render --fail-on-regression` reports 0 dark→darker and 0 pushed-into-clipping (use the in-repo
   `curated-dolomites-summer-2026/selected_raw` corpus when present; it never runs in CI).
+
+## Agent skills
+
+### Issue tracker
+
+Specs as `docs/plans/F<N>-<slug>.md` with a row in `docs/FEATURE_PLAN.md`, tickets as `docs/plans/F<N>-tickets/NN-<slug>.md`; never GitHub Issues, never a commit. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels, written as a `Status:` line in each ticket. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
