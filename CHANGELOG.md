@@ -26,8 +26,8 @@ All notable changes to this project are documented here. Format follows
   blown lit sign grey). Both act only when Blue hour is named.
 - Blue hour ran a round on twilight frames, its kind, and two more changes are in the packaged
   candidate: noise reduction on, and a whole-frame lift of at most 1.0 EV. On 24 held-back photos
-  it beats Standard on 11 of the 15 that differ; one clear loss keeps it from the menu until the
-  owner's vote.
+  it beats Standard on 11 of the 15 that differ, with one clear loss. In the owner's blind vote
+  all 24 pairs looked the same, so Blue hour is not released (`tested = false`).
 - Fixed: a style's `denoise` run setting never applied on the command line, because the packaged
   `defaults.toml` value counted as chosen. The app was not affected; default runs are unchanged.
 - The loop's keep rule counts a review mark as new only when Standard does not give the same

@@ -10,7 +10,8 @@ iterations on 16 night originals. The owner kept its second iteration (O7), so t
 into the packaged candidate. On the owner's answer to O8 the last 49 FiveK pairs were fetched and
 Blue hour ran a [round on twilight frames](#the-twilight-round-2026-11-24): on its 24 held-back
 photos it beats Standard on 11 of the 15 that differ and is closer to the retoucher, and misses the
-bar by one clear loss. The owner's blind vote is next.
+bar by one clear loss. In the owner's blind vote (O9) all 24 pairs looked the same, so Blue hour
+is not released and stays `tested = false`.
 
 ## Goal
 
@@ -264,7 +265,7 @@ For a style, on its held-back originals:
 | O6 | Standard is marked for review on about a quarter of blue-hour photos | A separate item for the first improvement loop. Not part of this round. The Blue hour round gave it numbers and made it block a fix: see O7 and the round's findings. |
 | O7 | Keep iteration 2 of the Blue hour round? It won 10 of the 10 photos that differ, and the keep rule rejects it for one new review mark that Standard gives the same photo. | **Answered on 2026-11-24: yes, keep it.** A review mark counts as new only when Standard does not give the photo one for the same kinds of reason. Iterations 2 and 5 are in the packaged candidate. |
 | O8 | Which photos is Blue hour for? On night frames it does not beat Standard. On dusk frames it wins where buildings fill the frame at twilight and loses on sunsets. | **Answered on 2026-11-24: yes, twilight frames; fetch the dusk pairs.** See the twilight round. |
-| O9 | Blue hour on twilight frames misses the bar by one clear loss (a lit fountain blown to white) and passes the other three. Release it? | The owner's blind vote on the 24 held-back photos decides, as the bar says. If it does, `tested = true` and Blue hour joins the menu with the note "for towns and cities at twilight". |
+| O9 | Blue hour on twilight frames misses the bar by one clear loss (a lit fountain blown to white) and passes the other three. Release it? | **Answered on 2026-11-25: no.** The owner chose "no preference" on all 24 pairs: the two versions look the same. Blue hour stays `tested = false`. See the twilight round. |
 
 ## Built and checked (2026-11-24)
 
@@ -469,7 +470,8 @@ excused. The same check found the `kinds.txt` line, the removed ranges and the l
 
 ## The twilight round (2026-11-24)
 
-**Result: the bar is missed by one clear loss; the owner's vote is next (O9).** Ledger:
+**Result: not released. The bar is missed by one clear loss, and in the owner's blind vote all 24
+pairs looked the same (O9).** Ledger:
 `out-webloop/LEDGER.md`, iterations: `out-webloop/twilight/round-2/`. Neither is committed.
 
 **Photos.** The plan took the last 49 FiveK pairs of the approved 150 (all dawn or dusk); 150 pairs,
@@ -507,7 +509,7 @@ test; default runs are unchanged.
 | No new review mark against Standard | none | met |
 | Distance from the retoucher smaller than Standard's | 0.531 against 0.593, 22 pairs | met |
 | The panel for defects | not rendered | open |
-| The owner's blind vote | gallery ready | open |
+| The owner's blind vote | no preference on all 24 | **missed** |
 
 **Packaged.** The two kept changes are in `configs/styles.toml`; Blue hour stays `tested = false`.
 
@@ -521,6 +523,14 @@ owner's bridge showed: the buildings come up while the sky keeps its colour, and
 prefers it to Standard on nearly three of four photos that differ. What it still does badly is a
 large bright light source: a fountain, glass, lit windows that bloom. The FiveK budget is used up,
 so another tuning round needs new held-back photos (the owner's own, or a new approval).
+
+**The owner's vote (2026-11-25).** Side by side at 1,600 pixels, the owner saw no difference on
+any of the 24 pairs and chose "no preference" every time. Measured, the two versions differ by
+3 levels of 255 on a typical photo; on 5 photos by less than 0.4, and on one by 16. The checker's
+wins came from close-up crops, where a lift of a few levels shows. So Blue hour, as it stands,
+is Standard with small changes that a viewer does not see. It stays off the menu. A style
+worth its own entry has to change a twilight photo visibly; that would be a new spec with new
+held-back photos, not another tuning round on these.
 
 ## Left out, and what would bring each back
 
