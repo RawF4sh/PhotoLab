@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -77,6 +79,7 @@ class Bias:
     exposure: float = 0.0
     temp: float = 0.0
     tint: float = 0.0
+    auto_shoot: dict | None = None
 
 
 # Fallbacks when rules.toml has no [consistency] block; the tuning values live there.
@@ -395,13 +398,114 @@ def plan(images: list[str], cfg, pipeline, thr: dict | None = None, progress=Non
     if not (isinstance(words, list) and all(isinstance(w, str) and w for w in words)):
         raise ValueError(f"rules.toml [consistency] colour_of must be a list of words (got {words!r})")
     if cfg.consistency == "timelapse":
-        return _with_rules(pipeline, lambda: _timelapse_plan(images, pipeline, thr))
-    if cfg.consistency == "bursts":
-        return _bursts_plan(images, pipeline, thr, progress, by_cast)
-    out = _brightness_plan(images, getattr(cfg, "fast_analysis", False))
-    if by_cast:
-        _with_rules(pipeline, lambda: _cast_plan(out, pipeline, thr, progress))
+        out = _with_rules(pipeline, lambda: _timelapse_plan(images, pipeline, thr))
+    elif cfg.consistency == "bursts":
+        out = _bursts_plan(images, pipeline, thr, progress, by_cast)
+    else:
+        out = _brightness_plan(images, getattr(cfg, "fast_analysis", False))
+        if by_cast:
+            _with_rules(pipeline, lambda: _cast_plan(out, pipeline, thr, progress))
+    if getattr(pipeline, "auto_cfg", None):
+        _with_rules(pipeline, lambda: _auto_shoots(out, pipeline, progress))
     return out
+
+
+def shoot_scenes(sequence):
+    """Choose one lighting scene per consecutive time-of-day block in a shoot.
+
+    Daylight and mist can disagree between neighbouring views of the same shoot.
+    A sunset-to-twilight transition is a new period; uncertain frames follow their neighbours.
+    People and other subjects keep Simple and never vote on the landscape.
+    """
+    from .scene import LANDSCAPES
+    segments = []
+    phase = None
+    group = []
+    for path, scene in sequence:
+        if scene not in (*LANDSCAPES, "landscape"):
+            continue
+        current = None if scene == "landscape" else ("day" if scene in ("daylight", "mist") else scene)
+        if phase and current and current != phase:
+            segments.append(group)
+            group = []
+        group.append((path, scene))
+        phase = current or phase
+    if group:
+        segments.append(group)
+    result = []
+    for block in segments:
+        votes = Counter(scene for _, scene in block if scene != "landscape")
+        winner = votes.most_common(1)[0][0] if votes else "landscape"
+        result.append((winner, [path for path, _scene in block]))
+    return result
+
+
+def median_fit(plans):
+    """Per-region medians of the controls that were fitted on at least one frame.
+
+    Only frames containing that region vote. An absent control on an existing region is zero.
+    """
+    medians = {}
+    for region in {r for plan in plans for r in plan}:
+        votes = [plan[region] for plan in plans if region in plan]
+        medians[region] = {key: _median([v.get(key, 0.0) for v in votes])
+                           for key in {k for v in votes for k in v}}
+    return medians
+
+
+def pull_fit(frame, regions, medians, amount, limits):
+    """Pull each fitted setting toward the shoot median within scene and regional budgets."""
+    def blend(settings, target, global_after=None):
+        out = dict(settings)
+        for key, value in target.items():
+            if key not in limits:
+                continue
+            initial = settings.get(key, 0.0)
+            frame_value = (global_after or {}).get(key, 0.0)
+            moved = initial + amount * (value - initial)
+            lo = max(-limits[key], -limits[key] - frame_value)
+            hi = min(limits[key], limits[key] - frame_value)
+            if lo <= hi:
+                out[key] = float(np.clip(moved, lo, hi))
+        return out
+    frame = blend(frame, medians.get("global", {}))
+    return frame, {name: blend(settings, medians.get(name, {}), frame) for name, settings in regions.items()}
+
+
+def _auto_shoots(biases, pipeline, progress):
+    by_group = {}
+    for path, bias in biases.items():
+        if bias.group:
+            when = capture_time(path)
+            day = datetime.fromtimestamp(when).date() if when is not None else None
+            key = (os.path.dirname(os.path.abspath(path)), bias.group, day, is_raw(path))
+            by_group.setdefault(key, []).append((when, path))
+    if progress:
+        progress("measuring Auto settings within each shoot")
+    for group in by_group.values():
+        if len(group) < 2:
+            continue
+        audit = {}
+        for _, path in sorted(group, key=lambda item: (item[0] or 0, item[1])):
+            try:
+                audit[path] = pipeline.process_one(path, do_apply=False)[1].audit["auto"]
+            except Exception:
+                continue  # a damaged photo cannot steer the rest of its shoot
+        for scene, paths in shoot_scenes([(p, a["scene"]) for p, a in audit.items()]):
+            if len(paths) < 2:
+                continue
+            votes = []
+            for path in paths:
+                if audit[path]["scene"] != scene:
+                    try:
+                        audit[path] = pipeline.process_one(path, do_apply=False, auto_shoot={"scene": scene})[1].audit["auto"]
+                    except Exception:
+                        continue
+                if audit[path].get("target"):
+                    votes.append(audit[path].get("fit", {}))
+            median = median_fit(votes) if len(votes) > 1 else {}
+            for path in paths:
+                biases[path].auto_shoot = {"scene": scene, "median": median}
 
 
 def subject_colour(rgb: np.ndarray, union: dict, names) -> dict | None:

@@ -168,12 +168,15 @@ def run(target: str, folder: str | None = None, dry_run: bool = False, minutes: 
         except Exception as e:    # one photo fails (a corrupt RAW too), the others go on
             report["targets"].append({"sidecar": t, "status": "failed", "error": str(e)})
             continue
+        from .web.photo_base import shoot_receipt
+        group_receipt = shoot_receipt(r["result"])
         neutral = r["result"].audit.get("neutral")
         report["targets"].append({"sidecar": t, "image": r["image"], "status": "synced",
                                   "exposure_bias": bias if bias is not None else old.exposure_bias,
                                   "wb": [neutral["temp"], neutral["tint"]] if neutral else None,
                                   "selected_regions": r["result"].audit.get("run_config", {}).get("selected_regions", []),
                                   "wb_bias": list(r["result"].wb_bias),
+                                  **({"auto_shoot": group_receipt} if group_receipt else {}),
                                   "needs_review": r["result"].needs_review,
                                   "gap_ev": consistency.level(anchor) - consistency.level(d) - bias if match_exposure else 0.0,
                                   "adjustments": r["adjustments"], "warnings": r["warnings"]})

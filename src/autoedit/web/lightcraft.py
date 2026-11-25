@@ -140,13 +140,20 @@ def register(app, api, guard):
 
     static = Path(__file__).parent / "static" / "app"
 
+    def editor_page(ancestors):
+        csp = ("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+               "frame-src 'self'; worker-src 'self'; "
+               f"connect-src 'self'; img-src 'self' blob: data:; frame-ancestors {ancestors}; base-uri 'none'")
+        return FileResponse(static / "editor.html", headers={**_HEADERS, "Content-Security-Policy": csp})
+
+    @app.get("/editor/panel/", include_in_schema=False)
+    def panel():
+        return editor_page("'self'")
+
     @app.get("/editor/fine-tune/", include_in_schema=False)
     @app.get("/editor/", include_in_schema=False)
     def editor():
-        csp = ("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
-               "frame-src 'self'; worker-src 'self'; "
-               "connect-src 'self'; img-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'")
-        return FileResponse(static / "editor.html", headers={**_HEADERS, "Content-Security-Policy": csp})
+        return editor_page("'none'")
 
     @app.get("/editor/release/{asset:path}", include_in_schema=False)
     def asset_file(asset: str):

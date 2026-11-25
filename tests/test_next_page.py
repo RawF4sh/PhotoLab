@@ -41,6 +41,12 @@ def test_the_root_route_serves_the_page_with_a_strict_policy():
     for part in ("default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "img-src 'self' data:"):
         assert part in csp, part
     assert "frame-ancestors 'none'" in csp and r.headers["x-frame-options"] == "DENY"
+    assert "frame-src 'self'" in csp
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+    assert r.headers["cross-origin-embedder-policy"] == "require-corp"
+    panel = client.get("/editor/panel/")
+    assert panel.status_code == 200 and "frame-ancestors 'self'" in panel.headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in client.get("/editor/fine-tune/").headers["content-security-policy"]
     for old in ("/classic", "/lab", "/next"):
         assert client.get(old).status_code == 404, old
     assert client.get("/", headers={"Host": "evil.com"}).status_code == 403

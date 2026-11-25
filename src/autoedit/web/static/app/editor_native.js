@@ -8,7 +8,7 @@ function frameSettings(settings, geometry) {
   return {...settings, crop:{...settings.crop, geometry: geometry || originalCrop}};
 }
 
-export function nativeStage({command, api, tell, importPicture, removePicture}) {
+export function nativeStage({command, api, tell, importPicture, removePicture, onSave}) {
   let record = null, saving = Promise.resolve(), exportResult = null;
   let busy = false, blocked = false;
   async function store(current) {
@@ -22,6 +22,7 @@ export function nativeStage({command, api, tell, importPicture, removePicture}) 
         expected:checksum(current.manual), settings:isOriginal ? null : settings, baseline:current.baseline});
       current.manual = result.manual;
       current.saved = encoded;
+      onSave?.(current.path, result.manual);
     } catch (error) {
       if (/another window/.test(error.message)) blocked = true;
       throw error;
@@ -46,6 +47,11 @@ export function nativeStage({command, api, tell, importPicture, removePicture}) 
       const legacyEdit = !persisted.manual && !persisted.baseline && !photo.managed && (photo.edited || photo.history?.length);
       let baseline = persisted.baseline || photo.import_look || (legacyEdit ? {} : current);
       let restore = persisted.manual ? persisted.settings : persisted.baseline;
+      // Project Undo can clear a manual edit while this catalog still has its sliders.
+      if (!restore && previous?.path === path && previous.manual && !persisted.manual) {
+        baseline = previous.baseline;
+        restore = baseline;
+      }
       // Transfer framing as a native crop on the uncropped source. A crop made by the
       // photographer in LightCraft takes precedence over AutoEdit's suggested frame.
       if (useAI && (source.native_crop || persisted.baseline?.crop)) {

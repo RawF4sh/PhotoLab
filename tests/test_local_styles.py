@@ -24,14 +24,19 @@ def frame(level=.18, hw=(64, 64)):
     return np.full((*hw, 3), level, dtype=np.float32)
 
 
-def test_standard_and_specialist_release():
-    cfg = RunConfig(backend="stub")
-    styles = load_styles(cfg.styles_path)
-    assert [s["id"] for s in local_catalog(styles)] == ["standard"]
-    assert {s["id"] for s in local_catalog(styles, True)} == {"standard", "blue_hour", "sunset_glow", "moody_landscape"}
-    assert "natural" in offered_styles(styles) and "blue_hour" not in offered_styles(styles)
-    assert Pipeline.build(RunConfig(style="sunset_glow")).cfg.denoise
-    assert not Pipeline.build(RunConfig(style="sunset_glow", denoise=False)).cfg.denoise
+FIXTURE = Path(__file__).parent / "fixtures" / "target-style"
+
+
+def specialist(**settings):
+    return RunConfig(styles_path=str(FIXTURE / "styles.toml"), targets_path=str(FIXTURE / "targets.toml"),
+                     **settings)
+
+
+def test_simple_and_auto_are_the_local_choices():
+    styles = load_styles(RunConfig().styles_path)
+    assert [(s["id"], s["label"]) for s in local_catalog(styles)] == [("standard", "Simple"), ("auto", "Auto")]
+    assert {s["id"] for s in local_catalog(styles, True)} == {"standard", "auto"}
+    assert "natural" in offered_styles(styles)
 
 
 def test_burn_keeps_black_hue_and_tone_order():
@@ -70,7 +75,7 @@ def test_target_checks_isolated_rgb_clip_on_whole_proxy():
 
 
 def test_confined_gradient_and_trusted_horizon():
-    cfg = RunConfig(style="moody_landscape")
+    cfg = specialist(style="shaped_moves")
     pipe = Pipeline.build(cfg)
     moves = {m.name: m for m in pipe.compose_moves}
     assert moves["sky_grad"].ops == {"burn_ev": 0.25}
@@ -137,7 +142,7 @@ def test_within_accepts_name_or_list_and_refuses_the_rest(tmp_path):
 
 
 def test_band_waterline_only():
-    cfg = geometry.config(Pipeline.build(RunConfig(style="moody_landscape")).rules)
+    cfg = geometry.config(Pipeline.build(specialist(style="shaped_moves")).rules)
     band = _move(shape="band", at="waterline", height=.12, feather=1.0, ops={"exposure": .2})
     hw = (80, 96)
     sky = np.zeros(hw, bool)
@@ -168,7 +173,7 @@ def test_lamp_aliases_and_hold_have_named_settings(tmp_path):
     sky[mask] = [.89, .69, .43]
     path = tmp_path / "lamps.png"
     PILImage.fromarray(np.uint8(255*sky)).save(path)
-    pipe = Pipeline.build(RunConfig(style="blue_hour", intensity=1))
+    pipe = Pipeline.build(specialist(style="lamp_hold", intensity=1))
     other = mask[::-1].copy()
     segmenter = Mock()
     segmenter.segment.return_value = [RegionMask("lamp", mask, .9), RegionMask("lit window", other, .85)]
@@ -180,23 +185,23 @@ def test_lamp_aliases_and_hold_have_named_settings(tmp_path):
     assert lamps.ops["highlights"] < 0 and lamps.ops["exposure"] < 0
     assert lamps.ops["exposure"] + report.global_settings.get("exposure", 0) <= .7 + 1e-6
     assert np.isclose(lamps.coverage, (mask|other).mean())
-    assert any("Blue hour" in note and "frame" in note for note in report.notes)
-    assert not any(note.startswith("Blue hour, lights:") for note in report.notes)   # a held region is never fitted
+    assert any("Lamp hold" in note and "frame" in note for note in report.notes)
+    assert not any(note.startswith("Lamp hold, lights:") for note in report.notes)   # a held region is never fitted
 
 
 def test_declared_intent_only_relaxes_relative_checks():
     src = frame(.4)
     richer = src * np.array([1.6, .9, .65],np.float32)
-    audit = {"local_style": {"name": "sunset_glow", "target": "sunset_glow", "intent": ["richer"]}}
-    rich = style_thresholds(audit, {}, "sunset_glow")
+    audit = {"local_style": {"name": "rich_denoised", "target": "rich_denoised", "intent": ["richer"]}}
+    rich = style_thresholds(audit, {}, "rich_denoised")
     assert style_thresholds(audit, {}, "standard") == {}
     assert "excessive_color_increase" in assess_pixels(src,richer)["failures"]
     assert "excessive_color_increase" not in assess_pixels(src,richer,thresholds=rich)["failures"]
     clipped = np.ones_like(src)
     assert set(assess_pixels(src,clipped,thresholds=rich)["failures"]) >= {"introduced_rgb_high_clipping"}
     assert "dark_made_darker" in assess_pixels(frame(.2), frame(.1), thresholds=rich)["failures"]
-    audit = {"local_style": {"name": "moody_landscape", "target": "moody_landscape", "intent": ["darker", "richer"]}}
-    darker = style_thresholds(audit, {}, "moody_landscape")
+    audit = {"local_style": {"name": "shaped_moves", "target": "shaped_moves", "intent": ["darker", "richer"]}}
+    darker = style_thresholds(audit, {}, "shaped_moves")
     assert "dark_made_darker" not in assess_pixels(frame(.2),frame(.1),thresholds=darker)["failures"]
     protected, _ = gates.chroma_guard(src, richer, max_increase=.9, protect=np.ones(src.shape[:2],np.float32))
     assert np.max(np.ptp(protected,axis=-1)) <= .00801
@@ -232,27 +237,27 @@ def test_reference_manifest_rejects_holdout_and_research(tmp_path):
     with manifest.open("w", newline="") as f:
         writer = csv.DictWriter(f,fieldnames=["id","source","role","kind"])
         writer.writeheader()
-        writer.writerow(dict(id="research",source="fivek",role="after",kind="blue_hour"))
-    listed = tmp_path / "target-blue_hour.txt"
+        writer.writerow(dict(id="research",source="fivek",role="after",kind="sunset"))
+    listed = tmp_path / "target-sunset.txt"
     listed.write_text(str(tmp_path / "photo.jpg"))
-    freeze = {"blue_hour": {"target": ["research"], "panel": [], "holdout": []}}
+    freeze = {"sunset": {"target": ["research"], "panel": [], "holdout": []}}
     (tmp_path / "split.json").write_text(json.dumps(freeze))
     with pytest.raises(ValueError, match="eligible finished"):
-        target.finished_files(listed, manifest, "blue_hour")
-    freeze["blue_hour"]["holdout"] = ["research"]
+        target.finished_files(listed, manifest, "sunset_glow")  # F60 fixture: the archived sunset split used this identifier.
+    freeze["sunset"]["holdout"] = ["research"]
     (tmp_path / "split.json").write_text(json.dumps(freeze))
     with pytest.raises(ValueError, match="held-back"):
-        target.finished_files(listed, manifest, "blue_hour")
+        target.finished_files(listed, manifest, "sunset_glow")  # F60 fixture: the archived sunset split used this identifier.
 
 
-def test_blue_hour_lifts_the_frame_without_clipping_lamp_pixels():
+def test_lamp_hold_lifts_the_frame_without_clipping_lamp_pixels():
     from autoedit.imageio import srgb_to_linear
 
     rgb = frame(.19, (128, 160))
     y, x = np.indices(rgb.shape[:2])
     lamp = (x - 90)**2 + (y - 74)**2 < 8**2
     rgb[lamp] = [.92, .69, .43]
-    pipe = Pipeline.build(RunConfig(backend="stub", style="blue_hour", intensity=1))
+    pipe = Pipeline.build(specialist(backend="stub", style="lamp_hold", intensity=1))
     pipe.segmenter = Mock()
     pipe.segmenter.segment.return_value = [RegionMask("lamp", lamp, .9)]
     edited, result = pipe.process_one("scene.jpg", image=Image(rgb))
@@ -283,7 +288,7 @@ def test_native_files_keep_absolute_artifact_gates_for_each_intent(tmp_path):
         dst = tmp_path/f"{name}.png"
         PILImage.fromarray(np.uint8(np.rint(pixels*255))).save(dst)
         after = load_image(str(dst)).rgb
-        for selected, intent in (("sunset_glow",["richer"]),("moody_landscape",["darker","richer"])):
+        for selected, intent in (("rich_denoised",["richer"]),("shaped_moves",["darker","richer"])):
             audit = {"local_style": {"name":selected,"target":selected,"intent":intent}}
             thresholds = style_thresholds(audit, {}, selected)
             failures = set(assess_pixels(native, after, {"sky":mask}, thresholds=thresholds)["failures"])
@@ -298,7 +303,7 @@ def test_sunset_noise_reduction_survives_native_export(tmp_path):
     source = Image(pixels, exif={"iso":12800})
     grain = []
     for label, options in (("disabled", {"denoise":False}), ("style", {})):
-        pipe = Pipeline.build(RunConfig(style="sunset_glow", concepts=[], **options))
+        pipe = Pipeline.build(specialist(style="rich_denoised", concepts=[], **options))
         edited, result = pipe.process_one("sample.cr2", image=source)
         path = tmp_path/f"{label}.png"
         PILImage.fromarray(np.uint8(np.rint(255*edited))).save(path)
@@ -313,7 +318,7 @@ def test_richer_specialists_keep_a_bounded_guard_with_profile_overrides(tmp_path
     rules = tmp_path / "rules.toml"
     for value, expected in (('"off"', .60), ('1.3', .90)):
         rules.write_text(original.replace("max_chroma_increase = 0.30", f"max_chroma_increase = {value}"))
-        assert Pipeline.build(RunConfig(style="sunset_glow", rules_path=str(rules))).chroma_max == expected
+        assert Pipeline.build(specialist(style="rich_denoised", rules_path=str(rules))).chroma_max == expected
 
 
 def test_frame_and_region_share_the_style_lift_budget():
@@ -339,7 +344,7 @@ def test_a_regions_own_lift_shares_the_budget_with_the_frame():
     mountain = np.zeros(rgb.shape[:2], bool)
     mountain[48:] = True
     rgb[mountain] = .04
-    pipe = Pipeline.build(RunConfig(backend="stub", style="sunset_glow", intensity=1))
+    pipe = Pipeline.build(specialist(backend="stub", style="rich_denoised", intensity=1))
     pipe.segmenter = Mock()
     pipe.segmenter.segment.return_value = [RegionMask("mountain", mountain, .9)]
     _, result = pipe.process_one("scene.jpg", image=Image(rgb), do_apply=False)
@@ -379,12 +384,12 @@ def test_candidates_stay_hidden_and_standard_takes_no_target(tmp_path):
     packaged = Path(RunConfig().styles_path).read_text()
     styles = tmp_path / "styles.toml"
     # A specialist without a label is still a candidate until it is tested.
-    styles.write_text(packaged + '\n[quiet_dusk]\ntarget = "blue_hour"\npull = 0.5\n')
+    styles.write_text(packaged + '\n[quiet_dusk]\ntarget = "lamp_hold"\npull = 0.5\n')
     loaded = load_styles(str(styles))
     assert "quiet_dusk" in loaded and "quiet_dusk" not in offered_styles(loaded)
-    styles.write_text(packaged + '\n[quiet_dusk]\ntarget = "blue_hour"\npull = 0.5\ntested = true\n')
+    styles.write_text(packaged + '\n[quiet_dusk]\ntarget = "lamp_hold"\npull = 0.5\ntested = true\n')
     assert "quiet_dusk" in offered_styles(load_styles(str(styles)))
-    for extra in ('target = "blue_hour"', "run = { denoise = true }", 'moves = { sky_grad = { ops = { burn_ev = 0.2 } } }'):
+    for extra in ('target = "lamp_hold"', "run = { denoise = true }", 'moves = { sky_grad = { ops = { burn_ev = 0.2 } } }'):
         styles.write_text('[natural]\nlook = "natural"\n' + extra + "\n")
         with pytest.raises(ValueError, match="standard style takes no"):
             load_styles(str(styles))
@@ -418,14 +423,17 @@ def test_a_style_run_setting_reaches_a_command_line_run(tmp_path):
 
     def cfg(**kw):
         args = argparse.Namespace(configs_dir=None, backend="stub", **kw)
-        return Pipeline.build(load_run_config(args)).cfg
+        config = load_run_config(args)
+        config.styles_path = str(FIXTURE / "styles.toml")
+        config.targets_path = str(FIXTURE / "targets.toml")
+        return Pipeline.build(config).cfg
 
-    assert cfg(style="sunset_glow").denoise
+    assert cfg(style="rich_denoised").denoise
     assert not cfg(style="natural").denoise and not cfg().denoise
-    assert not cfg(style="sunset_glow", denoise=False).denoise
+    assert not cfg(style="rich_denoised", denoise=False).denoise
     run = tmp_path / "run.toml"
     run.write_text("[run]\ndenoise = false\n")
-    assert not cfg(style="sunset_glow", config=str(run)).denoise
+    assert not cfg(style="rich_denoised", config=str(run)).denoise
 
 
 def test_lights_rules_golden():
@@ -504,12 +512,12 @@ def test_aim_pulls_inside_the_range():
 def test_a_target_control_without_a_limit_is_refused(tmp_path):
     cfg = RunConfig()
     text = Path(cfg.styles_path).read_text() + (
-        '\n[no_limit]\nlabel = "No limit"\nconcepts = ["sky"]\ntarget = "moody_landscape"\n'
+        '\n[no_limit]\nlabel = "No limit"\nconcepts = ["sky"]\ntarget = "shaped_moves"\n'
         'pull = 0.5\nlimits = { exposure = 1.0, shadows_ev = 1.0 }\n')
     path = tmp_path / "styles.toml"
     path.write_text(text)
     with pytest.raises(ValueError, match="sets no limit"):
-        Pipeline.build(RunConfig(style="no_limit", styles_path=str(path)))
+        Pipeline.build(RunConfig(style="no_limit", styles_path=str(path), targets_path=str(FIXTURE / "targets.toml")))
 
 
 def test_vibrance_limit_bounds_the_fit_and_candidates_build():
@@ -519,8 +527,8 @@ def test_vibrance_limit_bounds_the_fit_and_candidates_build():
     chroma = reference_features(src)["chroma"]
     settings, _ = style_target.fit(src, {}, {"chroma": [0, chroma / 3]}, 1, {"vibrance": 30}, load_quality_config())
     assert -30 <= settings["vibrance"] < 0
-    for name in ("blue_hour", "sunset_glow", "moody_landscape"):
-        Pipeline.build(RunConfig(style=name))
+    for name in ("lamp_hold", "rich_denoised", "shaped_moves"):
+        Pipeline.build(specialist(style=name))
 
 
 def test_a_joined_move_takes_the_feather_of_the_regions_that_are_there():

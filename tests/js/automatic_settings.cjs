@@ -29,7 +29,7 @@ const vm = require('node:vm');
     calls.push([url, body]);
     if (url === '/local-styles') {
       if (failCatalog) throw new Error('offline');
-      return { styles: [{ id: 'standard', label: 'Standard' }, { id: 'blue_hour', label: 'Blue hour' }] };
+      return { styles: [{ id: 'standard', label: 'Simple' }, { id: 'auto', label: 'Auto' }] };
     }
     if (url === '/sample') return { dir: '/photos' };
     if (url === '/pick?kind=folder') return { path: '/photos' };
@@ -87,7 +87,7 @@ const vm = require('node:vm');
   await find(root, 'Choose more photos').click();
   await find(root, 'Try a sample set').click();
   await new Promise(resolve => setImmediate(resolve));
-  find(root, n => n.id === 'automatic-style').change({ target: { value: 'blue_hour' } });
+  find(root, n => n.id === 'automatic-style').change({ target: { value: 'auto' } });
   assert(contains('standard-grade.jpg'));
   let resolvePicker;
   referencePicker = () => new Promise(resolve => { resolvePicker = resolve; });
@@ -111,7 +111,8 @@ const vm = require('node:vm');
   await Promise.all([ai.click(), ai.click()]);
   const jobs = calls.filter(([url]) => url === '/jobs');
   assert.equal(jobs.length, 2, 'a double click starts one AI export');
-  assert.equal(jobs[1][1].style, 'blue_hour');
+  assert.equal(jobs[1][1].style, 'auto');
+  assert.equal(jobs[1][1].consistent, true, 'Auto groups neighbouring frames');
   assert.equal(jobs[1][1].local_only, true);
   assert.equal(jobs[1][1].decider, 'rules');
   assert.equal(jobs[1][1].allow_cloud, false);

@@ -107,11 +107,11 @@ def test_manual_gemini_uses_current_thumbnail_and_only_supported_sliders():
         controls = {'light.exposure': 0.25, 'color.vibrance': 2, 'effects.clarity': 3,
                     'mixer.orange.sat': 0, 'mixer.blue.lum': -2, 'mixer.secret.lum': 1,
                     'wb.tempRel': 0, 'wb.tint': 0}
-        style_payload = {**payload, 'controls': controls, 'allow_cloud': True, 'style': 'blue_hour', 'prompt': ''}
+        style_payload = {**payload, 'controls': controls, 'allow_cloud': True, 'style': 'portrait', 'prompt': ''}
         changes[0]['ops'] = {'mixer.orange.sat': 8, 'mixer.blue.lum': -6, 'wb.tempRel': 5, 'wb.tint': 1}
         assert lightcraft.suggest_adjustments(style_payload)['proposal']['changes'] == changes
         part = calls[-1]['contents'][0]['parts'][0]['text']
-        assert ai_styles.prompt_for('blue_hour') in part and 'mixer.secret.lum' not in part
+        assert ai_styles.prompt_for('portrait') in part and 'mixer.secret.lum' not in part
         assert 'mixer.orange.sat' in part and 'effects.clarity' in part
 
         changes[0]['ops']['mixer.orange.sat'] = 10000

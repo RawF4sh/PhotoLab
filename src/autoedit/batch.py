@@ -71,9 +71,9 @@ def _worker_init(cfg: RunConfig, out_dir: str, threads: int, open_vocabulary: bo
 
 
 def _render_with(pipe, path: str, image_out: str, sidecar: str, bias: float, gid: str,
-                 do_apply: bool, wb: tuple[float, float] = (0.0, 0.0)) -> dict:
+                 do_apply: bool, wb: tuple[float, float] = (0.0, 0.0), auto_shoot=None) -> dict:
     out_rgb, result = pipe.process_one(path, do_apply=do_apply, exposure_bias=bias, batch_group=gid,
-                                       wb_bias=wb)
+                                       wb_bias=wb, **({"auto_shoot": auto_shoot} if auto_shoot else {}))
     emit.write_outputs(out_rgb if do_apply else None, result, image_out, sidecar, pipe.cfg, path)
     return {"scene": result.scene, "group": result.batch_group, "ms": result.timing_ms,
             "regions": [m.target for m in result.masks],
@@ -81,8 +81,8 @@ def _render_with(pipe, path: str, image_out: str, sidecar: str, bias: float, gid
 
 
 def _render(path: str, image_out: str, sidecar: str, bias: float, gid: str, do_apply: bool,
-            wb: tuple[float, float] = (0.0, 0.0)) -> dict:
-    return _render_with(_WORKER["pipe"], path, image_out, sidecar, bias, gid, do_apply, wb)
+            wb: tuple[float, float] = (0.0, 0.0), auto_shoot=None) -> dict:
+    return _render_with(_WORKER["pipe"], path, image_out, sidecar, bias, gid, do_apply, wb, auto_shoot)
 
 
 def _render_here(pipe, jobs, do_apply: bool, record, fail) -> None:
@@ -239,7 +239,8 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
             b = biases.get(path, consistency.Bias())
             bias, gid, wb = b.exposure, b.group, (b.temp, b.tint)
             if pool is not None:
-                job = (i, path, image_out, sidecar, bias, gid, wb)
+                auto_args = (b.auto_shoot,) if b.auto_shoot else ()
+                job = (i, path, image_out, sidecar, bias, gid, wb, *auto_args)
                 if broken:
                     _render_here(pipeline, [job], do_apply, _record, _fail)
                     continue
@@ -248,7 +249,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
                 try:
                     if cfg.backend != "stub":
                         pipeline.presegment(path)   # fills the mask cache; the worker never loads the model
-                    pending[pool.submit(_render, path, image_out, sidecar, bias, gid, do_apply, wb)] = job
+                    pending[pool.submit(_render, path, image_out, sidecar, bias, gid, do_apply, wb, *auto_args)] = job
                 except BrokenProcessPool:
                     lost.append(job)
                 except Exception as e:
@@ -261,7 +262,7 @@ def run(cfg: RunConfig, input_dir: str, out_dir: str, do_apply: bool = True, res
             try:
                 out_rgb, result = pipeline.process_one(path, do_apply=do_apply,
                                                        exposure_bias=bias, batch_group=gid,
-                                                       wb_bias=wb)
+                                                       wb_bias=wb, **({"auto_shoot": b.auto_shoot} if b.auto_shoot else {}))
                 emit.write_outputs(out_rgb if do_apply else None, result, image_out, sidecar, cfg, path)
                 processed += 1
                 scene_mix[result.scene] += 1

@@ -1,6 +1,6 @@
 # 01. Auto end to end on provisional goals
 
-Status: ready-for-agent
+Status: done
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
 
@@ -37,3 +37,5 @@ The thinnest path through the whole of Auto, so every later ticket has something
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Auto is wired through both workspaces, CLI, sidecar and replay. The provisional goal is measured from the three supplied reference comparisons, with photos = 0. Six local mountain originals and six FiveK research originals were used only for the development comparison. Seven of twelve showed a distance of at least 3. Median distance was 3.88. The two smoke-corpus default JPEGs matched the previous revision byte for byte.

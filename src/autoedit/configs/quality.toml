@@ -27,3 +27,15 @@ neutral_luma_min = 0.20
 neutral_luma_max = 0.95
 remediation_factors = [0.75, 0.5, 0.25, 0.125, 0.0]
 finite_tolerance = 0.000001
+
+# A new bright rim measured across the joined sky/cloud boundary. Width is a
+# fraction of the proxy's long edge; delta is measured in encoded Rec.709 luma.
+ridge_radius = 0.011
+ridge_percentile = 90.0
+ridge_delta = 0.12
+ridge_min_crossings = 12
+# Fractions here refer to the detected lamp/sun itself. Skin is compared with
+# its own source colour in the OKLab chromatic plane, independent of lightness.
+light_clip_fraction = 0.04
+skin_colour_delta = 0.065
+skin_colour_percentile = 90.0

@@ -66,3 +66,24 @@ def test_shadow_lift_pins_black_and_is_a_bounded_monotonic_gain():
     img = np.full((8, 8, 3), 0.1, np.float32)
     assert np.allclose(apply_ops(img, {"shadows_ev": 1.0}), shadow_lift(img, 1.0))
     assert np.abs(apply_ops(img, {"shadows_ev": 0.0}) - img).max() == 0.0
+
+
+def test_split_tone_preserves_existing_range_and_doubles_the_colour_offset():
+    import hashlib
+    from autoedit.edit.ops import OP_BOUNDS
+
+    # Encoded bytes of every integer on each original slider, from the pre-F62 renderer.
+    keys = ("grade_shadows_temp", "grade_shadows_tint", "grade_highlights_temp", "grade_highlights_tint")
+    rgb = np.arange(24 * 16 * 3, dtype=np.uint32).reshape(24, 16, 3)
+    rgb = ((rgb * 37 + 11) % 256).astype(np.float32) / 255
+    original_range = hashlib.sha256()
+    for key in keys:
+        assert OP_BOUNDS[key] == (-200.0, 200.0)
+        for amount in range(-100, 101):
+            rendered = apply_ops(rgb, {key: amount})
+            original_range.update(np.rint(255 * np.clip(rendered, 0, 1)).astype(np.uint8).tobytes())
+        for sign in (-1, 1):
+            one = apply_ops(rgb, {key: sign * 100}) - rgb
+            two = apply_ops(rgb, {key: sign * 200}) - rgb
+            assert np.allclose(two, 2 * one, atol=2e-7, rtol=0)
+    assert original_range.hexdigest() == "739817f7ca5579314e44f874c31aa858239f9786b3efe92a2088f15674b921c1"

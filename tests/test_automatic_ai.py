@@ -42,7 +42,7 @@ def test_automatic_ai_applies_per_photo_deltas_and_finishes_locally_after_budget
     service.approve_root(str(tmp_path))
     sent = []
     key = "ephemeral-test-key"
-    style = "blue_hour"
+    style = "portrait"
 
     def transport(body, header_key):
         assert header_key == key and key.encode() not in body and str(tmp_path).encode() not in body

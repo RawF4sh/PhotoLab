@@ -5,6 +5,7 @@ import math
 from ..contract import Adjustment
 from ..edit.ops import OP_BOUNDS
 from ..segment.base import MARK
+from ..scene import LANDSCAPES
 
 
 def _number(value, name, lo, hi):
@@ -13,15 +14,83 @@ def _number(value, name, lo, hi):
     return float(value)
 
 
+def check_shoot(shoot):
+    """Only numerical fit controls and the settings needed to replay a finished Auto shoot."""
+    fields = {"scene", "median", "batch_group", "intensity", "scene_override", "exposure_bias", "wb_bias"}
+    scenes = {"landscape", *LANDSCAPES}
+    if not isinstance(shoot, dict) or shoot.keys() - fields or not isinstance(shoot.get("scene"), str) or shoot["scene"] not in scenes:
+        raise ValueError("Invalid Auto shoot scene or fields")
+    median = shoot.get("median", {})
+    if not isinstance(median, dict) or len(median) > 150:
+        raise ValueError("Invalid Auto shoot median")
+    out = {"scene": shoot["scene"], "median": {}}
+    for name, controls in median.items():
+        if not isinstance(name, str) or not name or len(name) > 200 or any(ord(ch) < 32 for ch in name):
+            raise ValueError("Invalid Auto shoot region")
+        if not isinstance(controls, dict) or controls.keys() - OP_BOUNDS.keys():
+            raise ValueError("Invalid Auto shoot control")
+        out["median"][name] = {k: _number(v, k, *OP_BOUNDS[k]) for k, v in controls.items()}
+    if "intensity" in shoot:
+        out["intensity"] = _number(shoot["intensity"], "Auto shoot strength", 0, 1.5)
+    if "scene_override" in shoot:
+        if shoot["scene_override"] is not None and (not isinstance(shoot["scene_override"], str) or shoot["scene_override"] not in scenes):
+            raise ValueError("Invalid Auto shoot override")
+        out["scene_override"] = shoot["scene_override"]
+    if "batch_group" in shoot:
+        if not isinstance(shoot["batch_group"], str) or len(shoot["batch_group"]) > 300 or any(ord(ch) < 32 for ch in shoot["batch_group"]):
+            raise ValueError("Invalid Auto shoot group")
+        out["batch_group"] = shoot["batch_group"]
+    if "exposure_bias" in shoot:
+        out["exposure_bias"] = _number(shoot["exposure_bias"], "Auto shoot exposure", -3, 3)
+    if "wb_bias" in shoot:
+        values = shoot["wb_bias"]
+        if not isinstance(values, (list,tuple)) or len(values) != 2:
+            raise ValueError("Invalid Auto shoot white balance")
+        out["wb_bias"] = [_number(v, "Auto shoot white balance", -100, 100) for v in values]
+    return out
+
+
+def shoot_receipt(result):
+    info = result.audit.get("auto", {})
+    shoot = info.get("shoot")
+    if not shoot or info.get("scene") not in {"landscape", *LANDSCAPES}:
+        return None
+    cfg = result.audit["run_config"]
+    return check_shoot({**shoot, "batch_group": result.batch_group, "intensity": cfg["intensity"],
+                        "scene_override": cfg.get("scene"), "exposure_bias": result.exposure_bias,
+                        "wb_bias": list(result.wb_bias)})
+
+
+def render_args(base, cfg, bias=None):
+    """A saved matching shoot can be replayed even when its other photos are absent."""
+    shoot = base.get("auto_shoot") if cfg.style == "auto" else None
+    if shoot and (shoot.get("intensity", cfg.intensity) != cfg.intensity
+                  or ("scene_override" in shoot and shoot["scene_override"] != cfg.scene)
+                  or (cfg.scene and cfg.scene != shoot["scene"])):
+        shoot = None
+    newly_planned = getattr(bias, "auto_shoot", None) if cfg.style == "auto" else None
+    match = shoot or newly_planned
+    values = shoot or {}
+    result = {"exposure_bias": base.get("exposure_bias", values.get("exposure_bias", bias.exposure if bias else 0)),
+              "wb_bias": tuple(base.get("wb_bias", values.get("wb_bias", (bias.temp, bias.tint) if bias else (0, 0))))}
+    if match:
+        result["auto_shoot"] = {"scene": match["scene"], "median": match["median"]}
+    if bias or values.get("batch_group"):
+        result["batch_group"] = values.get("batch_group", bias.group if bias else "")
+    return result
+
+
 def check(value):
     if value is None:
         return {}
-    if not isinstance(value, dict) or set(value) - {"adjustments", "exposure_bias", "wb", "wb_bias", "selected_regions"}:
-        raise ValueError("photo_base must contain adjustments, exposure_bias, wb, wb_bias and/or selected_regions")
+    if not isinstance(value, dict) or set(value) - {"adjustments", "exposure_bias", "wb", "wb_bias", "selected_regions", "auto_shoot"}:
+        raise ValueError("photo_base must contain adjustments, exposure_bias, wb, wb_bias, selected_regions and/or auto_shoot")
     given = value.get("adjustments", [])
     if not isinstance(given, list) or len(given) > 200:
         raise ValueError("photo_base.adjustments must contain at most 200 adjustments")
     out = {"adjustments": []}
+    if "auto_shoot" in value:
+        out["auto_shoot"] = check_shoot(value["auto_shoot"])
     if "selected_regions" in value:
         from ..segment.refine import names
         out["selected_regions"] = names(value["selected_regions"])

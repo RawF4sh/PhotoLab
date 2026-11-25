@@ -104,7 +104,7 @@ async function startJob() {
   try {
     const stamp = new Date().toISOString().replaceAll(':', '-');
     const out = joinPath(selection.dir, 'AutoEdit Exports/Automatic ' + stamp + ' ' + crypto.getRandomValues(new Uint32Array(1))[0].toString(16));
-    const options = { consistent:false, ...state.settings, backend: state.finder, input_dir: selection.dir,
+    const options = { consistent:style === 'auto', ...state.settings, backend: state.finder, input_dir: selection.dir,
       files: selection.files.map(f => f.path), out_dir: out, local_only: true, style,
       translator: 'off', decider: 'rules', allow_cloud: false };
     const reference = referenceFor(selection);
@@ -179,7 +179,7 @@ function exportControls() {
   select.value = style;
   return el('div', { class: 'automatic-controls' },
     styles.length ? el('label', { class: 'automatic-style', htmlFor: select.id }, 'Local style', select) :
-      styleError ? el('div', { role: 'status' }, 'Standard is available. ', button('Reload styles', loadStyles, 'link')) :
+      styleError ? el('div', { role: 'status' }, 'Simple is available. ', button('Reload styles', loadStyles, 'link')) :
         el('span', { role: 'status' }, 'Loading local styles…'),
     selection ? referenceControl(selection) : null,
     button('Run AI Edit & export', startJob, 'primary', !count || !!pending));
@@ -197,6 +197,23 @@ function aiReceipt(items) {
       labels[i.ai_status], i.ai_reason ? '. ' + i.ai_reason : ''))));
 }
 
+async function reopenGroup(item) {
+  const {loadPhotoPath} = await import('./folder.js');
+  const {getPhotoValues, updatePhoto, persistProject} = await import('./project.js');
+  const previousMode = state.editorMode;
+  state.editorMode = true;
+  try {
+    if (!await loadPhotoPath(item.src)) { state.editorMode = previousMode; return; }
+    const current = getPhotoValues(item.src);
+    // Reopening must never replace work the photographer has already saved by hand.
+    if (Object.keys(current).length) { toast('Opened this photo with its saved edits.'); return; }
+    const shoot = item.auto_shoot;
+    updatePhoto(item.src, {style:'auto', ai_enabled:true, look:'', reference:'', intensity:shoot.intensity,
+      scene:shoot.scene_override || undefined, base:{auto_shoot:shoot}, ...(item.reopen || {})}, {history:false});
+    await persistProject();
+  } catch (err) { toast(err.message); }
+}
+
 function drawJob() {
   if (!snapshot) return el('p', { role: 'status' }, 'Loading export…');
   const s = snapshot, exported = s.done + s.review;
@@ -211,6 +228,9 @@ function drawJob() {
     el('h2', { role: 'status' }, s.status === 'cancelled' ? 'Export stopped' : exported ? 'Export complete' : 'Export failed'),
     el('p', null, photoCount(exported) + ' exported' + (s.failed ? ' · ' + s.failed + ' failed' : '')),
     aiReceipt(s.items),
+    s.items.some(i => i.out && i.auto_shoot) ? el('details', {class:'automatic-issues'},
+      el('summary', null, 'Open original in Photo editor'), el('ul', null, ...s.items.filter(i => i.out && i.auto_shoot)
+        .map(i => el('li', null, button(i.name, () => reopenGroup(i), 'link'))))) : null,
     exported ? el('p', { class: 'automatic-path' }, s.out_dir) : null,
     exported ? previewStrip(s.items.filter(i => i.out).slice(0, 6).map(i => ({ path: i.out }))) : null,
     issues.length ? el('details', { class: 'automatic-issues' }, el('summary', null, 'Review ' + photoCount(issues.length)),

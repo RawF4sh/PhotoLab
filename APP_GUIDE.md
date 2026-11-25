@@ -5,7 +5,7 @@ built around it: cull a shoot, edit it, review/label the results, build a traini
 your own look — all on your machine. AutoEdit's own editing is **non-generative**: it only moves
 bounded, explainable photographic sliders (exposure, tone, white balance, dehaze, region
 grades…). It never invents or replaces content. In Photo editor you can refine those decisions
-and draw masks. The spot tools of Fine-tune are yours to use by hand, and the exported sidecar
+and draw masks. The spot tools in Adjust are yours to use by hand, and the exported sidecar
 records every retouched spot.
 
 - **UI:** one local interface — `autoedit ui` in the browser at `http://127.0.0.1:8765/`, or `autoedit app` in a desktop window.
@@ -23,7 +23,7 @@ records every retouched spot.
 | Principle | What it means |
 |---|---|
 | **Local-first** | Run AI Edit and export work on-device. Ask Gemini sends a small preview and editing measurements after you allow it. |
-| **Non-generative automatic edits** | The local engine adjusts bounded photographic controls, then measures the result and rejects unsafe changes. Heal and Clone are available as manual tools in Fine-tune. |
+| **Non-generative automatic edits** | The local engine adjusts bounded photographic controls, then measures the result and rejects unsafe changes. Heal and Clone are available as manual tools in Adjust. |
 | **Explainable** | Every photo gets a sidecar JSON with a human-readable "why" list: which rules fired, which gates acted, which intent/palette/reference applied. |
 | **Copy-only** | Culling and dataset building never move, rename, or delete your originals — they copy. |
 | **Rules are data** | Tuning lives in TOML (`configs/`), not Python. Add a stat in code, map it in config. |
@@ -402,37 +402,42 @@ file.
 
 #### Photo editor
 
-Open a photo or a folder. A new photo opens on its original. Select a section in the sidebar,
-or use **Tools** on a narrow screen.
+Open a photo or a folder. A new photo opens on its original with **Adjust** selected. The tool
+choices stay on the left, or along the bottom on a narrow screen. **Photos** opens the folder
+filmstrip when you want to switch pictures.
 
-- **AI Edit** runs Standard on this computer. Choose **Run AI Edit** to see the result.
+- **AI Edit** runs Simple on this computer. Choose **Run AI Edit** to see the result.
   Drag **Before / After** across the photo or use the arrow keys on the divider. An individual
   change can be adjusted, turned off or undone.
 - **Isolate** lets you select a detected object and adjust it. The overlay shows the affected
   area. Refine a selection with the brush or place an area on the photo.
-- **Learn** explains the measured changes on this photo. **Ask Gemini** sends a small preview
+- **Learn** opens the steps for this photo. Select a step to compare its effect or try it yourself. **Ask Gemini** sends a small preview
   only after explicit permission and lets you review the proposed changes.
-- **Adjust → Fine-tune in LightCraft** opens the native develop controls, including the tone
-  curve, mixer, color wheels, crop, masks and spot tools. The first visit offers a verified
+- **Adjust** displays the LightCraft controls beside your photo, including the tone curve,
+  mixer, color wheels, crop, masks and spot tools. Return to Adjust after running AI Edit
+  to see the local edit with your manual adjustments applied. The first visit offers a verified
   download of the pinned web editor (about 75 MB). Later use works offline.
-- In Fine-tune, **Inspect at 100%** opens the original at full resolution with the current
+- In Adjust, **Inspect at 100%** opens the original at full resolution with the current
   edits. Use it to check an eyelash, a mask boundary or shadow noise before export.
 - **Open photo** accepts a Canon CR2 directly. AutoEdit develops RAW files at preview size
   for interaction and develops them again at full resolution for export. Your RAW stays on disk.
   If a browser copy is cleared, pick the same original and the saved manual stage is restored.
-- In Fine-tune, **Before / After** compares the photo and **Export** writes the developed file
-  and its decision sidecar to AutoEdit Exports. The sidecar records changed controls, masks and
-  every retouched spot. The automated image checks cover the local AI stage. **Back to Photo
-  editor** returns to the linked photo.
-- **Export** in Photo editor saves the AI edit. A photo with a saved Fine-tune stage is exported
-  from Fine-tune, and a photo with no edit yet shows a notice. `autoedit run`, `autoedit adjust`
-  and Automatic edit leave a photo with a Fine-tune stage alone and say "Finish in Photo editor".
+- In **Adjust**, **Before / After** compares the original with your finished edit. In **AI Edit**
+  it compares the original with the local edit, and **Learn** can compare individual steps.
+- **Export** saves the full-size result with its manual adjustments and decision sidecar in
+  AutoEdit Exports. The sidecar records changed controls, masks and retouched spots.
+  `autoedit run`, `autoedit adjust` and Automatic edit still direct photos with saved manual
+  adjustments to Photo editor for export.
 
-Standard is available by default. A specialized local style appears in the normal menu after
-the blind evaluation passes. To try the experimental landscape edits on your own photos,
-use `autoedit run ./photos ./style-preview --backend sam3 --style moody_landscape`.
-The other preview choices are `blue_hour` and `sunset_glow`. Gemini's photographic briefs
-are available separately.
+**AI Edit → Local style** offers **Simple** and **Auto**. Choose **Auto**, then **Run AI Edit**.
+The sidebar shows the detected scene and whether Auto used Simple. Change **Scene** to correct it,
+choose **Detect automatically** to retry detection, or choose **Undo** to restore the previous edit.
+Auto strength runs from 0% (Simple) through 100% (the scene goal) to 150%. Unreleased scenes use
+Simple at every strength. The Automatic workspace uses the same local styles for a whole folder.
+
+For a private evaluation of provisional goals, use
+`autoedit run ./photos ./style-preview --style auto --auto-unreleased`. Add `--scene sunset`
+to test a known scene. The ordinary editor uses released goals only.
 
 #### Folder workspace
 

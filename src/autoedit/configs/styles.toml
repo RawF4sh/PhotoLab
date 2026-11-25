@@ -33,65 +33,17 @@ look = "cinematic_preserved"
 concepts = ["sky", "mountain", "snow", "grass", "trees", "water", "rock", "subject"]
 brief = "old-cinematic mood with strict Lightroom preservation: dramatic alpine depth, darker sky, strong mountain separation, natural greens, restrained cyan, no generated content"
 
-# Local style candidates. A photographer's held-back vote promotes tested to true.
-[blue_hour]
-label = "Blue hour"
-look = "natural"
-concepts = ["sky", "water", "building", "bridge", "lights", "skin", "snow"]
-target = "blue_hour"
-pull = 0.8
-# F61 twilight round: the whole frame lift is capped at 1.0 EV (it lifted grain into a night
-# sky at ISO 3200), and noise reduction is on (cleaner skies from ISO 1250 up).
-limits = { exposure = 1.0, shadows_ev = 1.5, lights_ev = 0.7 }
-tested = false
-[blue_hour.run]
-denoise = true
-
-[sunset_glow]
-label = "Sunset glow"
-look = "natural"
-concepts = ["sky", "cloud", "water", "mountain", "snow", "trees", "skin"]
-target = "sunset_glow"
-pull = 0.8
-limits = { exposure = 3.0, shadows_ev = 2.0, chroma = 0.6, temp = 8 }
-intent = ["richer"]
-tested = false
-[sunset_glow.run]
-denoise = true
-
-[moody_landscape]
-label = "Moody landscape"
-look = "natural"
-concepts = ["sky", "cloud", "mountain", "water", "skin", "snow"]
-target = "moody_landscape"
-pull = 0.7
-limits = { exposure = 1.0, shadows_ev = 1.0, chroma = 0.75, vibrance = 30 }
-intent = ["darker", "richer"]
-tested = false
-[moody_landscape.run]
-palette = "cool_blue"
-palette_strength = 0.45
-[moody_landscape.moves.sky_grad]
-when = "sky"
-within = ["sky", "cloud"]
-shape = "linear"
-from = "top"
-coverage = 0.6
-ops = { burn_ev = 0.25 }
-[moody_landscape.moves.far_shore]
-when = "always"
-shape = "band"
-at = "waterline"
-height = 0.12
-feather = 1.0
-ops = { exposure = 0.2 }
-[moody_landscape.moves.frame_vignette]
-when = "always"
-shape = "radial"
-target = "outside"
-radius_scale = 1.1
-feather = 0.45
-ops = { burn_ev = 0.6 }
+# Auto starts with Simple's exact look, brief and region set (including profile overrides).
+[auto]
+label = "Auto"
+pull = 1.0
+aim = 0.25
+[auto.targets]
+landscape = "auto_landscape"
+sunset = "auto_landscape"
+twilight = "auto_landscape"
+daylight = "auto_landscape"
+mist = "auto_landscape"
 
 [natural_portrait]
 label = "Natural portrait"

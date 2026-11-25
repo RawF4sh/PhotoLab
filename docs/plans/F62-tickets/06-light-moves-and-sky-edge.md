@@ -1,6 +1,6 @@
 # 06. Light moves scaled by the goal, and a guided sky edge
 
-Status: ready-for-agent
+Status: done
 Blocked by: 01
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
@@ -25,3 +25,5 @@ Who: Builder (Sonnet, medium)
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Auto scales the sky gradient, vignette and sunset glow by distance to the goal. Tests cover a zero gap, the configured limit, the light position, and masks at the ridge. On the twelve-photograph development sheet the strongest resulting rim was 0.0569, below the 0.12 threshold on every photo.

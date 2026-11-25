@@ -650,7 +650,7 @@ def _to_srgb(pil: PILImage.Image) -> PILImage.Image:
 
 
 def _read_exif(pil: PILImage.Image) -> dict:
-    """Pull a small, normalized prior dict from EXIF: {'iso': float, 'exposure_ev': float}.
+    """Read ISO, exposure compensation, and the daylight exposure value if all tags exist.
     Camera metadata is messy and optional — any failure just yields {} (neutral defaults)."""
     out: dict = {}
     try:
@@ -670,6 +670,14 @@ def _read_exif(pil: PILImage.Image) -> dict:
         if ev is not None:
             out["exposure_ev"] = float(ev)  # PIL IFDRational casts cleanly to float
     except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    try:
+        seconds, aperture = float(ifd[0x829A]), float(ifd[0x829D])
+        if seconds > 0 and aperture > 0 and out.get("iso", 0) > 0:
+            ev100 = np.log2((aperture ** 2 / seconds) * (100.0 / out["iso"]))
+            if np.isfinite(ev100):
+                out["capture_ev100"] = float(ev100)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, OverflowError):
         pass
     return out
 

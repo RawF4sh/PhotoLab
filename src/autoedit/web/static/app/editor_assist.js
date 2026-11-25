@@ -69,7 +69,7 @@ export function setupEditorAssist({command, renderThumbnail, onApplied}) {
   const bar = element('div', '', {class: 'assist-heading'});
   bar.append(heading, close);
   const style = element('select');
-  style.append(element('option', 'Standard', {value: 'standard'}));
+  style.append(element('option', 'Simple', {value: 'standard'}));
   const prompt = element('textarea', '', {maxlength: '800', rows: '2', placeholder: 'Keep the foreground cool'});
   const key = element('input', '', {type: 'password', autocomplete: 'off'});
   const keyField = element('details');
@@ -124,7 +124,7 @@ export function setupEditorAssist({command, renderThumbnail, onApplied}) {
     invalidate(); dialog.showModal(); style.focus();
     if (!catalog) catalog = loadStyles().catch(() => {
       catalog = null;
-      if (dialog.open && !request && !review) status.textContent = 'Only Standard is available. Reopen Ask Gemini to retry loading styles.';
+      if (dialog.open && !request && !review) status.textContent = 'Only Simple is available. Reopen Ask Gemini to retry loading styles.';
     });
   };
 

@@ -2,7 +2,7 @@
 // Imports are circular with main.js; access shared state only from functions/events.
 import { api, state, toast } from './main.js';
 
-const PHOTO_KEYS = ['style', 'ai_enabled', 'manual', 'look', 'intensity', 'neutral', 'sliders', 'entries', 'hide', 'hideMethod', 'reference', 'reference_strength', 'base', 'region_settings', 'mask_refinements', 'photo_geometry', 'local_only', 'edit_steps'];
+const PHOTO_KEYS = ['style', 'scene', 'ai_enabled', 'manual', 'look', 'intensity', 'neutral', 'sliders', 'entries', 'hide', 'hideMethod', 'reference', 'reference_strength', 'base', 'region_settings', 'mask_refinements', 'photo_geometry', 'local_only', 'edit_steps'];
 const FOLDER_KEYS = ['look', 'genre', 'strength', 'runText', 'exportPreset', 'finder', 'folderSliders', 'recipes'];
 const HISTORY_LIMIT = 30;
 let activeDir = '', project = fresh(), timer = 0, saving = Promise.resolve(), revision = 0, lastSaved = '';
@@ -54,6 +54,12 @@ export function updatePhoto(path, patch, { history = true } = {}) {
     if (!Object.prototype.hasOwnProperty.call(patch, key)) return;
     if (patch[key] === undefined) delete after[key]; else after[key] = clone(patch[key]);
   });
+  // A shoot fit belongs to its scene and strength. Keep unrelated synced adjustments.
+  if (before.base?.auto_shoot && !Object.hasOwn(patch, 'base') &&
+      ['scene', 'style', 'intensity'].some(key => Object.hasOwn(patch, key) && before[key] !== after[key])) {
+    delete after.base.auto_shoot;
+    if (!Object.keys(after.base).length) delete after.base;
+  }
   if (JSON.stringify(before) === JSON.stringify(after)) return;
   project.photos[path] = { ...after,
     history: history ? [...(previous.history || []), before].slice(-HISTORY_LIMIT) : previous.history || [],
@@ -68,6 +74,19 @@ export function updatePhoto(path, patch, { history = true } = {}) {
   }
   syncRecipeReview(file, after);
   emit(path, 'change'); scheduleProjectSave();
+}
+
+// Mirror a confirmed native save locally so later AI edits and Undo share the
+// same project history as the server. Continuous native slider changes coalesce.
+export function recordManualSave(path, manual) {
+  const previous = getPhoto(path);
+  if ((previous.manual?.sha256 || null) === (manual?.sha256 || null)) return;
+  const last = previous.history?.at(-1);
+  const otherEdits = item => Object.fromEntries(Object.entries(photoValues(item)).filter(([key]) => key !== 'manual'));
+  const continuing = manual && previous.manual && last &&
+    JSON.stringify(otherEdits(last)) === JSON.stringify(otherEdits(previous));
+  confirmedManual.set(path, manual?.sha256 || null);
+  updatePhoto(path, {manual:manual || undefined}, {history:!continuing});
 }
 
 function travel(path, undo) {

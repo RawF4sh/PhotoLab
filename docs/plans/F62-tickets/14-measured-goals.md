@@ -1,6 +1,6 @@
 # 14. Measured goals replace the provisional ones
 
-Status: ready-for-agent
+Status: needs-info
 Blocked by: 01, 02, 10, 13
 Spec: [F62](../F62-auto.md), milestone M2
 Who: Builder (Sonnet, medium)
@@ -23,3 +23,5 @@ below 45 pairs keeps the broader goal.
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — The measured-goal writer is implemented. All four scene routes currently point to the provisional landscape goal. The local screen kept 20 daylight, 6 sunset, 2 twilight and 2 mist pairs. Daylight needs at least 25 more kept originals and a passing independent check before it can supply a measured goal. Sunset needs 39 more, and twilight and mist each need 43. No FiveK retouches were used to set product targets.

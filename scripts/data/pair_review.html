@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Independent pair review</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #171919; color: #f1f1ed; font: 16px/1.45 system-ui, sans-serif; }
+    main { max-width: 1080px; margin: auto; padding: 24px clamp(12px, 3vw, 30px) 50px; }
+    h1 { font-size: 2rem; margin: 0 0 6px; }
+    h2 { font-size: 1.3rem; margin: 8px 0; }
+    header p { max-width: 75ch; margin: 0 0 16px; }
+    fieldset { border: 0; margin: 0; padding: 0; }
+    label { display: grid; gap: 5px; font-weight: 600; }
+    select, button {
+      font: inherit; color: #f5f7f4; background: #2a302d; border: 1px solid #737f77;
+      border-radius: 6px; padding: 8px 10px; min-height: 44px;
+    }
+    button:enabled, select { cursor: pointer; }
+    button:disabled { opacity: .55; }
+    :focus-visible { outline: 3px solid #f9c588; outline-offset: 3px; }
+    .actions {
+      position: sticky; top: 0; z-index: 1; display: flex; align-items: center; flex-wrap: wrap;
+      gap: 10px; padding: 10px 0; background: #171919; border-block: 1px solid #565e59;
+    }
+    .actions span { margin-right: auto; }
+    section { border-bottom: 1px solid #565e59; padding: 14px 0 22px; scroll-margin-top: 85px; }
+    section img { display: block; max-height: 390px; width: 100%; object-fit: contain; background: #0e100f; }
+    .controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: end; margin-top: 10px; }
+    #export:enabled { background: #436348; }
+    @media (max-width: 760px) { .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 480px) {
+      .actions span { width: 100%; }
+      section { scroll-margin-top: 125px; }
+      .controls { gap: 8px; }
+      select { width: 100%; }
+      section img { min-height: 140px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Independent pair review</h1>
+    <p>Each sheet shows an original on the left and its proposed edit on the right.
+      Judge the scene, composition and edit quality. Choose <strong>Good</strong> for a visible,
+      believable improvement, <strong>Weak</strong> for a small or unhelpful change and
+      <strong>Overdone</strong> for an artificial-looking result or visible damage.</p>
+  </header>
+  <div class="actions">
+    <span id="progress" role="status" aria-live="polite"></span>
+    <button type="button" id="next">Next incomplete pair</button>
+    <button type="button" id="export" disabled>Download answers</button>
+  </div>
+  <noscript>Enable JavaScript to use this form, or enter your judgments in a copy of blank.json.</noscript>
+  <form id="review"></form>
+  <template id="card">
+    <section>
+      <h2></h2>
+      <img decoding="async" loading="lazy">
+      <fieldset><div class="controls">
+        <label>Scene<select name="scene" required>
+          <option value="">Choose…</option><option value="sunset">Sunset</option>
+          <option value="twilight">Twilight</option><option value="daylight">Daylight</option>
+          <option value="mist">Mist or overcast</option><option value="other">Other</option>
+        </select></label>
+        <label>Same photo and composition?<select name="same_photo" required>
+          <option value="">Choose…</option><option value="true">Yes</option><option value="false">No</option>
+        </select></label>
+        <label>Does the original look unedited?<select name="unedited" required>
+          <option value="">Choose…</option><option value="true">Yes</option><option value="false">No</option>
+        </select></label>
+        <label>Quality of the edit<select name="quality" required>
+          <option value="">Choose…</option><option value="weak">Weak</option><option value="good">Good</option>
+          <option value="overdone">Overdone</option>
+        </select></label>
+      </div></fieldset>
+    </section>
+  </template>
+</main>
+<script id="template" type="application/json">__BLIND_MANIFEST__</script>
+<script>
+  const manifest = JSON.parse(document.getElementById('template').textContent);
+  const review = document.getElementById('review');
+  const next = document.getElementById('next');
+  const download = document.getElementById('export');
+  const progress = document.getElementById('progress');
+  const key = 'autoedit-pair-audit-v1.' + manifest.screen_digest;
+  const cards = [];
+  let draft = {};
+  try {
+    draft = JSON.parse(localStorage.getItem(key)) || {};
+  } catch {
+    // Private windows and browsers with disabled storage can still export answers.
+  }
+  for (let number = 1; number <= manifest.sample.length; number++) {
+    const section = document.getElementById('card').content.firstElementChild.cloneNode(true);
+    const heading = section.querySelector('h2');
+    heading.textContent = 'Pair ' + number;
+    heading.id = 'label-' + number;
+    const img = section.querySelector('img');
+    img.src = String(number).padStart(2, '0') + '.jpg';
+    img.alt = 'Pair ' + number + ', original on the left and edit on the right';
+    const card = section.querySelector('fieldset');
+    card.dataset.number = number;
+    card.setAttribute('aria-labelledby', heading.id);
+    for (const select of card.querySelectorAll('select')) {
+      const value = String(draft[number]?.[select.name] ?? '');
+      if ([...select.options].some(option => option.value === value)) select.value = value;
+    }
+    review.append(section);
+    cards.push(card);
+  }
+  function answer(card) {
+    const value = field => card.elements.namedItem(field).value;
+    const boolean = field => ({true: true, false: false})[value(field)] ?? null;
+    return {scene: value('scene') || null, same_photo: boolean('same_photo'),
+            unedited: boolean('unedited'), quality: value('quality') || null};
+  }
+  function answers() {
+    return Object.fromEntries(cards.map(card => [card.dataset.number, answer(card)]));
+  }
+  function complete(result) {
+    return Object.values(result).every(value => value !== null);
+  }
+  function update() {
+    const done = cards.filter(card => complete(answer(card))).length;
+    progress.textContent = done + ' of ' + cards.length + ' pairs reviewed';
+    download.disabled = done !== cards.length;
+    next.disabled = done === cards.length;
+  }
+  review.addEventListener('change', () => {
+    update();
+    try {
+      localStorage.setItem(key, JSON.stringify(answers()));
+    } catch {
+      progress.textContent += '. Keep this tab open to retain your answers.';
+    }
+  });
+  next.addEventListener('click', () => {
+    const card = cards.find(card => !complete(answer(card)));
+    if (card) {
+      card.closest('section').scrollIntoView({block: 'start'});
+      [...card.elements].find(select => select.tagName === 'SELECT' && !select.value)?.focus({preventScroll: true});
+    }
+  });
+  download.addEventListener('click', () => {
+    const result = answers();
+    if (!Object.values(result).every(complete)) return;
+    const data = {screen_digest: manifest.screen_digest, sample: manifest.sample, answers: result};
+    const link = document.createElement('a');
+    const file = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'}));
+    link.href = file;
+    link.download = 'checker.json';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(file), 5000);
+  });
+  update();
+</script>
+</body>
+</html>

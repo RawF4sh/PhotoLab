@@ -575,14 +575,14 @@ def save_manifest(root, rows):
     write_atomic(root / "manifest.csv", stream.getvalue().encode())
 
 
-def verify(root, rows=None):
-    cfg = config()
+def verify(root, rows=None, *, cfg=None, row_check=check_row):
+    cfg = cfg or config()
     entire = rows is None
     rows = manifest(root) if entire else rows
     errors = []
     for row in rows:
         try:
-            path = check_row(row, cfg, root)
+            path = row_check(row, cfg, root)
             if (
                 path.stat().st_size != int(row["bytes"])
                 or digest(path) != row["sha256"]
@@ -628,7 +628,7 @@ def lock(root):
         yield
 
 
-def fetch(root, entries, approved, net_for, cfg=None, failures=None):
+def fetch(root, entries, approved, net_for, cfg=None, failures=None, *, row_check=check_row, pair_budget=None, other_bytes=0):
     """Download entries. A bad file is recorded in `failures` (id, reason) and skipped."""
     cfg = cfg or config()
     failures = [] if failures is None else failures
@@ -637,12 +637,16 @@ def fetch(root, entries, approved, net_for, cfg=None, failures=None):
     with lock(root):
         rows = manifest(root)
         known = {r["id"]: r for r in rows}
-        counts = {s: sum(r["source"] == s for r in rows) for s in SOURCES}
+        # The forum-pair ledger shares this corpus’s total byte allowance.
+        other_bytes += sum(int(r["bytes"]) for r in manifest(root / "auto-pairs"))
+        sources = {r["source"] for r in (*rows, *entries)}
+        counts = {s: sum(r["source"] == s for r in rows) for s in sources}
         sizes = {
-            s: sum(int(r["bytes"]) for r in rows if r["source"] == s) for s in SOURCES
+            s: sum(int(r["bytes"]) for r in rows if r["source"] == s) for s in sources
         }
         pairs = {r["pair"] for r in rows if r["source"] == "fivek"}
-        dests = [(entry, check_row(entry, cfg, root)) for entry in entries]
+        collected_pairs = {r["pair"] for r in rows if r["pair"]}
+        dests = [(entry, row_check(entry, cfg, root)) for entry in entries]
         for entry, dest in dests:
             source = entry["source"]
             if entry["id"] in known:
@@ -661,11 +665,11 @@ def fetch(root, entries, approved, net_for, cfg=None, failures=None):
                     )
                 ):
                     raise ValueError("metadata differs from the original acquisition")
-                if verify(root, [known[entry["id"]]]):
+                if verify(root, [known[entry["id"]]], cfg=cfg, row_check=row_check):
                     raise ValueError("previous download failed checksum verification")
                 continue
             available = min(
-                cfg["total_bytes"] - sum(sizes.values()),
+                cfg["total_bytes"] - other_bytes - sum(sizes.values()),
                 cfg[source]["max_bytes"] - sizes[source],
             )
             if (
@@ -676,7 +680,8 @@ def fetch(root, entries, approved, net_for, cfg=None, failures=None):
                 print("FiveK pair budget reached", flush=True)
                 continue
             if (
-                counts[source] >= cfg[source]["max_files"]
+                (pair_budget is not None and entry["pair"] not in collected_pairs and len(collected_pairs) >= pair_budget)
+                or counts[source] >= cfg[source]["max_files"]
                 or available <= 0
                 or int(entry["bytes"]) > available
             ):
@@ -751,6 +756,8 @@ def fetch(root, entries, approved, net_for, cfg=None, failures=None):
                 rows.append(row)
                 save_manifest(root, rows)
                 known[row["id"]] = row
+                if row["pair"]:
+                    collected_pairs.add(row["pair"])
                 if source == "fivek":
                     pairs.add(row["pair"])
                 sizes[source] += downloaded
@@ -761,6 +768,11 @@ def fetch(root, entries, approved, net_for, cfg=None, failures=None):
                 )
             except BudgetError:
                 raise
+            except error.HTTPError as exc:
+                if exc.code not in {404, 410}:
+                    raise
+                failures.append((entry["id"], f"source file unavailable (HTTP {exc.code})"))
+                exc.close()
             except ValueError as exc:
                 failures.append((entry["id"], str(exc)))
                 print(f"failed {entry['id']}: {exc}", flush=True)

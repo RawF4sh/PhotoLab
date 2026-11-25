@@ -1,6 +1,6 @@
 # 04. Wider colour grading range
 
-Status: ready-for-agent
+Status: done
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
 
@@ -27,3 +27,5 @@ The prototype ran warm highlight grading into its limit (+100) on all three exam
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — All 804 combinations of the four controls and the original integer range −100 to +100 reproduced the original pixels. The extended ±200 controls passed the doubled-effect and identity tests. All 110 native RAWs completed the default tone report with zero dark→darker, zero newly clipped highlights or shadows and zero hard failures.

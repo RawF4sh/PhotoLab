@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Scene-based Auto (F62)
+
+- The local editor and Automatic workspace offer Simple and Auto. Simple is the default.
+  In the editor, the scene can be corrected and the correction undone. The project keeps it
+  for export. Auto uses Simple on a scene that has yet to pass its release round.
+- Private evaluation runs can fit provisional landscape goals, scale the edit to 150%,
+  shape light along the sky boundary and around a sunset, and pull neighboring frames toward
+  their shoot's median. The sidecar records the goal, fitted controls and safety reductions.
+- Colour grading extends to ±200. A new sky-edge check looks for bright ridges introduced by an
+  edit. The three experimental F59 landscape styles have been retired.
+- Play Raw collection records the source post, photographer and applicable licence for each original and edit. Downloaded photos stay in the private collection.
+- The private pair screener can run entirely on-device. It judges the original on its own, then compares the two photos for composition, scene and edit quality. Each judgment records the local model version. When a scene has enough examples, the audit command creates an offline blind review form that saves progress and exports the reviewer's answers.
+- Pair tools measure aligned, screened originals and edits. The release tool checks shoot
+  separation, visible difference, faults and the completed owner's vote for each landscape scene.
+
 ## [Unreleased] — Style round two: engine changes and loop tools (F61)
 
 - A local style may aim inside its range (`aim`, 0 to 0.5) where it used to stop at the nearest

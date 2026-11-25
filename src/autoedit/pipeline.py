@@ -13,6 +13,8 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from functools import wraps
+from inspect import signature
 
 import numpy as np
 
@@ -27,12 +29,93 @@ from .edit.mask import snap_to_edges
 from .edit import apply_image, banding, build_alpha, gates, ops, par, reference as ref_match, linear_alpha
 from .imageio import Image, is_raw, analysis_opts, downscale_long_edge, load_image, luma, raw_opts_from, resize_to
 from .notes import build_notes
+from . import quality
 from .segment import ResolvedRegions, make_segmenter, resolve
 from . import segment as segment_mod
 from .segment import MASK_CACHE_DIR, DiskMaskCache
 from .segment.base import Segmenter, parse_mark
 from .segment import refine as refine_masks
-from .styles import Style, combine_brief, load_styles, style_for
+from .segment.resolve import landscape_regions
+from .styles import AutoPhoto, Style, combine_brief, load_auto, load_styles, style_for
+
+def _retry_auto_faults(render):
+    """Re-fit unsafe photos, keeping the original decision and only publishing the accepted attempt."""
+    parameters = signature(render)
+
+    @wraps(render)
+    def checked(self, *args, **kwargs):
+        if not self._may_fit_landscape() or self.cfg.intensity <= 0:
+            return render(self, *args, **kwargs)
+        options = parameters.bind(self, *args, **kwargs).arguments
+        options.pop("self")
+        if not options.get("do_apply", True):
+            return render(self, **options)
+        options["_retry_inputs"] = {}
+        requested = options.get("auto_strength")
+        if requested is None:
+            requested = self.cfg.intensity
+
+        # Cheap structural events can wait until we know which attempt's masks, geometry
+        # and adjustment plan to show. Stage/step observers consume full-size intermediate
+        # pictures: reproduce the accepted attempt once instead of retaining those buffers.
+        observers = {k: options.pop(k) for k in ("on_stage", "on_step", "on_plan", "on_resolved", "on_geometry")
+                     if options.get(k) is not None}
+        show_stages = "on_stage" in observers or "on_step" in observers
+        events = []
+        def remember(name):
+            def record(*values):
+                if name == "on_plan":
+                    adjs, plan, before, settings = values
+                    # Policies later in the pipeline may still alter the settings dictionaries.
+                    values = (adjs, plan, before, {k: dict(v) for k, v in settings.items()})
+                events.append((name, values))
+            return record
+        if show_stages:
+            # Asking for per-op steps selects the traced apply path on every attempt.
+            options.update({name: (lambda *values: None) for name in ("on_stage", "on_step") if name in observers})
+        else:
+            options.update({name: remember(name) for name in observers})
+
+        rgb, result = render(self, **options)
+        audit = result.audit.get("auto", {})
+        faults = audit.get("fault_check", {}).get("failures", [])
+        attempts = []
+        if faults:
+            attempts.append({"strength": audit["strength"], "failures": faults})
+            factors = sorted(set(self.style_safety["remediation_factors"]) | {0.0}, reverse=True)
+            for factor in factors:
+                if factor >= 1 or not requested:
+                    continue
+                del rgb
+                events.clear()
+                options["auto_strength"] = requested * factor
+                rgb, result = render(self, **options)
+                audit = result.audit["auto"]
+                faults = audit["fault_check"]["failures"]
+                attempts.append({"strength": audit["strength"], "failures": faults})
+                if not faults:
+                    break
+        if show_stages:
+            del rgb
+            rgb, result = render(self, **{**options, **observers})
+            audit = result.audit["auto"]
+            if audit.get("fault_check", {}).get("failures", []) != faults:
+                raise ValueError("Auto safety verdict changed while replaying the accepted edit")
+        else:
+            for name, values in events:
+                observers[name](*values)
+        if attempts:
+            audit["safety_attempts"] = attempts
+            reason = ", ".join(attempts[0]["failures"])
+            result.notes.append(f"Auto strength reduced to {audit['strength']:.0%} after the photo failed: {reason}.")
+            if faults:
+                result.needs_review = True
+                reason = "Simple also needs review: " + ", ".join(faults)
+                result.review_reason = "; ".join(filter(None, (result.review_reason, reason)))
+                result.notes.append(reason)
+        return rgb, result
+    return checked
+
 
 def _config_digest(cfg: RunConfig) -> str:
     """A short hash of the config files a run reads, so a re-render can tell that they changed."""
@@ -100,6 +183,9 @@ class Pipeline:
     quality_gate: dict | None = None  # post-edit gate thresholds from rules.toml (None → defaults)
     style_target: dict = field(default_factory=dict)
     style_safety: dict = field(default_factory=dict)
+    auto_cfg: dict = field(default_factory=dict)
+    auto_targets: dict = field(default_factory=dict)
+    auto_population: dict = field(default_factory=dict)
     ref_feats: dict | None = None    # cached per-concept reference look (M5); computed once per run
     ref_proxy: Image | None = None   # cached decoded reference proxy — one decode per run, not per photo
     instr: instructions.Vocab | None = None  # instructions.toml vocabulary (F2)
@@ -169,6 +255,11 @@ class Pipeline:
             reveal_mod.check_hide(pipe_reveal, cfg.hide)
         target = style_target.load(cfg.targets_path, style.target) if style.target else {}
         style_target.check_limits(style.name, target, style.limits)
+        auto_cfg = load_auto(cfg.auto_path, style) if style.targets else {}
+        auto_targets = {key: style_target.load(cfg.targets_path, key) for key in set(style.targets.values())}
+        for name, key in style.targets.items():
+            limits = {**auto_cfg["limits"]["landscape"], **auto_cfg["limits"].get(name, {})}
+            style_target.check_limits(key, auto_targets[key], limits)
         return cls(
             cfg=cfg,
             rules=rules,
@@ -177,7 +268,8 @@ class Pipeline:
             meta=meta,
             styles=styles,
             style_target=target,
-            style_safety=load_quality_config() if style.target else {},
+            style_safety=load_quality_config(), auto_cfg=auto_cfg, auto_targets=auto_targets,
+            auto_population=style_target.population(cfg.targets_path, auto_targets) if auto_targets else {},
             compose_moves=moves,
             light_cfg=compose.load_light_config(cfg.compose_path) if any(m.at == "light" for m in moves) else {},
             segmenter=make_segmenter(cfg.backend, cfg.device),
@@ -251,11 +343,20 @@ class Pipeline:
             # A thing mark keeps the limits of skin and snow inside it, also where the run found none (F37).
             extra += [n for n, cm in self.meta.items() if cm.guard_global and n not in concepts and n not in extra]
         extra = self._with_geometry_concepts(extra, concepts)
+        # Sky weather is measured even while a scene awaits release. Keep the
+        # diagnostic cloud mask outside Simple's resolved edits.
+        if self.auto_cfg and "sky" in concepts and "cloud" not in concepts and "cloud" not in extra:
+            extra.append("cloud")
+        if self._may_fit_landscape() and "lights" not in concepts and "lights" not in extra:
+            extra.append("lights")
         words = concepts + extra
         words = list(dict.fromkeys([*words, *(w for name in concepts for w in meta_for(name, self.meta).words)]))
         if self.reveal is not None and getattr(self.segmenter, "open_vocabulary", False):
             words += [w for w in reveal_mod.words(self.reveal) if w not in words]
         return words
+
+    def _may_fit_landscape(self):
+        return self.auto_cfg and (self.cfg.auto_unreleased or any(s["released"] for s in self.auto_cfg["scene"].values()))
 
     def _segment(self, image, concepts, words):
         raw = self.segmenter.segment(image, words)
@@ -277,7 +378,7 @@ class Pipeline:
 
     def _with_light_concept(self, extra: list[str], concepts: list[str]) -> list[str]:
         """A move placed on the light (`at = "light"`) makes SAM look for the concept `sun` too."""
-        if self.light_cfg and "sun" not in extra and "sun" not in concepts:
+        if (self.light_cfg or self.auto_cfg) and "sun" not in extra and "sun" not in concepts:
             return extra + ["sun"]
         return extra
 
@@ -313,6 +414,7 @@ class Pipeline:
             return list(style.concepts)
         return self.presets.get("generic") or ["subject", "sky", "skin"]
 
+    @_retry_auto_faults
     def process_one(self, path: str, do_apply: bool = True,
                     image: Image | None = None, exposure_bias: float = 0.0,
                     batch_group: str = "",
@@ -323,10 +425,18 @@ class Pipeline:
                     on_plan=None,
                     proxy: Image | None = None,
                     on_step=None,
-                    on_geometry=None,
+                    on_geometry=None, *,
+                    auto_strength: float | None = None,
+                    auto_shoot: dict | None = None,
+                    _retry_inputs=None,
                     ) -> tuple[np.ndarray | None, Result]:
         t0 = time.perf_counter()
         cfg = self.cfg
+        requested_strength = cfg.intensity
+        if self.auto_cfg:
+            # Simple is the anchor. Its normal exposure, intent and composition stay at their
+            # usual strength; the Auto slider changes only the distance from that anchor.
+            cfg = cfg.model_copy(update={"intensity": RunConfig.model_fields["intensity"].default})
         stage_timings = {}
         stage_started = time.perf_counter()
 
@@ -338,21 +448,25 @@ class Pipeline:
         # apply stays fast; the batch/export path passes nothing → full resolution.
         # F51: a RAW file's analysis picture is its half-size development. With nothing to apply that is
         # the whole decode; otherwise the full development is decoded as well, and the edit applied to it.
-        fast = analysis_opts(cfg, path) if image is None and proxy is None else None
-        fast_img = load_image(path, decode=fast) if fast is not None else None
-        if fast_img is not None and not fast_img.decode_info.get("half_size"):
-            fast = None   # LibRaw returned the full size (a linear DNG): that already is the full development
-        img: Image = image if image is not None else (
-            fast_img if fast_img is not None and (fast is None or not do_apply) else load_image(path, decode=raw_opts_from(cfg)))
+        if _retry_inputs is not None and "images" in _retry_inputs:
+            img, proxy, given_proxy = _retry_inputs["images"]
+        else:
+            fast = analysis_opts(cfg, path) if image is None and proxy is None else None
+            fast_img = load_image(path, decode=fast) if fast is not None else None
+            if fast_img is not None and not fast_img.decode_info.get("half_size"):
+                fast = None   # LibRaw returned the full size (linear DNG)
+            img = image if image is not None else (
+                fast_img if fast_img is not None and (fast is None or not do_apply) else load_image(path, decode=raw_opts_from(cfg)))
+            given_proxy = proxy is not None
+            if fast is not None and do_apply:
+                proxy, given_proxy = downscale_long_edge(fast_img, cfg.analysis_long_edge), True
+            if proxy is None:
+                proxy = downscale_long_edge(img, cfg.analysis_long_edge)
+            if _retry_inputs is not None:
+                _retry_inputs["images"] = img, proxy, given_proxy
+        decoded = img
         if on_stage is not None:
             on_stage("candidate_decode", img.rgb)
-        # `proxy`: the analysis picture, when the caller made it from a larger original than `image`
-        # (a preview applies on a smaller copy).
-        given_proxy = proxy is not None
-        if fast is not None and do_apply:
-            proxy, given_proxy = downscale_long_edge(fast_img, cfg.analysis_long_edge), True
-        if proxy is None:
-            proxy = downscale_long_edge(img, cfg.analysis_long_edge)
         adjs = [a.model_copy() for a in (*self.adjustments, *(adjustments or []))]
         concepts = list(dict.fromkeys([*self.concepts_for(style), *cfg.selected_regions, *cfg.mask_refinements,
                                       *(a.target for a in adjs if a.resolved_only)]))
@@ -360,7 +474,12 @@ class Pipeline:
         stage_timings["decode_proxy"] = (time.perf_counter() - stage_started) * 1000
 
         stage_started = time.perf_counter()
-        raw = self._segment(proxy, concepts, words) if words else []
+        if _retry_inputs is not None and "raw" in _retry_inputs:
+            raw = _retry_inputs["raw"]
+        else:
+            raw = self._segment(proxy, concepts, words) if words else []
+            if _retry_inputs is not None:
+                _retry_inputs["raw"] = raw
         px = self._snap_px()
         if px:   # once, at the root: regions, instruction cells and marks all see the same masks. New arrays: cached masks are shared and never written into.
             snap = set(concepts) | set(instructions.extra_concepts(adjs + self._all_habits(), concepts))
@@ -369,23 +488,70 @@ class Pipeline:
         stage_timings["segment"] = (time.perf_counter() - stage_started) * 1000
         stage_started = time.perf_counter()
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
+        candidate_regions = None
+        if self._may_fit_landscape() and cfg.concepts is None and not cfg.preset and "sky" in concepts:
+            candidate_regions = landscape_regions(raw, concepts, self.meta, proxy.rgb.shape[:2])
         stage_timings["resolve"] = (time.perf_counter() - stage_started) * 1000
         # Optional read-only observer for diagnostics such as preview mask overlays. Reuse the
         # exact arbitration used by apply; arrays stay out of the serializable sidecar.
-        if on_resolved is not None:
-            on_resolved(resolved)
 
         resolved_coverages = {r.name: float(r.coverage) for r in resolved.regions}
         stage_started = time.perf_counter()
         gstats, region_stats = stats_mod.compute(proxy, resolved.union, resolved_coverages)
+        baseline_stats, baseline_regions = gstats, region_stats
+        candidate_stats = None
+        if candidate_regions is not None:
+            coverage = {r.name: float(r.coverage) for r in candidate_regions.regions}
+            candidate_stats = stats_mod.compute(proxy, candidate_regions.union, coverage)
         stage_timings["stats"] = (time.perf_counter() - stage_started) * 1000
         present = set(region_stats.keys())
         stage_started = time.perf_counter()
         # Night sky (F31): with the run setting on, a night frame takes the scene "night", whose rules
         # are the [opt_in.night_sky.night.*] blocks; any other frame keeps the usual scene.
         night_frame = cfg.night_sky and night.is_night(gstats, self.night_cfg)
-        sc = scene_mod.classify(gstats, present, region_stats, override="night" if night_frame else None)
+        sc = scene_mod.classify(gstats, present, region_stats, override=cfg.scene or ("night" if night_frame else None))
+        detected_light = None
+        auto_scene = ""
+        auto_active = False
+        auto_audit = {}
+        target, safety = self.style_target, self.style_safety
+        limits = dict(style.limits)
+        strength = min(1.0, style.pull * cfg.intensity)
+        chroma_max = self.chroma_max
+        if self.auto_cfg:
+            thresholds = self.auto_cfg["scenes"]
+            sky = resolved.union.get("sky")
+            cloud = next((r.mask for r in raw if r.name == "cloud" and
+                          r.score >= meta_for("cloud", self.meta).min_score), None)
+            sky_warmth, warm_share, rose_share = scene_mod.sky_colour(proxy.rgb, sky, thresholds)
+            detected_light = self._find_light(proxy.rgb, raw, resolved.union, asked=True)
+            detected = scene_mod.classify(gstats, present, region_stats, cfg.scene, thresholds=thresholds,
+                                          sky_warmth=sky_warmth, warm_share=warm_share, rose_share=rose_share,
+                                          capture_ev=(proxy.exif or {}).get("capture_ev100"), light=detected_light,
+                                          night=night.is_night(gstats, self.night_cfg),
+                                          clouds=scene_mod.cloud_cover(proxy.rgb, sky, thresholds, cloud))
+            choice = AutoPhoto.select(detected, style, self.auto_cfg, requested_strength, cfg.auto_unreleased,
+                                      auto_strength, None if cfg.scene else auto_shoot)
+            auto_scene, strength = choice.scene, choice.strength
+            auto_audit = choice.audit()
+            auto_active = bool(choice.target)
+            if auto_active:
+                target = self.auto_targets[choice.target]
+                auto_audit["photos"] = self.auto_population[choice.target]
+                if candidate_regions is not None:
+                    resolved, resolved_coverages = candidate_regions, coverage
+                    gstats, region_stats = candidate_stats
+                    present = set(region_stats)
+                    concepts = [c.name for c in resolved.detected]
+                limits = {**self.auto_cfg["limits"]["landscape"], **self.auto_cfg["limits"].get(auto_scene, {})}
+                options = self.auto_cfg["scene"][auto_scene]
+                safety = {**safety, **{k: options[k] for k in ("clip_budget", "shadow_clip_budget")}}
+                style = replace(style, target=choice.target, limits=limits, intent=("richer", "darker"),
+                                tested=choice.released)
+                chroma_max = max(chroma_max or 0.0, limits.get("chroma", 0.0))
         stage_timings["scene"] = (time.perf_counter() - stage_started) * 1000
+        if on_resolved is not None:
+            on_resolved(resolved)
         reveal_rep = None
         to_hide: list = []
         if self.reveal is not None:   # beside stats and scene: a reveal mask is never a region, so nothing is edited by it (F21)
@@ -401,7 +567,7 @@ class Pipeline:
                 else:
                     reveal_rep.hide_note = (f"hide asked for {', '.join(cfg.hide)}: nothing was hidden, "
                                             "the picture part of the check did not run (it needs SAM 3)")
-        region_rule = {name: meta_for(name, self.meta).region() for name in present}
+        region_rule = {name: meta_for(name, self.meta).region() for name in baseline_regions}
         adjs = [a.model_copy() for a in self.habits.get(sc.name, [])] + adjs   # the look first, typed changes add to it
 
         thumb = None
@@ -410,8 +576,8 @@ class Pipeline:
 
         ctx = DecisionContext(
             scene=sc.name,
-            gstats=gstats,
-            region_stats=region_stats,
+            gstats=baseline_stats,
+            region_stats=baseline_regions,
             region_rule=region_rule,
             intensity=cfg.intensity,
             rules=self.rules,
@@ -421,7 +587,16 @@ class Pipeline:
             thumb=thumb,
         )
         stage_started = time.perf_counter()
-        global_settings, region_settings = self.decider.decide(ctx)
+        if _retry_inputs is not None:
+            # Never ask a provider to decide again during a fault retry. The dictionaries are
+            # copied before the normal pipeline applies rules, fits and editorial adjustments.
+            if "decision" not in _retry_inputs:
+                _retry_inputs["decision"] = self.decider.decide(ctx)
+            baseline_global, baseline_regions = _retry_inputs["decision"]
+            global_settings = dict(baseline_global)
+            region_settings = {name: dict(settings) for name, settings in baseline_regions.items()}
+        else:
+            global_settings, region_settings = self.decider.decide(ctx)
         stage_timings["decide"] = (time.perf_counter() - stage_started) * 1000
 
         if not cfg.sharpen:  # strip the sharpen op when output sharpening is disabled
@@ -547,26 +722,31 @@ class Pipeline:
                 if rep:
                     region_ref_note = "reference match (region): " + ", ".join(r["name"] for r in rep)
 
-        style_notes = []
+        style_notes = ([f"Auto scene: {auto_scene} ({auto_audit['reason']}).",
+                        auto_audit["fallback"] or f"Auto goal: {style.target}, strength {strength:.0%}."]
+                       if auto_audit else [])
         style_cap = None    # the style's lift budget in EV, when one applies to this photo
-        if self.style_target:
-            strength = min(1.0, style.pull * cfg.intensity)
-            limits = dict(style.limits)
+        if target:
             if not is_raw(path) or img.source_bits <= 8 or not cfg.denoise:
                 limits["exposure"] = min(2.0, limits.get("exposure", 2.0))
             held_regions = [(build_alpha(r.mask, proxy.rgb.shape[:2], meta_for(r.name, self.meta).feather_px),
                              region_settings.get(r.name, {})) for r in resolved.regions
-                            if self.style_target.get(r.name, {}).get("hold")]
+                            if target.get(r.name, {}).get("hold")]
             before_ev = global_settings.get("exposure", 0.0)
+            base_global = global_settings.copy()
+            base_regions = {k: dict(v) for k, v in region_settings.items()}
             global_settings, moves = style_target.fit(proxy.rgb, global_settings,
-                self.style_target.get("global", {}), strength, limits, self.style_safety, held_regions=held_regions,
-                aim=style.aim)
+                target.get("global", {}), strength, limits, safety, held_regions=held_regions,
+                aim=style.aim, auto=auto_active)
             if moves:
                 style_notes.append(f"{style.label}, frame: " + ", ".join(moves))
-            elif self.style_target.get("global"):
+            elif target.get("global"):
                 style_notes.append(f"{style.label}: retained frame settings after checking target ranges and clipping")
             for region in resolved.regions:
-                ranges = self.style_target.get(region.name, {})
+                # Land goals apply only inside resolved terrestrial regions. Protected skin,
+                # snow, water and unassigned pixels keep their own treatment.
+                land = target.get("land", {}) if region.name in ("mountain", "grass", "trees", "foliage", "rock") else {}
+                ranges = target.get(region.name, target.get("sky", {}) if region.name == "cloud" else land)
                 current = region_settings.get(region.name, {})
                 if ranges.get("hold"):
                     held = style_target.held_settings(current, global_settings.get("exposure", 0.0),
@@ -577,26 +757,51 @@ class Pipeline:
                         style_notes.append(f"{style.label}: held {region.name} back from the frame lift by {reduction:.2f} EV")
                     continue
                 rails = meta_for(region.name, self.meta)
-                fitted, changes = style_target.fit(proxy.rgb, current, ranges, strength, limits, self.style_safety,
+                fitted, changes = style_target.fit(proxy.rgb, current, ranges, strength, limits, safety,
                                                    mask=region.mask, global_after=global_settings,
-                                                   caps=rails.max_ops, forbidden=rails.forbidden_ops, aim=style.aim)
+                                                   caps=rails.max_ops, forbidden=rails.forbidden_ops, aim=style.aim, auto=auto_active)
                 if changes:
                     region_settings[region.name] = fitted
                     style_notes.append(f"{style.label}, {region.name}: " + ", ".join(changes))
             # One budget for the whole lift (F59: a JPEG or 8-bit preview is capped at 2 EV).
             style_cap = limits.get("exposure")
-            held_names = [n for n, ranges in self.style_target.items() if ranges.get("hold")]
+            held_names = [n for n, ranges in target.items() if ranges.get("hold")]
             for name, (ev, allowed) in style_target.over_budget(
                     region_settings, global_settings.get("exposure", 0.0), before_ev, style_cap, held_names).items():
                 region_settings[name] = {**region_settings[name], "exposure": allowed}
                 style_notes.append(f"{style.label}: {name} lift reduced by {ev - allowed:.2f} EV, "
                                    f"frame and region together stay within {style_cap:g} EV")
 
+        if auto_active:
+            style_target.bound_fit(global_settings, region_settings, base_global, base_regions, limits)
+            fitted = {"global": global_settings, **region_settings}
+            auto_audit["fit"] = {name: {k: value for k, value in settings.items() if k in limits}
+                                 for name, settings in fitted.items()}
+            if auto_shoot and auto_shoot.get("median"):
+                amount = self.auto_cfg["auto"]["shoot_pull"]
+                # During a safety retry the shoot must back off with the individual fit.
+                if auto_strength is not None and requested_strength > 0:
+                    amount *= auto_strength / requested_strength
+                global_settings, region_settings = consistency.pull_fit(
+                    global_settings, region_settings, auto_shoot["median"], amount, limits)
+                style_target.bound_fit(global_settings, region_settings, base_global, base_regions, limits)
+                style_notes.append(f"Auto shoot: pulled fitted settings {amount:.0%} toward the group's median.")
+            def changed(before, after):
+                return {key: value for key, value in after.items() if value != before.get(key, 0.0)}
+            changes = {"global": changed(base_global, global_settings)}
+            changes.update({name: changed(base_regions.get(name, {}), vals) for name, vals in region_settings.items()})
+            auto_audit["controls"] = {name: vals for name, vals in changes.items() if vals}
+            for name, vals in auto_audit["controls"].items():
+                style_notes.append(f"Auto fitted {name}: " + ", ".join(f"{k} {v:+.3g}" for k, v in vals.items()))
+
         # Region policies: hard rails enforced on whatever the rules/LLM proposed (drop forbidden
         # ops, clamp magnitudes) so a region can't be over-driven into an unnatural colour.
         apply_regions, owners, adj_plan = resolved.regions, None, None
-        light = self._find_light(proxy.rgb, raw, resolved.union,
-                                 asked=any(a.target == instructions.LIGHT_TARGET for a in adjs))
+        wants_light = any(a.target == instructions.LIGHT_TARGET for a in adjs)
+        if self.auto_cfg:
+            light = detected_light if auto_active or self.light_cfg or wants_light else None
+        else:
+            light = self._find_light(proxy.rgb, raw, resolved.union, asked=wants_light)
         if adjs:
             adj_plan = instructions.plan(adjs, self.vocab(), raw, concepts, resolved,
                                          region_settings, global_settings, self.meta, light=light)
@@ -694,6 +899,9 @@ class Pipeline:
             policy_notes.append(f"batch normalize: white balance {wb_bias[0]:+.1f} temp, "
                                 f"{wb_bias[1]:+.1f} tint toward group {batch_group or '?'}")
 
+        if auto_active and (exposure_bias or wb_bias[0] or wb_bias[1]):
+            # The group's final normalization consumes the same combined budget as the fit.
+            style_target.bound_fit(global_settings, region_settings, base_global, base_regions, limits)
         notes_extra: list[str] = list(policy_notes) + pick_notes + style_notes
         if cfg.night_sky:
             notes_extra.append(
@@ -801,14 +1009,28 @@ class Pipeline:
             notes_extra.append(
                 f"sun glow: light at {light.cx:.2f}, {light.cy:.2f} from the {light.source}" if light
                 else "sun glow: no light source found, none added")
+        moves_for_photo = self.compose_moves
+        if auto_active and cfg.compose:
+            owned_masks = {r.name: r.mask for r in resolved.regions}
+            shaped = compose.goal_moves(proxy.rgb, owned_masks, target, auto_scene,
+                                        self.auto_cfg.get("moves", {}), strength, limits, global_settings, region_settings)
+            # The ordinary sky gradient should follow the ridge too when Auto deepens the sky.
+            moves_for_photo = [replace(m, within=("sky", "cloud")) if m.name == "sky_grad" and not m.within
+                               else m for m in self.compose_moves]
+            moves_for_photo.extend(m for m in shaped if cfg.vignette or m.name != "auto_frame_vignette")
         line = waterline = None
-        if cfg.backend != "stub" and any(move.at == "horizon" for move in self.compose_moves):
+        if cfg.backend != "stub" and any(move.at == "horizon" for move in moves_for_photo):
             line = geometry.horizon_position(resolved.union, geometry.config(self.rules))
-        if cfg.backend != "stub" and any(move.at == "waterline" for move in self.compose_moves):
+        if cfg.backend != "stub" and any(move.at == "waterline" for move in moves_for_photo):
             waterline = geometry.horizon_position(resolved.union, geometry.config(self.rules), only="waterline")
-        shape_masks = {r.name: r.mask for r in resolved.regions} if any(m.within for m in self.compose_moves) else None
-        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity, light, line, shape_masks,
+        shape_masks = {r.name: r.mask for r in resolved.regions} if any(m.within for m in moves_for_photo) else None
+        comp_settings = compose.settings_for(moves_for_photo, resolved.union, cfg.intensity, light, line, shape_masks,
                                              waterline)
+        if auto_active:
+            for move in moves_for_photo:
+                if move.goal_scaled and move.name in comp_settings:
+                    settings = ", ".join(f"{k} {v:+.3g}" for k, v in comp_settings[move.name].items())
+                    notes_extra.append(f"Auto shaped light ({move.name}): {settings}.")
         comp_settings.update(reference_comp_settings)
         if adj_plan is not None:    # a place the user named is a layer of its own, like a vignette (F18)
             comp_settings.update({instructions.LAYER + name: delta for name, delta in adj_plan.layers.items()})
@@ -853,7 +1075,7 @@ class Pipeline:
                     cm = meta_for(r.name, self.meta)
                     alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                     regions_apply.append((alpha, s))
-            comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light, line,
+            comp = compose.plan(moves_for_photo, resolved.union, full_hw, cfg.intensity, light, line,
                                 {name: cm.feather_px for name, cm in self.meta.items()}, guide, shape_masks, waterline)
             guard_mask, guard_pct, held = self._build_guard(
                 resolved.union, full_hw, global_settings, guide,
@@ -899,10 +1121,10 @@ class Pipeline:
             # denoised source (see apply_image). It is the same for every render of this photo
             # (the banding re-render, the gate after a reference match), so it is made once.
             gate_src = None
-            if self.chroma_max is not None and global_settings.get("denoise", 0.0):
+            if chroma_max is not None and global_settings.get("denoise", 0.0):
                 gate_src = ops.denoise(img.rgb.astype(np.float32), global_settings["denoise"],
                                        global_settings.get("denoise_stars", 0.0))
-            if self.chroma_max is not None and pick is not None:
+            if chroma_max is not None and pick is not None:
                 # The gate compares with the source AS THE PICK SHOWS IT: against the plain source it would take
                 # the correction back on every colour the cast had made grey (up to 15 of 255).
                 gate_src = ops.light(gate_src if gate_src is not None else img.rgb.astype(np.float32),
@@ -911,7 +1133,7 @@ class Pipeline:
                 img.rgb, regions_apply, global_settings,
                 compositional=[(a, s) for _n, a, s in comp],
                 guard_mask=guard_mask, guard_ops=self.guard_ops,
-                chroma_max_increase=self.chroma_max,
+                chroma_max_increase=chroma_max,
                 chroma_neutral_allowance=chroma_neutral_allowance,
                 protect_chroma=chroma_mask,
                 palette=palette_arg, report=gate_report,
@@ -964,7 +1186,7 @@ class Pipeline:
                         img.rgb, regions2, gs2,
                         compositional=[(a, s) for _n, a, s in comp],
                         guard_mask=guard_mask, guard_ops=self.guard_ops,
-                        chroma_max_increase=self.chroma_max,
+                        chroma_max_increase=chroma_max,
                         chroma_neutral_allowance=chroma_neutral_allowance,
                         protect_chroma=chroma_mask,
                         palette=palette_arg, report={},
@@ -1044,10 +1266,10 @@ class Pipeline:
                 # match can re-introduce oversaturation/cast that the first gate already cleared.
                 if self.highlight_hold is not None:   # the match can grey the held whites again
                     out_rgb, _ = gates.highlight_hold(img.rgb.astype(np.float32), out_rgb, *self.highlight_hold)
-                if self.chroma_max is not None:
+                if chroma_max is not None:
                     out_rgb, rlim = gates.chroma_guard(
                         gate_src if gate_src is not None else img.rgb.astype(np.float32), out_rgb,
-                        max_increase=self.chroma_max, protect=chroma_mask)
+                        max_increase=chroma_max, protect=chroma_mask)
                     out_rgb = np.clip(out_rgb, 0.0, 1.0)
                     if rlim > 0.005:
                         notes_extra.append(
@@ -1139,6 +1361,7 @@ class Pipeline:
         post_stats = None
         post_regions: dict = {}
         quality_score, needs_review, review_reason, warnings = 1.0, False, "", []
+        ridge = None
         if do_apply and out_rgb is not None:
             post_proxy = downscale_long_edge(Image(rgb=out_rgb), cfg.analysis_long_edge)
             if given_proxy:
@@ -1154,9 +1377,37 @@ class Pipeline:
                 "preserve_terms", _DEFAULT_PRESERVE_TERMS)
             preserve = (bool(cfg.prompt) and any(t in cfg.prompt.lower() for t in preserve_terms)) or \
                 self.looks.get(look, looks_mod.Look()).preserve_exposure
+            thresholds = self.quality_gate
+            if auto_active:
+                thresholds = {**(thresholds or {}), **{k: safety[k] for k in ("clip_budget", "shadow_clip_budget")}}
             quality_score, needs_review, review_reason, warnings = gates.assess(
-                gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=self.quality_gate,
+                gstats, post_stats, gate_report.get("chroma_limited", 0.0), thr=thresholds,
                 preserve_exposure=preserve or "darker" in style.intent, richer="richer" in style.intent)
+            check_auto = bool(auto_active or (self.auto_cfg and auto_strength == 0))
+            if same_shape and (check_auto or {"sky", "cloud"} & resolved.union.keys()):
+                # Compare the same decode and resize on both sides. The RAW analysis proxy may
+                # differ slightly from the full development along an otherwise untouched ridge.
+                reference = resize_to(downscale_long_edge(decoded, cfg.analysis_long_edge),
+                                      *post_proxy.rgb.shape[:2]) if given_proxy else proxy
+                if check_auto:
+                    masks = dict(resolved.union)
+                    for name in ("sun", "lights"):
+                        trusted = [r.mask for r in raw if r.name == name and r.mask.any()
+                                   and r.score >= meta_for(name, self.meta).min_score]
+                        if trusted:
+                            masks[name] = np.logical_or.reduce(trusted)
+                    check = quality.assess_pixels(reference.rgb, post_proxy.rgb, masks,
+                        {**safety, "preserve_exposure": auto_active, "richer": auto_active})
+                    ridge = check["metrics"].get("sky_edge_halo")
+                    auto_audit["fault_check"] = {"failures": check["failures"], "sky_edge_halo": ridge}
+                else:
+                    ridge = quality.sky_edge_halo(luma(reference.rgb), luma(post_proxy.rgb),
+                                                  resolved.union, self.style_safety)
+                if ridge is not None and ridge > self.style_safety["ridge_delta"]:
+                    warning = f"light halo along sky edge ({ridge:.3f})"
+                    warnings = [*warnings, warning]
+                    review_reason = "; ".join(filter(None, (review_reason, warning)))
+                    needs_review = True
         subject_colour = None
         if cfg.colour_report and post_stats is not None and same_shape:     # F34: the colour report reads this
             subject_colour = consistency.subject_colour(
@@ -1248,8 +1499,8 @@ class Pipeline:
         region_meta = {r.name: (float(r.coverage), float(r.score)) for r in apply_regions}
         result = emit.build_result(
             image_name=os.path.basename(path),
-            scene=sc.name,
-            confidence=sc.confidence,
+            scene=auto_scene or sc.finer or sc.name,
+            confidence=auto_audit.get("confidence", sc.confidence),
             style=cfg.style,
             brief=brief,
             detected=resolved.detected + (adj_plan.detected if adj_plan else []),
@@ -1280,9 +1531,18 @@ class Pipeline:
         result.audit.update(decode_info=getattr(img, "decode_info", {}),
                             source_format=os.path.splitext(path)[1].lower().lstrip("."),
                             decode_injected=image is not None)
+        if ridge is not None:
+            result.audit["sky_edge_halo"] = ridge
         if style.target:
             result.audit["local_style"] = {"name": style.name, "target": style.target, "pull": style.pull,
                                            "intent": list(style.intent), "tested": style.tested}
+        if auto_audit:
+            if auto_shoot:
+                auto_audit["shoot"] = auto_shoot
+            result.audit["auto"] = auto_audit
+            if auto_active:
+                result.audit["local_style"].update(clip_budget=safety["clip_budget"],
+                                                  shadow_clip_budget=safety["shadow_clip_budget"])
         if neutral_audit is not None:
             result.audit["neutral"] = neutral_audit
         if backdrop_report is not None:
@@ -1292,7 +1552,7 @@ class Pipeline:
         result.exposure_bias = float(exposure_bias)
         result.wb_bias = [float(wb_bias[0]), float(wb_bias[1])]
         result.audit.update(
-            run_config=cfg.model_dump(mode="json", exclude=_NOT_STORED),
+            run_config=self.cfg.model_dump(mode="json", exclude=_NOT_STORED),
             run_inputs={k: (os.path.basename(v) if v else None)
                         for k, v in (("reference", cfg.reference),
                                      ("recipe_model", cfg.recipe_model if cfg.decider == "learned" else None))},

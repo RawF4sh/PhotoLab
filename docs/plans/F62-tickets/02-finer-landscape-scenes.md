@@ -30,3 +30,7 @@ Who: Builder (Sonnet, medium)
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Implemented fine scene labels with confidence, recorded reasons, a manual override, a lower-strength landscape fallback and per-shoot voting across time-of-day transitions. Simple keeps its original three-way decision. Ticket 03 reopened this ticket after 97 of 120 labels matched. Daylight and twilight never crossed; bright overcast scenes remain the main error.
+
+A cloud mask is now measured alongside sky colour in bright overcast photos. The same evidence is used for a released scene and its fallback. In the fixed sample this recovered three additional mist/overcast scenes and called four additional daylight scenes overcast. The retained version recognises 10 of the 20 overcast scenes.

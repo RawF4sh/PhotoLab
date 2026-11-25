@@ -1,3 +1,4 @@
+# Historical F60 fixture: blue_hour is the frozen corpus partition, independent of current editor styles.
 """A style has to clear complete, frozen control, tone, and expert reference panels."""
 
 import importlib.util

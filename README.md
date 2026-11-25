@@ -129,20 +129,20 @@ Install the local app with `pip install -e '.[app]'`. Run `autoedit ui` for a br
 at `127.0.0.1:8765`, or `autoedit app` for a desktop window.
 
 - **Automatic edit** shows the originals in a photo or folder. Choose **Run AI Edit & export**
-  to apply Standard locally and save the finished photos with their decision sidecars.
+  to apply Simple locally and save the finished photos with their decision sidecars.
 - **Photo editor** opens the original first. Choose **AI Edit → Run AI Edit** for the same local
   development, then drag the **Before / After** divider. Use **Isolate** for one object and
   **Learn** to inspect changes. **Ask Gemini** is a separate, optional command with preview-sharing
   consent. Bookmarked Guided folders, recipes and existing edits remain accessible.
-- **Adjust → Fine-tune in LightCraft** opens curves, color mixing, crop, masks and retouching
-  for that photo. The ordinary photo picker develops Canon CR2 and other supported RAWs into
+- **Adjust** opens the LightCraft curves, mixer, crop, masks and retouching controls directly
+  beside the photo. AI Edit, Isolate and Learn stay in the same workspace. The ordinary photo picker develops Canon CR2 and other supported RAWs into
   16-bit working pictures. The original stays linked. AutoEdit saves manual settings beside
-  the project and uses full-size pixels for export. The first Fine-tune launch offers a verified
+  the project and uses full-size pixels for export. The first use of Adjust offers a verified
   download of LightCraft 0.21.1 (about 75 MB). [App guide](APP_GUIDE.md)
 
-Standard is the default. Blue hour, Sunset glow, Moody landscape and Natural portrait are
-local style candidates. A specialized style enters the normal menu after its blind photo
-evaluation passes. [Local style plan](docs/plans/F59-local-styles.md)
+**Simple** is the default local edit. In **AI Edit**, choose **Auto** to see which scene the editor
+detects. You can correct the scene and undo the correction. Auto uses Simple until that scene has
+passed its blind evaluation. [Auto release plan](docs/plans/F62-auto.md)
 
 Run without installing:
 ```bash

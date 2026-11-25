@@ -10,7 +10,7 @@ segmentation regions.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -36,6 +36,7 @@ class Move:
     within: tuple[str, ...] = ()  # fires inside the joined masks of these regions (any one present)
     height: float = 0.12  # band width as a share of image height
     min_radius: float = 0.0  # glow: floor of the radius (fraction of the long side)
+    goal_scaled: bool = False  # the goal distance and user strength are already in ops
 
 
 # Sections of compose.toml that are settings for the light finder, not moves.
@@ -54,6 +55,10 @@ def load_compose(path: str, run=None, overrides=None) -> list[Move]:
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
     data.update(overrides or {})
+    return _parse_moves(data, run)
+
+
+def _parse_moves(data, run=None):
     moves: list[Move] = []
     for name, body in data.items():
         if name in _NOT_MOVES:
@@ -101,6 +106,71 @@ def load_compose(path: str, run=None, overrides=None) -> list[Move]:
     return moves
 
 
+def goal_moves(source, region_masks, target, scene, move_config, strength, limits, frame=None, regions=None):
+    """Turn the remaining distance to each measured range into a signed, bounded move."""
+    from .edit.ops import OP_BOUNDS
+    from .edit import style_target
+
+    if strength <= 0:
+        return []
+    # Use the same feature measurements as the global and regional fitter. Compute
+    # each region once, including the cloud part of a sky represented by two masks.
+    features = {}
+    sky_parts = [region_masks[n] for n in ("sky", "cloud") if n in region_masks]
+    sky = np.logical_or.reduce(sky_parts) if sky_parts else None
+    result = []
+    frame, regions = frame or {}, regions or {}
+    # A frame-wide layer overlaps every region and the unassigned pixels ("").
+    # Reserve the full possible contribution, since a gradient alpha can reach 1.
+    domains = set(regions) | set(region_masks) | {""}
+    spent = {}
+    for move in _parse_moves(move_config):
+        recipe = move_config[move.name]
+        if recipe.get("scene", scene) != scene:
+            continue
+        region, feature = recipe["region"], recipe["feature"]
+        bounds = target.get(region, {}).get(feature)
+        if bounds is None:
+            continue
+        mask = sky if region == "sky" else region_masks.get(region)
+        if region != "global" and (mask is None or not mask.any()):
+            continue
+        if region not in features:
+            features[region] = style_target.features(source, mask, target[region].keys())
+        value = features[region][feature]
+        distance = value - bounds[1] if recipe["when_above"] else bounds[0] - value
+        full_distance = recipe["full_distance"]
+        if not np.isfinite(full_distance) or full_distance <= 0:
+            raise ValueError(f"Auto move {move.name} needs a positive full_distance")
+        factor = min(1.0, strength * distance / full_distance)
+        if factor <= 0:
+            continue
+        settings = {}
+        for key, amount in move.ops.items():
+            if key not in OP_BOUNDS or not np.isfinite(amount):
+                raise ValueError(f"Auto move {move.name} has an invalid {key} setting")
+            # A measured goal may support fewer controls than the provisional goal.
+            # A missing scene limit never grants the move that control.
+            cap = limits.get(key, 0.0)
+            lo, hi = OP_BOUNDS[key]
+            bounded = float(np.clip(amount * factor, max(lo, -cap), min(hi, cap)))
+            direction = 1 if bounded > 0 else -1
+            affected = set(move.within) & domains if move.within else domains
+            if not bounded or not affected:
+                continue
+            headroom = min(cap - direction * (frame.get(key, 0) + regions.get(name, {}).get(key, 0))
+                           - spent.get((name, key, direction), 0) for name in affected)
+            magnitude = min(abs(bounded), max(0.0, headroom))
+            if magnitude:
+                settings[key] = direction * magnitude
+                for name in affected:
+                    slot = (name, key, direction)
+                    spent[slot] = spent.get(slot, 0.0) + magnitude
+        if settings:
+            result.append(replace(move, when="always", goal_scaled=True, ops=settings))
+    return result
+
+
 def _bbox_norm(mask: np.ndarray) -> tuple[float, float, float, float]:
     """Return (cx, cy, half_w, half_h) in 0..1 from a bool mask, centroid-centered."""
     ys, xs = np.where(mask)
@@ -139,11 +209,15 @@ def _triggers(m: Move, union: dict[str, np.ndarray], light: Light | None = None,
     return mask is not None and (m.min_coverage <= 0.0 or float(mask.mean()) >= m.min_coverage)
 
 
+def _scaled_ops(move, intensity):
+    return dict(move.ops) if move.goal_scaled else {k: v * float(intensity) for k, v in move.ops.items()}
+
+
 def settings_for(moves: list[Move], union: dict[str, np.ndarray], intensity: float,
                  light: Light | None = None, horizon=None, region_masks=None, waterline=None) -> dict[str, Settings]:
     """Just the (name -> settings) the moves would apply — cheap, no alpha (for sidecars/dry-run)."""
     return {
-        m.name: {k: v * float(intensity) for k, v in m.ops.items()}
+        m.name: _scaled_ops(m, intensity)
         for m in moves
         if _triggers(m, union, light, horizon, region_masks, waterline)
     }
@@ -185,6 +259,6 @@ def plan(
             src = union if region_masks is None else region_masks
             wide = max((feather_px or {}).get(n, 0) for n in m.within if n in src and src[n].any())
             alpha *= build_alpha(_joined(m, union, region_masks), full_hw, wide, guide=guide)
-        settings = {k: v * float(intensity) for k, v in m.ops.items()}
+        settings = _scaled_ops(m, intensity)
         out.append((m.name, alpha, settings))
     return out

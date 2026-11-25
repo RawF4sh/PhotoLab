@@ -41,6 +41,8 @@ class Item:
     object_checks: dict[str, bool] = field(default_factory=dict)
     ai_status: str = ""
     ai_reason: str = ""
+    auto_shoot: dict | None = None
+    reopen: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -178,7 +180,7 @@ def _check_photo_options(value, srcs, opts, configs_dir, profile, table=None):
     if not isinstance(value, dict) or len(value) > MAX_PHOTO_EDITS:
         raise ValueError("photo_options must be an object with at most 10000 photos")
     known = {os.path.abspath(s) for s in srcs}
-    allowed = {"style", "look", "intensity", "neutral", "reference", "reference_strength", "photo_settings", "photo_base", "hide", "hide_method",
+    allowed = {"style", "scene", "look", "intensity", "neutral", "reference", "reference_strength", "photo_settings", "photo_base", "hide", "hide_method",
                "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps"}
     checked, change_notes = {}, {}
     for path, req in value.items():
@@ -335,13 +337,6 @@ def _run(job: Job, configs_dir, profile=None, ai=None) -> None:
             from .service import editor_sliders
             table, _ = editor_sliders()
 
-        # Shoot consistency (default on): same plan as the CLI batch path.
-        consistent = bool(job.opts.get("consistent", True))
-        biases = {}
-        if consistent:
-            with INFERENCE_LOCK:         # bursts mode runs the model on the frames it compares
-                biases = consistency.plan([it.src for it in job.items], cfg, pipe)
-
         by_options: dict = {}            # distinct configurations share the resident segmenter
 
         def own(key):
@@ -356,6 +351,30 @@ def _run(job: Job, configs_dir, profile=None, ai=None) -> None:
                 p.use_mask_cache(job.out_dir)
                 by_options[sig] = (p, c)
             return by_options[sig]
+
+        biases = {}
+        if job.opts.get("consistent", True):
+            # Photos with a saved Auto style or scene need the plan for those effective settings.
+            # All other photos keep the existing folder-wide Simple consistency calculation.
+            all_paths = [item.src for item in job.items]
+            by_config = {}
+            for path in all_paths:
+                request = (job.photo_options or {}).get(os.path.abspath(path), {})
+                if request.get("style", cfg.style) == "auto":
+                    try:
+                        engine, chosen = own(os.path.abspath(path))
+                    except (OSError, ValueError):
+                        # Report the configuration problem against this photo in the render loop.
+                        continue
+                    by_config.setdefault(chosen.model_dump_json(), (engine, chosen, []))[2].append(path)
+            with INFERENCE_LOCK:
+                auto_paths = {path for _, _, group in by_config.values() for path in group}
+                if len(auto_paths) < len(all_paths):
+                    normal = pipe if cfg.style != "auto" else build_pipeline(
+                        make_cfg({**job.opts, "style": "standard"}, configs_dir, profile))
+                    biases = consistency.plan(all_paths, normal.cfg, normal)
+                for engine, chosen, group in by_config.values():
+                    biases.update(consistency.plan(group, chosen, engine))
 
         durs: list[float] = []
         taken: set[str] = set()          # de-dupe same-stem outputs across the job's source list
@@ -382,15 +401,20 @@ def _run(job: Job, configs_dir, profile=None, ai=None) -> None:
                 pipe_i, cfg_i = own(key)
                 opts = {**job.opts, **(job.photo_options or {}).get(key, {}), **(job.photo_hide or {}).get(key, {})}
                 base = photo_base.check(opts.get("photo_base"))
+                group_args = photo_base.render_args(base, cfg_i, bias)
                 photo_adjs, _ = photo_adjustments(pipe_i, (job.photo_edits or {}).get(key))
                 photo_adjs = photo_base.adjustments(base) + photo_adjs
                 photo_adjs += mark_adjustments(pipe_i, (job.photo_marks or {}).get(key, []))[0]
                 ai_status, ai_reason, ai_notes = "", "", []
                 if ai:
                     # Match the exact current photo, including its own overrides and shoot bias.
+                    preview_base = {**base, "exposure_bias": group_args["exposure_bias"],
+                                    "wb_bias": list(group_args["wb_bias"])}
+                    if group_args.get("auto_shoot"):
+                        preview_base["auto_shoot"] = group_args["auto_shoot"]
                     preview = {**opts, "photo_edit": (job.photo_edits or {}).get(key),
                                "photo_marks": (job.photo_marks or {}).get(key, []),
-                               "photo_base": {"exposure_bias": bias.exposure, "wb_bias": [bias.temp, bias.tint], **base}}
+                               "photo_base": preview_base}
                     opts, ai_status, ai_reason, ai_notes = ai.refine(item.src, preview, table, configs_dir, profile)
                     if job.cancelled:
                         item.status, job.status = "waiting", "cancelled"
@@ -399,8 +423,7 @@ def _run(job: Job, configs_dir, profile=None, ai=None) -> None:
                 region_offsets = opts.get("region_settings") or {}
                 photo_adjs += region_adjustments(region_offsets)
                 with INFERENCE_LOCK:
-                    out_rgb, result = pipe_i.process_one(item.src, do_apply=True, exposure_bias=base.get("exposure_bias", bias.exposure),
-                                                       batch_group=bias.group, wb_bias=tuple(base.get("wb_bias", (bias.temp, bias.tint))),
+                    out_rgb, result = pipe_i.process_one(item.src, do_apply=True, **group_args,
                                                        adjustments=photo_adjs or None)
                 if ai:
                     if ai_status == "applied" and (opts.get("photo_settings") or {}) == (preview.get("photo_settings") or {}):
@@ -420,6 +443,9 @@ def _run(job: Job, configs_dir, profile=None, ai=None) -> None:
                     sources=sources)
                 change_notes = [*(job.photo_change_notes or {}).get(key, job.default_change_notes), *ai_notes]
                 result.notes.extend(change_notes)
+                item.auto_shoot = photo_base.shoot_receipt(result)
+                if item.auto_shoot:
+                    item.reopen = {k: opts[k] for k in ("look", "reference", "reference_strength") if opts.get(k) is not None}
                 emit.write_outputs(out_rgb, result, image_out, sidecar, cfg_i, item.src)
                 item.out, item.scene = image_out, result.scene
                 item.ai_status, item.ai_reason = ai_status, ai_reason
@@ -480,6 +506,7 @@ def snapshot(job: Job) -> dict:
         "items": [{"name": i.name, "status": i.status, "src": i.src, "out": i.out,
                    "scene": i.scene, "warn": i.warn, "quality_warn": i.quality_warn,
                    "object_checks": i.object_checks, "error": i.error,
+                   **({"auto_shoot": i.auto_shoot, "reopen": i.reopen} if i.auto_shoot else {}),
                    **({"ai_status": i.ai_status} if i.ai_status else {}),
                    **({"ai_reason": i.ai_reason} if i.ai_reason else {})} for i in job.items],
     }

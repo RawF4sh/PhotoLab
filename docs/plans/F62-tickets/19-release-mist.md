@@ -1,6 +1,6 @@
 # 19. Release round: mist
 
-Status: ready-for-agent
+Status: needs-info
 Blocked by: 03, 15
 Spec: [F62](../F62-auto.md), milestone M4
 Who: Session, then the owner
@@ -20,3 +20,9 @@ out"); if the panel names its absence as the reason Auto loses, record it under 
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Mist remains unreleased. No held-out release round or owner vote has been conducted on measured goals. The private round tool verifies independent shoots, encoded render pairs, per-photo fault reviews and the complete vote. The provisional development sheet does not count toward this round.
+
+| Held-out photos | Median distance | Photos at distance ≥3 | Fault panel | Votes for Auto / total | Released |
+|---:|---:|---:|---|---:|---|
+| 0 | — | — | Pending | 0 / 0 | No |

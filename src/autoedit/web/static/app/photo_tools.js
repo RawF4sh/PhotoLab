@@ -358,7 +358,7 @@ export function createPhotoTools({ path, frame, displayImage, request, alive, on
       el('div', { class: 'editor-history' }, apply, dismiss));
   }
   function assistPanel() {
-    const style = el('select', {id:'gemini-brief'}, el('option', {value:'standard'}, 'Standard'));
+    const style = el('select', {id:'gemini-brief'}, el('option', {value:'standard'}, 'Simple'));
     const key = el('input', {id:'gemini-session-key', type:'password', autocomplete:'off',
       value:assistantOptions().api_key || '', on:{input:e => setAssistantKey(e.target.value)}});
     let catalogLoaded = false;

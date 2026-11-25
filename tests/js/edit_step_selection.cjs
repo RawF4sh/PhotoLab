@@ -106,5 +106,16 @@ async function launch() {
   reopenedReview.applyBatchItem(reopenedReview.file, batch, old, 'b');
   assert.equal(reopenedReview.file.status, 'finished'); assert.equal(reopenedReview.file.error, '');
   assert.equal(reopenedReview.file.recipeReview, ''); assert(reopenedReview.file.dirty);
+  const receipt = {scene:'mist', median:{global:{exposure:.4}}, intensity:1, scene_override:'mist'};
+  const path = reopenedReview.file.path;
+  reopenedReview.project.updatePhoto(path, {style:'auto',scene:'mist',base:{wb:[1,2]}});
+  reopenedReview.applyBatchItem(reopenedReview.file, {...batch,auto_shoot:receipt}, {signature:'x'}, 'x');
+  assert.equal(reopenedReview.project.getPhoto(path).base.auto_shoot.scene, 'mist');
+  assert.equal(reopenedReview.file.dirty, false);
+  reopenedReview.project.updatePhoto(path, {scene:undefined});
+  assert(!reopenedReview.project.getPhoto(path).base.auto_shoot);
+  assert.deepEqual([...reopenedReview.project.getPhoto(path).base.wb], [1,2]);
+  reopenedReview.project.undoPhoto(path);
+  assert.equal(reopenedReview.project.getPhoto(path).base.auto_shoot.scene, 'mist');
   console.log('Named suggestions, selective acceptance, limits, persistence and undo passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

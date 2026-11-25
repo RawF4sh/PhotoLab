@@ -9,7 +9,7 @@ label map so no pixel is edited by more than one region.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -80,3 +80,31 @@ def resolve(
         )
 
     return ResolvedRegions(regions=regions, union=union, detected=detected, label_map=label_map, shape=shape)
+
+
+def landscape_regions(raw, concepts, meta, shape):
+    """Join trusted clouds to sky and assign remaining land its own disjoint edit region.
+
+    The terrain target is measured outside sky and water. Existing specific regions and
+    their protections keep first claim; a mountain receives its own goal where available.
+    """
+    regions = list(raw)
+    clouds = next((r for r in raw if r.name == "cloud" and r.score >= meta_for("cloud", meta).min_score), None)
+    if clouds is not None and "sky" in concepts and "cloud" not in concepts:
+        sky = next((r for r in raw if r.name == "sky" and r.score >= meta_for("sky", meta).min_score), None)
+        mask = clouds.mask if sky is None else sky.mask | clouds.mask
+        regions = [r for r in raw if r.name != "sky"]
+        regions.append(replace(sky or clouds, name="sky", mask=mask, coverage=float(mask.mean())))
+    resolved = resolve(regions, concepts, meta, shape)
+    if "sky" not in resolved.union or "land" in resolved.union:
+        return resolved
+    land = resolved.label_map == 0
+    coverage = float(land.mean())
+    if coverage >= meta_for("land", meta).min_coverage and land.any():
+        # Unclaimed pixels only. No generated region can take a skin, subject, snow or water pixel.
+        terrain = RegionMask("land", land, score=1.0, coverage=coverage)
+        resolved.regions.append(terrain)
+        resolved.union["land"] = land
+        resolved.label_map[land] = int(resolved.label_map.max()) + 1
+        resolved.detected.append(DetectedConcept(name="land", present=True, score=1.0, coverage=coverage))
+    return resolved

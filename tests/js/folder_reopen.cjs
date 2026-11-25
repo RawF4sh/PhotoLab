@@ -71,7 +71,7 @@ async function fixture() {
         return answer(200, [{ pixel: 'first.jpg' }, { pixel: 'second.jpg' }]);
       }
       if (route.pathname.endsWith('/pick')) { if (picked) approved = true; return answer(200, { path: picked }); }
-      if (route.pathname.endsWith('/local-styles')) return answer(200, { styles: [{ id: 'standard', label: 'Standard' }] });
+      if (route.pathname.endsWith('/local-styles')) return answer(200, { styles: [{ id: 'standard', label: 'Simple' }] });
       if (route.pathname.endsWith('/project')) {
         assert(approved, 'reading/writing a saved project must wait for the picker');
         if (opts.method === 'POST') return answer(200, { saved: true });

@@ -133,6 +133,7 @@ def rerender(target: str, sets=(), edit: str | None = None, reset: bool = False,
     out_rgb, result = pipe.process_one(source, do_apply=apply, adjustments=kept + new,
                                        exposure_bias=old.exposure_bias if exposure_bias is None else float(exposure_bias),
                                        batch_group=old.batch_group if batch_group is None else batch_group,
+                                       auto_shoot=(old.audit.get("auto") or {}).get("shoot"),
                                        wb_bias=tuple(old.wb_bias), on_plan=_planned if explain else None)
     if not apply:           # a plan only: nothing is written
         return {"result": result, "problems": problems}

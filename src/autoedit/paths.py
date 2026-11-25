@@ -43,10 +43,10 @@ def config_path(name: str, packaged_fallback: bool = False) -> str:
     return path
 
 
-_CONFIG_FILES = ("rules", "looks", "concepts", "styles", "compose", "intents", "palettes", "instructions", "exports", "reveal", "genres", "targets")
+_CONFIG_FILES = ("rules", "looks", "concepts", "styles", "compose", "intents", "palettes", "instructions", "exports", "reveal", "genres", "targets", "auto")
 
 
-_OPTIONAL = ("instructions", "exports", "reveal", "genres", "targets")
+_OPTIONAL = ("instructions", "exports", "reveal", "genres", "targets", "auto")
 
 
 def _app_dir(create: bool) -> str | None:

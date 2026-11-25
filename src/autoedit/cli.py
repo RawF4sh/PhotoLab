@@ -41,7 +41,7 @@ def _flatten(d: dict) -> dict:
     for src, dst in _dec_map.items():
         if src in dec:
             kw[dst] = dec[src]
-    for k in ("style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
+    for k in ("style", "scene", "auto_unreleased", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
               "decider", "emit", "consistency", "levels", "denoise", "night_sky", "highlight_hold", "highlight_detail", "light_shaping", "snap_edges", "reveal_check", "hide", "hide_method",
               "translator", "grain", "grain_size", "lut", "lut_amount", "history", "genre", "straighten", "neutral", "wb", "backdrop",
               "consistency_wb", "colour_report"):
@@ -120,6 +120,8 @@ def load_run_config(args) -> RunConfig:
     # CLI overrides (only when explicitly provided)
     overrides = {
         "style": getattr(args, "style", None),
+        "scene": getattr(args, "scene", None),
+        "auto_unreleased": getattr(args, "auto_unreleased", None),
         "prompt": getattr(args, "prompt", None),
         "edit": getattr(args, "edit", None),
         "preset": getattr(args, "preset", None),
@@ -193,6 +195,8 @@ def load_run_config(args) -> RunConfig:
     for k in ("denoise", "palette", "palette_strength"):
         if k in kw and k not in chosen and k not in explicit and overrides.get(k) is None:
             del kw[k]
+    if kw.get("style") == "auto" and "intensity" not in (chosen | explicit.keys()) and overrides.get("intensity") is None:
+        kw.pop("intensity", None)  # Simple's packaged intensity is not an Auto slider choice
     return RunConfig(**kw)
 
 
@@ -209,6 +213,10 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("input_dir")
     p.add_argument("out_dir", nargs="?", default="out")
     p.add_argument("--style", help="style profile from styles.toml (look + concepts + brief)")
+    p.add_argument("--scene", choices=["people", "landscape", "other", "sunset", "twilight", "daylight", "mist"],
+                   help="correct the scene detected for this run")
+    p.add_argument("--auto-unreleased", action="store_true", default=None,
+                   help="preview unreleased landscape goals when running --style auto")
     p.add_argument("--genre", help="genre pack from genres.toml (`autoedit genres list`): the things to find, "
                    "a look and run settings for one kind of photo; other flags win over it")
     p.add_argument("--prompt", help='free-text intent, layered on the style brief (e.g. "moody, warm, lift shadows")')
@@ -227,7 +235,7 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--reference", help="reference photo whose look (palette/tone) to match onto the batch")
     p.add_argument("--reference-strength", dest="reference_strength", type=float,
                    help="reference-match strength 0..1 (default 0.7)")
-    p.add_argument("--intensity", type=float)
+    p.add_argument("--intensity", type=float, help="edit strength (Auto: 0 = Simple, 1 = goal, maximum 1.5)")
     p.add_argument("--decider", choices=["rules", "llm", "learned"])
     p.add_argument("--recipe-model", dest="recipe_model",
                    help="trained recipe predictor JSON (used with --decider learned)")

@@ -1,0 +1,132 @@
+# Landscape goals are provisional until each scene passes its blind release round.
+[auto]
+fallback_strength = 0.6
+shoot_pull = 0.5
+
+[scenes]
+min_confidence = 0.70
+min_sky = 0.035
+warm_sky = 0.06
+warm_min_share = 0.12
+warm_pixel = 0.12
+warm_light_y = 0.30
+cool_sky = -0.045
+dusk_sky_max = 0.52
+dusk_median_max = 0.29
+dusk_highlight_max = 0.48
+day_capture_min_ev = 10.5
+dusk_capture_max_ev = 8.0
+# EV100 describes capture light, independently of how brightly a JPEG/RAW is rendered.
+night_capture_max_ev = 4.0
+metered_dusk_median_max = 0.50
+sunlit_capture_min_ev = 13.7
+sunlit_sky_clip_min = 0.04
+overcast_sky_min = 0.60
+overcast_sat_max = 0.11
+# On sufficient sky area, distinguish large neutral cloud decks from patchy blue sky.
+cloud_min_sky = 0.08
+cloud_blue_red = 0.17
+cloud_blue_green = 0.045
+cloud_blue_max = 0.035
+cloud_neutral_min = 0.80
+cloud_clip_max = 0.45
+clear_sky_blue_min = 0.08
+clear_sky_blue_dominant = 0.55
+cloud_blue_variation = 0.10
+# A high-confidence semantic cloud mask may explain a uniformly blue-cast or
+# partially clipped ceiling. Fail back to pixel evidence when there are blue holes.
+deck_min_coverage = 0.90
+deck_column_coverage = 0.80
+deck_width_min = 0.90
+deck_blue_quantile = 0.98
+deck_max_blue_cast = 0.24
+deck_max_blue_tail = 0.14
+deck_clip_max = 0.85
+rose_red = 0.055
+rose_blue = 0.02
+rose_share = 0.10
+mist_veil = 0.12
+mist_sky_sat_max = 0.16
+mist_contrast_max = 0.48
+day_sky_min = 0.54
+day_median_min = 0.29
+day_contrast_min = 0.37
+strong_confidence = 0.92
+likely_confidence = 0.78
+weak_confidence = 0.48
+
+[limits.landscape]
+exposure = 2.0
+shadows_ev = 1.5
+highlights = 75
+whites = 80
+curve = 60
+contrast = 45
+vibrance = 45
+saturation = 40
+temp = 45
+tint = 35
+clarity = 30
+grade_highlights_temp = 180
+grade_shadows_temp = 140
+hsl_green_sat = 50
+hsl_green_lum = 45
+hsl_blue_sat = 50
+chroma = 0.6
+
+[scene.landscape]
+released = false
+clip_budget = 0.01
+shadow_clip_budget = 0.02
+[scene.twilight]
+released = false
+clip_budget = 0.008
+shadow_clip_budget = 0.018
+[scene.sunset]
+released = false
+clip_budget = 0.012
+shadow_clip_budget = 0.02
+[scene.daylight]
+released = false
+clip_budget = 0.008
+shadow_clip_budget = 0.012
+[scene.mist]
+released = false
+clip_budget = 0.006
+shadow_clip_budget = 0.012
+
+# A move reaches its signed op limits at full_distance from the nearest edge of
+# the measured range. The photo's strength and scene control limits apply too.
+[moves.auto_sky_grad]
+region = "sky"
+feature = "p50"
+when_above = true
+full_distance = 0.24
+shape = "linear"
+from = "top"
+coverage = 0.75
+within = ["sky", "cloud"]
+ops = { exposure = -0.90 }
+
+[moves.auto_frame_vignette]
+region = "global"
+feature = "p50"
+when_above = true
+full_distance = 0.12
+shape = "radial"
+target = "outside"
+feather = 0.55
+radius_scale = 1.1
+ops = { exposure = -0.35 }
+
+[moves.auto_horizon_glow]
+scene = "sunset"
+region = "sky"
+feature = "highlight_warmth"
+when_above = false
+full_distance = 0.20
+shape = "glow"
+at = "light"
+radius_scale = 4.0
+min_radius = 0.08
+ops = { temp = 28.0, grade_highlights_temp = 60.0 }

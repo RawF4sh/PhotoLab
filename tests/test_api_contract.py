@@ -66,12 +66,21 @@ def test_only_the_versioned_api_exists():
     assert not [p for p in client.app.openapi()["paths"] if p.startswith("/api/") and not p.startswith("/api/v1/")]
 
 
+def test_saved_gemini_briefs_still_resolve_after_local_styles_retire():
+    from autoedit.web import ai_styles
+
+    # Legacy request fixture. Existing clients can still send either former brief identifier.
+    for previous, current in (("blue_hour", "mixed_light"), ("moody_landscape", "landscape_depth")):
+        assert ai_styles.prompt_for(previous) == ai_styles.prompt_for(current)
+        assert previous not in {style["id"] for style in ai_styles.catalog()}
+
+
 def test_ai_edit_catalog_has_a_prompt_free_standard_and_distinct_briefs():
     from autoedit.decide.gemini import MAX_PROMPT
     from autoedit.web import ai_styles
 
     styles = ai_styles.catalog()
-    assert styles[0] == {"id": "standard", "label": "Standard"}
+    assert styles[0] == {"id": "standard", "label": "Simple"}
     prompts = {ai_styles.prompt_for(style["id"]) for style in styles}
     assert len(prompts) == len(styles) >= 2
     for style in styles:

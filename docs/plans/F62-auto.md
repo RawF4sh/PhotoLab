@@ -1,6 +1,6 @@
 # F62. Auto: edit each photo toward a goal for its scene
 
-Status: spec (2026-11-25), size L in four milestones, nothing built. The words follow
+Status: Auto runs on provisional goals. See the validation and release results below. The words follow
 [GLOSSARY.md](../../GLOSSARY.md); the two decisions behind it are
 [ADR 0001](../adr/0001-landscapes-may-be-made-darker.md) and
 [ADR 0002](../adr/0002-goals-from-measured-before-and-after-pairs.md).
@@ -180,6 +180,51 @@ A scene that misses the visible-difference bar does not go to the vote: its limi
 revisited first. The owner decides, after the four landscape scenes, whether Auto becomes what the
 app gives when nothing is chosen.
 
+## Validation and release results
+
+The full regression suite passed all 1,424 tests. The publication check passed for the repository and the files prepared for this change.
+
+### Scene recognition
+
+The 120 distinct visually labelled originals yielded 97 correct decisions (80.8%) with no
+daylight/twilight swaps. Daylight scored 58/64, twilight 18/23, sunset 11/13 and mist/overcast
+10/20. The target is 102/120. Bright overcast was the main source of errors. Tickets 02 and
+03 remain open.
+
+### Development comparison
+
+The 12-photo sheet used six mountain RAW originals and six FiveK originals for research
+evaluation. Each photo was rendered from the same original using Simple and provisional Auto.
+The final classifier named 10 of the 12 correctly. The comparison used three originals per
+scene and was excluded from the held-out rounds.
+
+| Check | Result |
+|---|---|
+| Median visible difference from Simple | 3.88 against the target of 5 |
+| Photos at distance ≥3 | 7 of 12 (58%) against the target of 80% |
+| Sky boundary | All 12 passed. The strongest introduced rim scored 0.0569 against a limit of 0.12 |
+| Review | No newly introduced pixel faults. One twilight frame returned to Simple at zero strength and gained a review mark for its existing highlight texture loss |
+| Compatibility with the previous revision | All 110 full-resolution Canon RAW exports and both smoke-test exports matched byte for byte. The separate export from each of four saved RAW edit records also matched |
+| Default RAW tone | 110 of 110 completed, zero dark photos made darker and zero new highlight or shadow clipping failures |
+
+The sunset retained a pink band above the mountains, and woodland shadows opened. In the
+overcast park, the sky became duller. Two twilight edits were near Simple. The next goal
+calibration should examine those cases before a held-out round.
+
+### Scene release rounds
+
+| Scene | Checked reference pairs | Held-out photos evaluated | Median distance | Photos at distance ≥3 | Fault panel | Owner votes | Released |
+|---|---:|---:|---:|---:|---|---:|---|
+| Twilight | 0 | 0 | — | — | Pending | 0 | No |
+| Sunset | 0 | 0 | — | — | Pending | 0 | No |
+| Daylight | 0 | 0 | — | — | Pending | 0 | No |
+| Mist or overcast | 0 | 0 | — | — | Pending | 0 | No |
+
+Free on-device screening kept 30 of the 96 licensed Play Raw pairs (192 files, 3.03 GB). It kept 20 of 51 daylight, 2 of 17 twilight, 2 of 18 mist or overcast and 6 of 10 sunset examples. Daylight has a blind 40-pair sample ready for an independent reviewer. No scene has the 45 kept originals needed for a measured goal. Ticket 12 records the collection and calibration results. All four scenes use
+Simple in the public app. The development previews use the explicit unreleased option. Dates,
+source hashes and shoot groups for development photos are recorded privately so the photos and
+their shoots can be excluded from eventual release rounds.
+
 ## Tasks
 
 Tiers as in [AGENT_ROUTING.md](../AGENT_ROUTING.md). M1 and M3 can be built while the owner's M2
@@ -217,12 +262,47 @@ For every task:
 
 | Item | Proposed |
 |---|---|
-| O1 Forums to collect pairs from | The owner names them; each source approved before any download |
-| O2 Download budget | 300 pairs in all for the four landscape scenes |
-| O3 Screening model | Gemini, already set up for web assist. It sees only the downloaded public pairs, never the owner's photos |
+| O1 Forums to collect pairs from | PIXLS.US Play Raw, approved 2026-11-25 |
+| O2 Download budget | Up to 300 pairs in all for the four landscape scenes |
+| O3 Screening model | Free on-device vision screening of verified public pairs, approved 2026-11-25. See ticket 12 for results |
 | O4 The visible-difference bar | 5 median, 3 on 80 %, revisited after the first sheet |
 | O5 Blind votes | One gallery per landscape scene, 10 or more photos each |
 | O6 Auto as the default | After the four landscape scenes, the owner decides |
+
+## Running the private pair and release rounds
+
+The source and budget are recorded in ticket 11. Keep the approval, candidate list, downloaded photographs,
+screening decisions and checker sheets under `curated-web/auto-pairs/`. Each candidate needs a
+before and an after (or a split image), its scene and documented source. The fetcher enforces
+the approved source list and budgets. For Play Raw, review the photographer’s grant for each file.
+The category asks for freely licensed originals and the forum defaults to a noncommercial licence.
+A public reply alone does not establish matching reuse rights for its edit.
+[Play Raw guidance](https://discuss.pixls.us/t/about-the-play-raw-category/11956) · [Forum terms](https://discuss.pixls.us/tos)
+
+Run from the repository root. The private selection records each source post, chosen
+attachments, expected scene and licence wording. The owner selected the installed local model for this round. It records the model and its weights with each judgment, and keeps both thumbnails on this computer.
+
+```sh
+.venv/bin/python -I scripts/playraw_pairs.py plan --selection curated-web/auto-pairs/selection.json
+.venv/bin/python -I scripts/auto_pairs.py fetch --approval curated-web/auto-pairs/approval.json --plan curated-web/auto-pairs/plan.json
+.venv/bin/python -I scripts/auto_pairs.py screen-local
+.venv/bin/python -I scripts/auto_pairs.py audit --scene daylight
+```
+
+The independent reviewer opens `curated-web/auto-pairs/audit-local/daylight/review.html`, completes all 40 comparisons and saves the exported `checker.json` in the same folder. The first command below scores the review. Run the second once the scene has passed its independent check and has at least 45 kept originals.
+
+```sh
+.venv/bin/python -I scripts/auto_pairs.py audit --scene daylight --decisions curated-web/auto-pairs/audit-local/daylight/checker.json
+.venv/bin/python -I scripts/style_target.py --pairs curated-web/auto-pairs --scene daylight --out src/autoedit/configs/targets.toml --limits-out src/autoedit/configs/auto.toml --styles-out src/autoedit/configs/styles.toml
+```
+
+Repeat for eligible scenes. Use `--scene landscape` to pool checked landscape pairs. Preserve
+the separate development and held-out shoots in the comparison manifest. After rendering both
+arms, `scripts/auto_release.py measure` reports mean per-pixel OKLab distance ×100 for each
+photo and the median across the scene. The `gallery` command checks measured-goal provenance,
+automatic results and the checker's per-render verdicts before publishing a blind gallery.
+Pass the gallery manifest and the owner's downloaded results to `vote`. A tie counts in the
+denominator. The tool reports the result. The scene release flag is a separate recorded decision.
 
 ## Left out, and what brings each back
 

@@ -31,7 +31,7 @@ from . import edit_steps, photo_base
 
 # UI-settable RunConfig fields (everything else stays at defaults / config-file values).
 _ALLOWED = (
-    "style", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
+    "style", "scene", "prompt", "edit", "preset", "look", "intensity", "palette", "palette_strength",
     "reference", "reference_strength",
     "decider", "recipe_model", "allow_cloud", "api_key", "backend", "device", "out_format", "quality", "metadata",
     "emit", "consistency", "compose", "vignette", "sharpen", "levels", "denoise", "night_sky", "raw_mode", "raw_recover", "lens_ca", "lens_vignette", "fast_analysis",
@@ -571,8 +571,7 @@ def _edit(image_path: str, opts: dict, configs_dir: str | None, profile: str | N
         _preview_request(opts)
         out_rgb, result = pipe.process_one(
             image_path, do_apply=True, image=work, proxy=proxy, adjustments=photo_adjs or None,
-            exposure_bias=base.get("exposure_bias", 0.0),
-            wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))),
+            **photo_base.render_args(base, cfg),
             on_resolved=_resolved, on_plan=_planned,
             on_stage=steps.stage if steps else None, on_step=steps.step if steps else None,
             on_geometry=(lambda g: geo_box.__setitem__(slice(None), [g])) if geo_box is not None else None)
@@ -885,8 +884,7 @@ def make_variants(image_path: str, opts: dict, configs_dir: str | None = None,
         photo_adjs += region_adjustments(opts.get("region_settings"))
         with INFERENCE_LOCK:
             out_rgb, result = pipe.process_one(image_path, do_apply=True, image=work, proxy=proxy,
-                                               adjustments=photo_adjs or None, exposure_bias=base.get("exposure_bias", 0.0),
-                                               wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))))
+                                               adjustments=photo_adjs or None, **photo_base.render_args(base, cfg))
         item = {"name": spec["name"], "opts": variants.spec_opts(spec), "scene": result.scene,
                 **variants.score_variant(result, out_rgb, model)}
         if with_images:
@@ -923,8 +921,7 @@ def run_one(image_path: str, out_dir: str, opts: dict, configs_dir: str | None =
     photo_adjs += region_adjustments(opts.get("region_settings"))
     with INFERENCE_LOCK:
         out_rgb, result = pipe.process_one(image_path, do_apply=True, adjustments=photo_adjs or None,
-                                           exposure_bias=base.get("exposure_bias", 0.0),
-                                           wb_bias=tuple(base.get("wb_bias", (0.0, 0.0))))
+                                           **photo_base.render_args(base, cfg))
     result.notes.extend(edit_steps.notes(entries, limited))
     os.makedirs(out_dir, exist_ok=True)
     image_out, sidecar = emit.single_output_paths(out_dir, image_path, cfg.out_format, name=cfg.out_name,

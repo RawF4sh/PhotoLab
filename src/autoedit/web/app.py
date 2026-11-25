@@ -13,7 +13,7 @@ from . import aesthetic_jobs, curate_jobs, jobs, service, tools_jobs
 
 # F49: the minimal interface loads its own module files, never inline code.
 APP_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-           "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+           "connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
 def create_app(configs_dir: str | None = None, local_only: bool = True, profile: str | None = None):
@@ -96,7 +96,9 @@ def create_app(configs_dir: str | None = None, local_only: bool = True, profile:
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index():
         return HTMLResponse(_page(os.path.join("app", "index.html")),
-                            headers={"Content-Security-Policy": APP_CSP, "X-Frame-Options": "DENY"})
+                            headers={"Content-Security-Policy": APP_CSP, "X-Frame-Options": "DENY",
+                                     "Cross-Origin-Opener-Policy": "same-origin",
+                                     "Cross-Origin-Embedder-Policy": "require-corp"})
 
     @app.get("/app/{name}", include_in_schema=False)
     def app_file(name: str):

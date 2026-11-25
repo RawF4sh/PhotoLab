@@ -1,4 +1,12 @@
-"""Measure local style target ranges from a frozen set of finished photographs."""
+"""Measure local style target ranges from eligible finished photographs or screened forum pairs.
+
+To derive a target from an independently audited scene:
+  python -I scripts/style_target.py --pairs curated-web/auto-pairs --scene twilight \
+    --out out-webloop/goals/targets.toml --limits-out out-webloop/goals/auto.toml
+
+Use --scene landscape to pool the eligible landscape pairs. The two generated files hold
+numeric tables for the active configs; generating evidence never switches on a release.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +16,15 @@ import json
 from pathlib import Path
 import re
 import sys
+import tomllib
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import web_corpus
+import auto_pairs
+import pair_goals
 from autoedit.contract import RunConfig
 from autoedit.edit.reference import reference_features
 from autoedit.edit.style_target import CONTROLS
@@ -129,26 +140,109 @@ def extract(files, pipe, fields):
     return ranges_from_samples(samples, fields)
 
 
+def update_table(path, keys, data):
+    """Replace only the named table; keep surrounding config and comments as written."""
+    text = path.read_text() if path.exists() else ""
+    tomllib.loads(text)
+    nested = data
+    for key in reversed(keys):
+        nested = {key: nested}
+    header = re.compile(r"^\[([a-zA-Z0-9_.-]+)\]\s*(?:#.*)?$")
+    keep = []
+    remove = False
+    for line in text.splitlines(keepends=True):
+        found = header.fullmatch(line.rstrip())
+        if found:
+            parts = found.group(1).split(".")
+            remove = parts[:len(keys)] == keys
+        if not remove:
+            keep.append(line)
+    result = "".join(keep).rstrip() + "\n\n" + dump_toml(nested)
+    # Parse first so an incompatible hand-written table remains untouched.
+    tomllib.loads(result)
+    return result.lstrip("\n")
+
+
+def measure_goals(args):
+    auto_pairs.isolated()
+    if args.pairs.resolve() != auto_pairs.FOLDER.resolve():
+        raise ValueError("--pairs must be the private curated-web/auto-pairs acquisition folder")
+    outputs = [args.out.resolve(), args.limits_out.resolve()]
+    if args.styles_out:
+        outputs.append(args.styles_out.resolve())
+    if len(set(outputs)) != len(outputs) or any(
+            p.suffix.lower() != ".toml" or args.pairs.resolve() in p.parents for p in outputs):
+        raise ValueError("choose separate TOML output paths outside the source corpus")
+    pairs = auto_pairs.eligible(args.pairs, args.scene)
+    provider = auto_pairs.approved_screen(args.pairs)
+    screens = auto_pairs.read(auto_pairs.screen_file(args.pairs, provider))
+    cfg = RunConfig(backend=args.backend, concepts=list(pair_goals.CONCEPTS), intensity=0)
+    pipe = Pipeline.build(cfg)
+    samples = []
+    for index, (key, sides) in enumerate(pairs.items(), 1):
+        before, after, shift = pair_goals.align(*auto_pairs.views(args.pairs, sides))
+        sample = pair_goals.measure_pair(before, after, pair_goals.masks_for(before, pipe))
+        auto_pairs.save(args.pairs / "measurements" / f"{key}.json", {
+            "screen": screens[key]["version"], "screen_provider": provider, "answer": screens[key]["answer"],
+            "pair_signature": auto_pairs.signature(sides),
+            "alignment": list(shift), **sample})
+        samples.append(sample)
+        print(f"Measured {index}/{len(pairs)}", flush=True)
+    target, limits = pair_goals.summarize(samples, args.scene)
+    target_name = "auto_" + args.scene
+    # Keep non-slider safety limits (such as chroma) specified in the existing configuration.
+    prior = tomllib.loads(outputs[1].read_text()) if outputs[1].exists() else {}
+    merged = {**prior.get("limits", {}).get(args.scene, {}), **limits}
+    contents = [update_table(outputs[0], [target_name], target),
+                update_table(outputs[1], ["limits", args.scene], merged)]
+    if args.styles_out:
+        prior = tomllib.loads(outputs[2].read_text()) if outputs[2].exists() else {}
+        names = dict.fromkeys(("landscape", *pair_goals.SCENES), "auto_landscape")
+        names.update(prior.get("auto", {}).get("targets", {}))
+        names[args.scene] = target_name
+        contents.append(update_table(outputs[2], ["auto", "targets"], names))
+    # Publish the routing table last; it will only ever name a target already on disk.
+    for path, content in zip(outputs, contents):
+        web_corpus.write_atomic(path, content.encode())
+    print(f"{args.scene}: {len(samples)} distinct pairs, {target['meta']['selected']} in the bolder third")
+
+
 def main():
-    import tomllib
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--list", type=Path, required=True)
-    group = parser.add_mutually_exclusive_group(required=True)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--list", type=Path, help="finished photos, one eligible path per line")
+    inputs.add_argument("--pairs", type=Path, help="private forum-pair folder built by auto_pairs.py")
+    group = parser.add_mutually_exclusive_group()
     group.add_argument("--manifest", type=Path, help="F60 corpus manifest, with split.json beside the list")
     group.add_argument("--owner-files", action="store_true", help="the listed photos are the owner's finished photos")
-    parser.add_argument("--style", choices=[*KINDS, "natural_portrait"], required=True)
-    parser.add_argument("--backend", choices=["sam3","stub"], default="sam3")
+    parser.add_argument("--style", help="the active finished-photo style, e.g. natural_portrait")
+    parser.add_argument("--scene", choices=["landscape", *pair_goals.SCENES])
+    parser.add_argument("--styles-out", type=Path, help="also point this scene at the measured goal in styles TOML")
+    parser.add_argument("--limits-out", type=Path, help="separate output TOML for the measured per-control limits")
+    parser.add_argument("--backend", choices=["sam3", "stub"], default="sam3")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.pairs:
+        if not args.scene or not args.limits_out or args.style or args.owner_files or args.manifest:
+            parser.error("--pairs takes --scene, --limits-out and --out")
+        measure_goals(args)
+        return
+    if not args.style or not (args.owner_files or args.manifest) or args.scene or args.limits_out or args.styles_out:
+        parser.error("--list needs --style and either --manifest or --owner-files")
     cfg = RunConfig(backend=args.backend)
-    style = load_styles(cfg.styles_path)[args.style]
+    styles = load_styles(cfg.styles_path)
+    if args.style not in styles:
+        parser.error("this finished-photo style has been retired; use --pairs for Auto")
+    style = styles[args.style]
+    if not style.target:
+        parser.error("this style does not take a target made from finished photos")
+    if args.manifest and args.style not in KINDS:
+        parser.error("this style has no eligible F60 partition; use owner-supplied finished photos")
     with open(cfg.targets_path, "rb") as f:
         table = tomllib.load(f)[style.target]
     fields = {k: v for k, v in table.items() if k != "meta"}
     for region, keys in table.get("meta", {}).get("measure", {}).items():
         fields.setdefault(region, dict.fromkeys(keys))
-    if args.style == "natural_portrait" and args.manifest:
-        parser.error("Natural portrait needs owner-supplied finished portraits")
     paths = finished_files(args.list, args.manifest, args.style) if args.manifest else owner_files(args.list)
     if args.out.suffix.lower() != ".toml" or args.out.resolve() in paths:
         parser.error("--out must name a separate TOML target table")
@@ -162,4 +256,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, OSError) as exc:
+        raise SystemExit(str(exc)) from None

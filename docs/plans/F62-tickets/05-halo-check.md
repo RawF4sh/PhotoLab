@@ -1,6 +1,6 @@
 # 05. An automatic halo check at the sky edge
 
-Status: ready-for-agent
+Status: done
 Blocked by: 01
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
@@ -29,3 +29,5 @@ Dolomites fit).
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — The brighter-than-both-sides test measured 0.2592 on the regional prototype and 0.2110 on its shaped-light render, above the 0.12 threshold. The global-only fit was 0.0746, the example editor’s result 0.0724, and unchanged pixels 0.0000. Neither default smoke photo acquired a fault. A synthetic ridge exercises detection and strength reduction.

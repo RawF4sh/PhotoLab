@@ -1,3 +1,4 @@
+# Historical F60 fixture: blue_hour identifies archived source, split and holdout records.
 """Offline provenance, byte-bound, resume and split tests. All image bytes are synthetic."""
 
 import hashlib
@@ -97,6 +98,22 @@ def test_fetch_finishes_atomically_and_can_resume_after_interrupt(tmp_path):
     assert len(corpus.verify(tmp_path)) == 1
     with pytest.raises(ValueError):
         corpus.fetch(tmp_path, rows, ["commons"], {"commons": net})
+
+
+def test_removed_file_does_not_block_other_downloads_and_throttling_stops(tmp_path):
+    rows = [image(i) for i in range(3)]
+    net, failures = Transport(), []
+    gone, valid, limited = (r["url"] for r in rows)
+    net.data = {
+        gone: corpus.error.HTTPError(gone, 410, "Gone", {}, None),
+        valid: JPEG + b"x",
+        limited: corpus.error.HTTPError(limited, 429, "Too many requests", {}, None),
+    }
+    with pytest.raises(corpus.error.HTTPError):
+        corpus.fetch(tmp_path, rows, ["commons"], {"commons": net}, failures=failures)
+    assert failures == [(rows[0]["id"], "source file unavailable (HTTP 410)")]
+    assert [r["id"] for r in corpus.manifest(tmp_path)] == [rows[1]["id"]]
+    assert not list(tmp_path.rglob("*.part"))
 
 
 def test_total_and_source_budget_apply_to_repeated_fetches(tmp_path):

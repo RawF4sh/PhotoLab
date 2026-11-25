@@ -1,11 +1,12 @@
 // Photo screen: preview, hold to compare, marks, chips, Masks, How it was done, Try it yourself, Save this photo.
 // Ported from the Lab (lab.html, F38); request bodies are the Lab's. Text is never parsed as markup.
 import { el, api, state, store, nice, thumbUrl, loadPhotoPath, go, toast, getSchema, setBar, backButton, gearButton, openSheet } from './main.js';
+import { createManualPanel } from './editor_manual.js';
 import { createEditorSidebar } from './editor_sidebar.js';
 import { runOptions } from './settings.js';
 import { runTool } from './tools.js';
 import { exportsDir } from './share.js';
-import { getPhoto, updatePhoto, undoPhoto, redoPhoto, canUndo, canRedo, subscribeProject, persistProject } from './project.js';
+import { getPhoto, updatePhoto, undoPhoto, redoPhoto, canUndo, canRedo, subscribeProject, persistProject, recordManualSave } from './project.js';
 import { createPhotoTools } from './photo_tools.js';
 import { openPhotoPresets } from './presets.js';
 
@@ -67,12 +68,18 @@ export function loadEntries(path) {   // only what the server would accept: 20 m
 function saveEntries() { updatePhoto(v.file.path, { entries: v.list }); }
 
 /* ---- the request ----------------------------------------------------------------------------- */
+function hasLocalStage(photo) {
+  return !!photo.ai_enabled || ['look','intensity','base','edit_steps','sliders','region_settings','mask_refinements','entries','photo_geometry','hide'].some(k =>
+    photo[k] !== undefined && (typeof photo[k] !== 'object' || Object.keys(photo[k] || {}).length));
+}
 function options() {   // the Folder's merge, then this photo's own look and strength
   const o = runOptions(), p = getPhoto(v.file.path);
   if (p.style) o.style = p.style;
+  if (o.style === 'auto' && p.scene) o.scene = p.scene;
   if (v.primary) Object.assign(o, {local_only: true, decider: 'rules', allow_cloud: false, translator: 'off'});
   if (p.look !== undefined) { if (p.look) o.look = p.look; else delete o.look; }
   if (p.intensity !== undefined) o.intensity = p.intensity;
+  if (o.style === 'auto' && o.intensity !== undefined) o.intensity = Math.min(o.intensity, 1.5);
   if (p.reference !== undefined) { if (p.reference) o.reference = p.reference; else delete o.reference; }
   if (p.reference_strength !== undefined) o.reference_strength = p.reference_strength;
   if (p.local_only) { o.local_only = true; o.decider = 'rules'; o.allow_cloud = false; }
@@ -135,7 +142,7 @@ async function once(kind) {   // cancel obsolete client work; never paint a resp
     if (v === me) setBusy(-1);
   }
 }
-function refresh() { if (!v?.editing) return; once(v.view); if (v.masks && v.view !== 'how') once('how'); }
+function refresh() { if (!v?.editing || (v.primary && v.u.sidebar.active() === 'adjust')) return; once(v.view); if (v.masks && v.view !== 'how') once('how'); }
 function schedulePreview() { clearTimeout(v.previewTimer); v.previewTimer = setTimeout(refresh, 160); }
 const curAnswer = () => v[{ edit: 'answer', how: 'how', try: 'tried' }[v.view]];
 
@@ -166,6 +173,10 @@ function metaLine(j) {
     r.needs_review ? el('span', { class: 'warn' }, ' · worth a look: ' + (r.review_reason || 'see the report')) : null,
     n ? el('span', { class: 'warn' }, ' · ' + n + ' not understood') : null].filter(Boolean));
   v.scene = r.scene || ''; title();
+  if (u.sceneNote) {
+    const info = r.audit?.auto;
+    u.sceneNote.textContent = info ? [info.reason, info.fallback].filter(Boolean).join(' ') : '';
+  }
 }
 function title() {
   v.u.title.textContent = [v.file.name.replace(/\.[^.]+$/, ''), v.scene, (v.index + 1) + ' of ' + state.files.length].filter(Boolean).join(' · ');
@@ -513,11 +524,19 @@ function paintHow() {
     if (p.manual) {
       const row = el('li', null, 'Manual · LightCraft'); ch.append(row);
       api('/editor/manual?path=' + encodeURIComponent(v.file.path)).then(stage => {
-        if (stage.manual?.sha256 === p.manual.sha256) row.textContent = 'Manual · ' + ((stage.changed || []).map(nice).join(', ') || 'LightCraft');
+        if (stage.manual?.sha256 !== p.manual.sha256) return;
+        const changes = (stage.changed || []).map(key => {
+          const parts = key.split('.');
+          const label = parts.map(nice).join(' › ');
+          const value = parts.reduce((settings, name) => settings?.[name], stage.settings);
+          if (key === 'light.exposure' && Number.isFinite(value)) return label + ' ' + fmtVal('exposure', value);
+          return Number.isFinite(value) ? label + ' ' + Number(value.toFixed(3)) : label;
+        });
+        row.textContent = 'Manual · ' + (changes.join(', ') || 'LightCraft');
       }).catch(() => {});
     }
   }
-  (j.steps || []).forEach((s, i) => st.append(el('li', null, button((v.primary ? 'Local · ' : '') + (i + 1) + '. ' + (s.title || s.kind), () => chooseStep(i)))));
+  (j.steps || []).forEach((s, i) => st.append(el('li', null, button((v.primary ? '' : (i + 1) + '. ') + (s.title || s.kind), () => chooseStep(i)))));
   chooseStep(Math.min(v.step, Math.max(0, (j.steps || []).length - 1)));
 }
 function chooseStep(i) {
@@ -527,6 +546,11 @@ function chooseStep(i) {
   u.after.alt = 'Step ' + (v.step + 1); u.before.alt = 'Before step ' + (v.step + 1);
   [...u.hSteps.querySelectorAll('button')].forEach((b, k) => { if (k === v.step) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
   say('Step ' + (v.step + 1) + ' of ' + steps.length + ' · ' + (s.title || s.kind));
+  if (v.primary) {
+    u.lessonTitle.textContent = s.title || s.kind;
+    u.previousStep.disabled = v.step === 0;
+    u.nextStep.disabled = v.step === steps.length - 1;
+  }
   const d = u.hDetail; d.replaceChildren();
   if ((s.kind === 'tools' || s.kind === 'grain') && (s.tools || []).length) {
     s.tools.forEach(t => { const b = el('div', null, el('strong', null, toolText(t))); lines(b, t); d.append(b); });
@@ -644,7 +668,7 @@ function linkBrowserDrop(me, drop) {
         await api('/editor/import', {path, expected_drop:drop.sha256});
         if (v !== me) return;
         const edits = getPhoto(me.file.path);
-        if (edits.manual) { status.textContent = 'Export this manual version in Fine-tune before opening another original.'; return; }
+        if (edits.manual) { status.textContent = 'Export this manual version in Adjust before opening another original.'; return; }
         const {history, future, manual, ...local} = edits;
         const opened = await loadPhotoPath(path);
         if (!opened) return;
@@ -665,16 +689,17 @@ async function openInEditor(edited) {
   if (!path || (edited && me.file.dirty)) return;
   try {
     if (await persistProject() === false || v !== me || (edited && me.file.dirty)) return;
-    sessionStorage.setItem('autoedit.editor.open', path);
-    if (me.primary && me.editing && !edited) sessionStorage.setItem('autoedit.editor.options', JSON.stringify(previewBody()));
-    else sessionStorage.removeItem?.('autoedit.editor.options');
-    location.assign('/editor/fine-tune/');
+    if (edited) {
+      const wasEditor = state.editorMode;
+      state.editorMode = true;
+      if (!await loadPhotoPath(path)) state.editorMode = wasEditor;
+    } else go('edit', {index:me.index});
   } catch (error) { toast('Could not open the photo editor. ' + error.message); }
 }
 async function save() {
   if (!v?.editing) return;
   if (v.draftSliders) { const sliders = Object.fromEntries(Object.entries(v.draftSliders).filter(([, value]) => value)); v.draftSliders = null; updatePhoto(v.file.path, { sliders }); }
-  if (v.primary && getPhoto(v.file.path).manual) { await openInEditor(false); return; }
+  if (v.primary && (v.u.native.active || getPhoto(v.file.path).manual)) { await v.u.exportCurrent(); return; }
   const me = v, b = previewBody(), u = me.u, savedState = JSON.stringify({ photo: getPhoto(v.file.path), run: runOptions() }); if (u.save.disabled) return;
   u.save.disabled = true; u.saved.className = 'fine'; u.saved.textContent = 'Saving…'; u.saved.removeAttribute('title');
   try {
@@ -739,7 +764,8 @@ const photoSignature = value => JSON.stringify(photoValues(value));
 const exportSidecar = path => String(path || '').replace(/\.[^./\\]+$/, '.autoedit.json');
 function copiedPatch(result, previous) {
   return { base: { adjustments: (result.adjustments || []).filter(a => a.scope === 'photo' && !String(a.target).startsWith('mark:')),
-    selected_regions: result.selected_regions || [], exposure_bias: result.exposure_bias || 0, wb: result.wb || null, wb_bias: result.wb_bias || [0, 0] }, sliders: {}, region_settings: {}, edit_steps: undefined,
+    selected_regions: result.selected_regions || [], wb: result.wb || null,
+    ...(result.auto_shoot ? {auto_shoot:result.auto_shoot} : {exposure_bias:result.exposure_bias || 0, wb_bias:result.wb_bias || [0, 0]}) }, sliders: {}, region_settings: {}, edit_steps: undefined,
     entries: (previous.entries || []).filter(okMark), neutral: undefined };
 }
 const copiedFile = result => ({ dirty: false, status: result.needs_review ? 'review' : 'finished', ...(result.image ? { out: result.image } : {}) });
@@ -803,9 +829,18 @@ async function copyNow(target, selection = {}) {
 function syncEditControls() {
   if (!v) return;
   const p = getPhoto(v.file.path), u = v.u;
-  if (u.style && p.style && [...u.style.options].some(o => o.value === p.style)) u.style.value = p.style;
+  if (u.style) {
+    u.style.value = [...u.style.options].some(o => o.value === p.style) ? p.style : 'standard';
+    u.sceneField.hidden = u.style.value !== 'auto';
+    u.sceneOverride.value = p.scene || '';
+  }
   if (u.look) u.look.value = p.look === undefined ? state.look : p.look;
-  if (u.strength) { u.strength.value = p.intensity === undefined ? (state.strength === null ? u.defaultStrength : state.strength) : p.intensity; u.paintStrength(); }
+  if (u.strength) {
+    const auto = options().style === 'auto';
+    u.strength.max = auto ? 1.5 : (u.strengthMax ?? 2);
+    u.strength.value = options().intensity ?? (auto ? 1 : u.defaultStrength);
+    u.paintStrength();
+  }
   for (const [op, c] of Object.entries(u.manualInputs || {})) { c.input.value = (p.sliders === undefined ? state.folderSliders || {} : p.sliders)[op] || 0; c.paint(); }
   if (u.copiedChip) u.copiedChip.hidden = !p.base;
   if (u.undo) u.undo.disabled = !canUndo(v.file.path);
@@ -900,7 +935,7 @@ function editPanel() {
   const range = u.strength = el('input', { type: 'range', id: 'strength', min: 0, max: 2, step: 0.05 });
   const out = el('span', { class: 'value num' }), reset = button('Use folder strength', () => updatePhoto(path, { intensity: undefined }), { class: 'link', hidden: true });
   u.defaultStrength = 0.8;
-  u.paintStrength = () => { out.textContent = Number(range.value).toFixed(2); reset.hidden = getPhoto(path).intensity === undefined; };
+  u.paintStrength = () => { out.textContent = pct(range.value); range.setAttribute('aria-valuetext', out.textContent); reset.hidden = getPhoto(path).intensity === undefined; };
   range.addEventListener('input', u.paintStrength);
   range.addEventListener('change', () => updatePhoto(path, { intensity: +range.value }));
   getSchema().then(sc => {
@@ -909,7 +944,7 @@ function editPanel() {
     (by.look && by.look.choices || []).forEach(n => lookSel.add(new Option(nice(n), n)));
     const want = getPhoto(path).look === undefined ? state.look : getPhoto(path).look;
     if (want && ![...lookSel.options].some(o => o.value === want)) lookSel.add(new Option(nice(want), want));
-    if (by.intensity) { range.min = by.intensity.min; range.max = by.intensity.max; u.defaultStrength = by.intensity.default; }
+    if (by.intensity) { range.min = by.intensity.min; u.strengthMax = by.intensity.max; u.defaultStrength = by.intensity.default; }
     syncEditControls();
   }).catch(e => toast('Settings could not be read: ' + e.message));
   u.copiedChip = el('div', { class: 'pchip', hidden: true }, el('div', { class: 'row' }, el('span', { class: 'txt' }, 'Copied adjustments'),
@@ -956,8 +991,8 @@ function editPanel() {
   if (v.primary) {
     const [changes, objects, framing, assist] = v.tools.panels;
     objects.open = assist.open = true;
-    u.sidebar.panel('adjust').replaceChildren(u.tune, framing);
-    u.sidebar.panel('isolate').replaceChildren(objects, el('label', {class:'check'}, u.masksBox, 'Show all masks'));
+    u.sidebar.panel('ai').append(framing);
+    u.sidebar.panel('isolate').replaceChildren(objects, el('label', {class:'check'}, u.masksBox, 'Show all masks'), u.regionPrompt);
     u.sidebar.panel('gemini').replaceChildren(assist);
     return el('div', {class:'panel'}, history, changes,
       el('div', {class:'field'}, el('div', {class:'row'}, el('label', {htmlFor:'strength'}, 'Strength'), out, reset), range),
@@ -983,7 +1018,11 @@ function howPanel() {
   const u = v.u;
   u.hChanges = el('ol', { class: 'plist' }); u.hSteps = el('ol', { class: 'plist' }); u.hDetail = el('div', { class: 'detail' });
   if (v.primary) return el('div', {class:'panel', hidden:true},
-    el('h3', null, 'What changed'), u.hSteps, u.hDetail, u.hChanges);
+    u.lessonTitle = el('h2', null, 'Learning steps'), u.hDetail,
+    el('div', {class:'editor-history'},
+      u.previousStep = button('Previous step', () => chooseStep(v.step-1), {class:'line', disabled:true}),
+      u.nextStep = button('Next step', () => chooseStep(v.step+1), {class:'line', disabled:true})),
+    el('details', {class:'editor-tool'}, el('summary',null,'All steps'), u.hSteps), u.hChanges);
   return el('div', { class: 'panel', hidden: true },
     button('← Back', () => setView('edit'), { class: 'link back' }),
     el('h2', { tabIndex: -1 }, 'How it was done'),
@@ -1036,7 +1075,7 @@ function compareTools(begin) {
   }, { class: 'line', 'aria-pressed': 'false', title: 'Inspect preview pixels. Drag to pan, or use the scrollbars.' });
   if (v.primary) {
     u.editActions = el('div', {class: 'editor-action-group'}, u.split);
-    return el('div', {class: 'editor-compare'}, u.editActions, u.zoom, u.sidebar.drawer);
+    return el('div', {class: 'editor-compare'}, u.editActions, u.zoom);
   }
   u.editActions = el('div', { class: 'editor-action-group', hidden: true }, u.split,
     button('Targeted edits', () => { if (v.view !== 'edit') setView('edit'); v.tools.openObjects(); }, { class: 'line' }));
@@ -1065,11 +1104,7 @@ export const screen = {
     u.title = el('span', { class: 'title' });
     u.orig = el('button', { type: 'button', hidden: true, 'aria-pressed': 'false', title: 'Hold B to see the original', on: { click: () => setHold(!v.hold) } }, 'Original');
     if (editor) setBar(backButton('Library', 'folder'), u.title, el('span', {class:'grow'}),
-      u.exportButton = button('Export', () => {
-        if (getPhoto(file.path).manual) openInEditor(false);
-        else if (!me.editing) toast('Nothing to export yet. Choose Run AI Edit, or Adjust \u2192 Fine-tune in LightCraft to develop the photo by hand.');
-        else save();
-      }, {class:'primary'}));
+      u.exportButton = button('Export', () => u.exportCurrent(), {class:'primary'}));
     else setBar(backButton('Folder', 'folder'), u.title, el('span', { class: 'grow' }),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Previous photo to review' : 'Previous photo', disabled: neighbourIndex(-1) < 0, on: { click: () => neighbour(-1) } }, '‹'),
       el('button', { type: 'button', 'aria-label': state.reviewQueue ? 'Next photo to review' : 'Next photo', disabled: neighbourIndex(1) < 0, on: { click: () => neighbour(1) } }, '›'),
@@ -1098,21 +1133,35 @@ export const screen = {
     u.which = el('span', { class: 'pv-which', hidden: true },
       u.whichYours = button('Yours', () => { v.which = 'yours'; syncWhich(); showing(); }, { 'aria-pressed': 'true' }),
       u.whichEngine = button("AutoEdit's", () => { v.which = 'engine'; syncWhich(); showing(); }, { 'aria-pressed': 'false' }));
-    const form = el('form', { class: 'pv-say', on: { submit: submitSay } }, u.mark, u.markTag, u.say);
-    const under = el('div', { class: 'pv-under', hidden: true }, el('div', { class: 'pv-line' }, u.status, u.which), form);
+    const form = u.regionPrompt = el('form', { class: 'pv-say', on: { submit: submitSay } }, u.mark, u.markTag, u.say);
+    const under = el('div', { class: 'pv-under', hidden: true }, el('div', { class: 'pv-line' }, u.status, u.which), editor ? null : form);
     if (editor) {
       u.sidebar = createEditorSidebar(el, selectSection);
-      u.style = el('select', {id: 'photo-local-style', 'aria-label': 'Local style'}, el('option', {value:'standard'}, 'Standard'));
+      u.style = el('select', {id:'photo-local-style'}, el('option', {value:'standard'}, 'Simple'));
+      const scenes = [['','Detect automatically'], ['sunset','Sunset'], ['twilight','Twilight'], ['daylight','Daylight'],
+        ['mist','Overcast or mist'], ['landscape','Landscape'], ['people','People'], ['other','Other']];
+      u.sceneOverride = el('select', {id:'photo-scene', on:{change:e => {
+        if (me.editing) updatePhoto(file.path, {scene:e.target.value || undefined});
+      }}}, ...scenes.map(([value,label]) => el('option',{value},label)));
+      u.sceneNote = el('span', {role:'status'});
+      u.sceneField = el('div', {class:'field', hidden:true},
+        el('label',{htmlFor:'photo-scene'},'Scene'), u.sceneOverride, u.sceneNote);
       api('/local-styles').then(({styles}) => {
         if (v !== me) return;
         u.style.replaceChildren(...styles.map(s => el('option', {value:s.id}, s.label)));
-        u.style.value = getPhoto(file.path).style || 'standard';
+        syncEditControls();
       }).catch(() => {});
-      u.run = button('Run AI Edit', () => {
-        updatePhoto(file.path, {style:u.style.value || 'standard', ai_enabled:true});
+      function applyStyle() {
+        const style = u.style.value || 'standard';
+        updatePhoto(file.path, {style, scene:style === 'auto' ? (u.sceneOverride.value || undefined) : undefined, ai_enabled:true});
         if (!me.editing) startEditing(); else refresh();
-      }, {class:'primary'});
-      u.aiActions = el('div', {class:'field'}, el('label',{htmlFor:'photo-local-style'},'Local style'), u.style, u.run);
+      }
+      u.style.addEventListener('change', () => {
+        u.sceneField.hidden = u.style.value !== 'auto';
+        if (me.editing) applyStyle();
+      });
+      u.run = button('Run AI Edit', applyStyle, {class:'primary'});
+      u.aiActions = el('div', {class:'field'}, el('label',{htmlFor:'photo-local-style'},'Local style'), u.style, u.sceneField, u.run);
       const drops = store.get('browserDrops', []), drop = Array.isArray(drops) && drops.find(x => x.path === file.path);
       if (drop) u.aiActions.prepend(el('div',{class:'drop-source'}, el('span',null,'Browser copy'),
         button('Link original', () => linkBrowserDrop(me, drop), {class:'link'})));
@@ -1123,25 +1172,84 @@ export const screen = {
           button('Redo', () => { if (redoPhoto(file.path)) go('photo',{index}); }, {class:'line',disabled:!canRedo(file.path)}));
         u.aiActions.append(u.originalHistory);
       }
-      u.tune = button(getPhoto(file.path).manual ? 'Resume fine-tuning in LightCraft' : 'Fine-tune in LightCraft', () => openInEditor(false), {class:'line'});
-      u.sidebar.panel('adjust').append(u.tune);
-      if (getPhoto(file.path).manual) u.aiActions.prepend(el('div',{class:'field'}, el('span',null,'Viewing the local stage'),
-        button('View finished manual edit', () => openInEditor(false), {class:'line'})));
-      for (const [id,label] of [['isolate','Find objects'],['learn','Show local editing steps'],['gemini','Prepare photo']]) {
-        u.sidebar.panel(id).append(button(label, () => { startEditing(); selectSection(id); }, {class:'line'}));
-      }
+      u.native = createManualPanel({
+        el, path:file.path, saveProject:persistProject,
+        getStage() {
+          const photo = getPhoto(file.path);
+          const useAI = hasLocalStage(photo);
+          return {options:useAI ? previewBody() : options(), useAI, manual:photo.manual?.sha256 || null};
+        },
+        onSaved(manual) { if (v === me) recordManualSave(file.path,manual); },
+        async onExport(result) {
+          file.exported = result.image_out; file.status = result.result?.needs_review ? 'review' : 'finished';
+          file.dirty = false; await persistProject(); toast('Saved ' + file.exported.split(/[/\\]/).pop());
+          if (v === me && me.editing) copyState();
+        },
+      });
+      u.manualNotice = el('div', {class:'field', hidden:true}, el('span',null,'Previewing the local edit'),
+        button('View with manual adjustments', () => selectSection('adjust'), {class:'link'}));
+      u.sidebar.panel('ai').append(u.manualNotice);
+      u.exportCurrent = async () => {
+        if (u.exportButton.disabled) return;
+        u.exportButton.disabled = true;
+        try {
+          if (u.native.active || getPhoto(file.path).manual) {
+            if (!u.native.active) await selectSection('adjust');
+            await u.native.exportPhoto();
+          } else if (me.editing && hasLocalStage(getPhoto(file.path))) await save();
+          else toast('Choose Adjust to develop this photo or run AI Edit.');
+        } catch (error) { toast(error.message); }
+        finally { u.exportButton.disabled = false; }
+      };
+
     }
     const side = editor ? u.sidebar.aside : el('aside', { class: 'side pv-side', hidden: true, 'aria-label': 'Edit this photo' });
     const workspace = el('div', { class: editor ? 'pv unified-editor' : 'pv is-viewing' },
-      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas, u.opening), compareTools(startEditing), under, u.strip = filmstrip()), side);
+      u.sidebar?.rail,
+      el('div', { class: 'pv-main' }, el('div', { class: 'pv-stage' }, u.busy, u.canvas, u.opening, u.native?.frame, u.native?.status), compareTools(startEditing), under, u.strip = filmstrip()), side);
+    if (editor) {
+      u.strip.id = 'editor-folder-photos';
+      u.strip.hidden = true;
+      if (state.files.length > 1) {
+        const photos = button('Photos', () => {
+          u.strip.hidden = !u.strip.hidden;
+          photos.setAttribute('aria-expanded', String(!u.strip.hidden));
+          if (!u.strip.hidden) {
+            const selected = u.strip.querySelector('[aria-current=true]');
+            selected?.scrollIntoView({block:'nearest',inline:'nearest'});
+            selected?.focus({preventScroll:true});
+          }
+        }, {class:'editor-section-tab editor-photos-toggle', 'aria-expanded':'false',
+          'aria-controls':u.strip.id, title:'Photos in this folder'});
+        u.sidebar.rail.append(photos);
+      }
+    }
     root.append(workspace);
-    function selectSection(id) {
-      if (!me.editing) return;
-      if (id !== 'isolate' && me.tools.mode !== 'none') me.tools.setMode('none');
-      const view = id === 'learn' ? 'how' : 'edit';
-      if (me.view !== view) setView(view);
-      if (id === 'isolate') me.tools.openObjects();
-      if (id === 'learn') { u.panels.how.hidden = false; once('how'); }
+    let sectionRequest = 0;
+    async function selectSection(id) {
+      const request = ++sectionRequest;
+      try {
+        if (id !== 'adjust' && u.native.active && !me.leavingManual) {
+          me.leavingManual = u.native.leave().finally(() => { me.leavingManual = null; });
+        }
+        if (me.leavingManual) await me.leavingManual;
+        if (v !== me || request !== sectionRequest) return;
+        u.sidebar.show(id);
+        u.manualNotice.hidden = !getPhoto(file.path).manual;
+        workspace.dataset.tool = id;
+        if (id === 'adjust') {
+          if (me.tools?.mode && me.tools.mode !== 'none') me.tools.setMode('none');
+          await u.native.activate();
+          return;
+        }
+        if (!me.editing && id !== 'ai') startEditing();
+        if (!me.editing) return;
+        if (id !== 'isolate' && me.tools.mode !== 'none') me.tools.setMode('none');
+        const view = id === 'learn' ? 'how' : 'edit';
+        if (me.view !== view) setView(view); else refresh();
+        if (id === 'isolate') me.tools.openObjects();
+        if (id === 'learn') { u.panels.how.hidden = false; if (me.how) paintHow(); once('how'); }
+      } catch (error) { if (v === me) toast(error.message); }
     }
     function startEditing() {
       if (v !== me || me.editing) return;
@@ -1161,10 +1269,11 @@ export const screen = {
         if (u.originalHistory) u.originalHistory.hidden = true;
         u.sidebar.panel('learn').replaceChildren(u.panels.how, u.panels.try);
         u.sidebar.panel('ai').append(u.panels.edit);
-        selectSection(u.sidebar.active());
-      } else side.append(u.panels.edit, u.panels.how, u.panels.try); under.prepend(me.tools.sourceNote);
+      } else side.append(u.panels.edit, u.panels.how, u.panels.try);
+      under.prepend(me.tools.sourceNote);
       u.editActions.append(me.tools.detailButton());
-      u.begin.hidden = true; u.orig.hidden = u.editActions.hidden = under.hidden = side.hidden = false;
+      u.begin.hidden = true; u.orig.hidden = u.editActions.hidden = under.hidden = false;
+      if (!editor) side.hidden = false;
       workspace.classList.remove('is-viewing');
       u.frame.setAttribute('aria-label', 'Photo preview. Hold B for the original. With Mark on, Enter places an oval.');
       drawChips(); showing(); paintNeutral(); copyState(); syncEditControls(); me.tools.sync();
@@ -1202,11 +1311,14 @@ export const screen = {
     document.addEventListener('keyup', me.up); window.addEventListener('blur', me.blur);
     // A photo that waits for a look opens on its edit and the reason, as the Review queue steps through them.
     const existing = getPhoto(file.path);
-    const hasStage = existing.ai_enabled || ['look','intensity','base','edit_steps','sliders','region_settings','mask_refinements','entries','photo_geometry','hide'].some(k =>
-      existing[k] !== undefined && (typeof existing[k] !== 'object' || Object.keys(existing[k] || {}).length));
-    if ((editor && hasStage) || state.reviewQueue || file.recipeReview || ['review', 'failed'].includes(file.status)) startEditing();
+    if ((editor && hasLocalStage(existing)) || state.reviewQueue || file.recipeReview || ['review', 'failed'].includes(file.status)) {
+      if (editor) workspace.dataset.tool = 'adjust';
+      startEditing();
+    }
+    if (editor) selectSection('adjust');
   },
-  focus() { if (v) v.u.frame.focus({ preventScroll: true }); },
+  beforeLeave() { return v?.leavingManual || (v?.u.native?.active ? v.u.native.leave() : null); },
+  focus() { if (v && !v.primary) v.u.frame.focus({ preventScroll: true }); },
   unmount() {
     if (!v) return;
     clearTimeout(v.previewTimer); clearInterval(v.busyTimer);
@@ -1222,7 +1334,9 @@ export const screen = {
   },
   key(e) {
     if (!v || !v.u.say) return false;
-    if (e.key === 'Escape' && v.primary && v.u.sidebar.closeDrawer()) return true;
+    if (v.primary && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault(); v.u.exportCurrent(); return true;
+    }
     if (!v.editing) {
       if (e.metaKey || e.ctrlKey || e.altKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return false;
       neighbour(e.key === 'ArrowRight' ? 1 : -1); return true;

@@ -5,7 +5,7 @@ import { runOptions, openSettings } from './settings.js';
 import { loadEntries, textOf, marksOf, hideRequest } from './photo.js';
 import { runTool } from './tools.js';
 import { openShare, exportsDir } from './share.js';
-import { getPhoto, getPhotoValues, loadProject, persistProject, scheduleProjectSave, folderSettingsChanged, syncRecipeReview } from './project.js';
+import { getPhoto, getPhotoValues, updatePhoto, loadProject, persistProject, scheduleProjectSave, folderSettingsChanged, syncRecipeReview } from './project.js';
 import { openPhotoPresets } from './presets.js';
 import { workflowSteps, readinessCard } from './workflow.js';
 
@@ -188,8 +188,8 @@ function photoSignature(path) {
 // A completed export can refer to an older edit while the photographer is still working.
 export function applyBatchItem(file, item, submitted, currentSignature) {
   if (item.out) file.exported = item.out;
-  if (submitted && submitted.signature !== currentSignature) {
-    if (['waiting', 'editing'].includes(file.status)) {
+  if ((!submitted && file.dirty && item.auto_shoot) || (submitted && submitted.signature !== currentSignature)) {
+    if (submitted && ['waiting', 'editing'].includes(file.status)) {
       file.status = submitted.status;
       file.error = submitted.error;
     }
@@ -199,6 +199,13 @@ export function applyBatchItem(file, item, submitted, currentSignature) {
   file.status = item.status;
   file.error = item.error || item.warn || '';
   if (!item.out) return;
+  const prior = getPhotoValues(file.path).base || {};
+  if (item.auto_shoot || prior.auto_shoot) {
+    const base = { ...prior };
+    if (item.auto_shoot) base.auto_shoot = item.auto_shoot;
+    else delete base.auto_shoot;
+    updatePhoto(file.path, {base:Object.keys(base).length ? base : undefined}, {history:false});
+  }
   file.dirty = false;
   if (item.object_checks) {
     // The quality verdict belongs to the export. A missing object applies only while
@@ -217,7 +224,7 @@ function applySnap(s) {
     const file = byPath.get(item.src);
     if (!file) continue;
     const submitted = batchSettings.get(file.path);
-    const receipt = JSON.stringify([item.status, item.out, item.warn, item.error, item.quality_warn, item.object_checks]);
+    const receipt = JSON.stringify([item.status, item.out, item.warn, item.error, item.quality_warn, item.object_checks, item.auto_shoot]);
     if (submitted && submitted.receipt === receipt) continue;
     if (submitted) submitted.receipt = receipt;
     const completed = item.out || item.status === 'failed';
@@ -275,7 +282,7 @@ async function editPhotos() {
       if (m.length) photo_marks[f.path] = m;
       if (h) photo_hide[f.path] = h;
       const own = getPhoto(f.path), options = {};
-      ['style', 'look', 'intensity', 'neutral', 'reference', 'reference_strength'].forEach(k => { if (own[k] !== undefined) options[k] = own[k]; });
+      ['style', 'scene', 'look', 'intensity', 'neutral', 'reference', 'reference_strength'].forEach(k => { if (own[k] !== undefined) options[k] = own[k]; });
       const sliders = own.sliders === undefined ? state.folderSliders : own.sliders;
       if (sliders && Object.keys(sliders).length) options.photo_settings = sliders;
       if (own.base !== undefined) options.photo_base = own.base;

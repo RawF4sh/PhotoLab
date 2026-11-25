@@ -15,7 +15,7 @@ import re
 import string
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .paths import config_path
 
@@ -33,6 +33,8 @@ class RunConfig(BaseModel):
     # config is built (cli.py, web/service.py): the name alone changes nothing.
     genre: str | None = Field(default=None, max_length=40)
     rule_sets: list[str] = Field(default_factory=list, max_length=20)  # opt-in rule sets of rules.toml a genre switched on
+    scene: Literal["people", "other", "landscape", "sunset", "twilight", "daylight", "mist"] | None = None
+    auto_unreleased: bool = False  # release-round preview, never enabled by a normal app edit
     prompt: str | None = None  # free-text intent, combined with the style brief for the LLM
     edit: str | None = Field(default=None, max_length=400)
     # plain-language region instructions, e.g. "brighten the jacket" (instructions.toml)
@@ -147,6 +149,7 @@ class RunConfig(BaseModel):
     looks_path: str = Field(default_factory=lambda: config_path("looks.toml"))
     concepts_path: str = Field(default_factory=lambda: config_path("concepts.toml"))
     targets_path: str = Field(default_factory=lambda: config_path("targets.toml", packaged_fallback=True))
+    auto_path: str = Field(default_factory=lambda: config_path("auto.toml", packaged_fallback=True))
     styles_path: str = Field(default_factory=lambda: config_path("styles.toml"))
     compose_path: str = Field(default_factory=lambda: config_path("compose.toml"))
     intents_path: str = Field(default_factory=lambda: config_path("intents.toml"))
@@ -154,6 +157,20 @@ class RunConfig(BaseModel):
     instructions_path: str = Field(default_factory=lambda: config_path("instructions.toml", packaged_fallback=True))
     exports_path: str = Field(default_factory=lambda: config_path("exports.toml", packaged_fallback=True))
     reveal_path: str = Field(default_factory=lambda: config_path("reveal.toml", packaged_fallback=True))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _auto_default(cls, values):
+        if isinstance(values, dict) and values.get("style") == "auto" and "intensity" not in values:
+            return {**values, "intensity": 1.0}
+        return values
+
+    @field_validator("intensity", mode="after")
+    @classmethod
+    def _auto_strength(cls, value, info):
+        if info.data.get("style") == "auto" and value > 1.5:
+            raise ValueError("Auto strength must be between 0 and 1.5")
+        return value
 
     @field_validator("hide", mode="before")
     @classmethod

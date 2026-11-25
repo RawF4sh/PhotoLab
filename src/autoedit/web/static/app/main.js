@@ -110,7 +110,19 @@ export function go(name, params) {
   if (location.hash === h) render(); else location.hash = h;
 }
 
-function render() {
+let navigation = 0, mountedHash = '';
+async function render() {
+  const request = ++navigation;
+  const flush = current?.beforeLeave?.();
+  if (flush) {
+    try { await flush; }
+    catch (error) {
+      if (navigation === request) { history.replaceState(null, '', mountedHash || '#/start'); toast(error.message); }
+      return;
+    }
+    if (navigation !== request) return;
+  }
+  mountedHash = location.hash;
   const [, name = 'start', idx] = location.hash.split('/');
   let target = screens[name] ? name : 'start';
   if (!['start', 'automatic', 'workspace', 'editor'].includes(target) && !state.dir)

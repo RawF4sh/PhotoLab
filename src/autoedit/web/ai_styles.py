@@ -17,6 +17,10 @@ def catalog():
 
 def prompt_for(style, instruction=""):
     styles = _styles()
+    if isinstance(style, str) and style not in styles:
+        former_name = style.replace("_", " ").casefold()
+        style = next((name for name, brief in styles.items()
+                      if brief.get("formerly", "").casefold() == former_name and former_name), None)
     if not isinstance(style, str) or style not in styles:
         raise ValueError("Choose a supported AI edit style.")
     if not isinstance(instruction, str):

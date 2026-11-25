@@ -23,7 +23,7 @@ MAX_HISTORY = 50
 _LOCK = threading.RLock()
 _ACTIVE_FILES = set()
 _PHOTO = {"look", "intensity", "neutral", "sliders", "entries", "reference", "reference_strength", "hide", "hideMethod", "base",
-          "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps", "manual", "ai_enabled", "style"}
+          "region_settings", "mask_refinements", "photo_geometry", "local_only", "edit_steps", "manual", "ai_enabled", "style", "scene"}
 _FOLDER = {"look", "genre", "strength", "runText", "exportPreset", "settings", "finder", "folderSliders", "recipes"}
 _STATUS = {"", "waiting", "editing", "finished", "review", "failed", "cancelled", "saved"}
 
@@ -53,6 +53,9 @@ def _photo(value, table, history=True):
     for key in ("style", "look", "reference", "hideMethod"):
         if key in value:
             _text(value[key], key, 4096 if key == "reference" else 200)
+    if "scene" in value:
+        from ..contract import RunConfig
+        RunConfig(scene=value["scene"])
     if "intensity" in value:
         _number(value["intensity"], "intensity", 0, 2)
     if "reference_strength" in value:

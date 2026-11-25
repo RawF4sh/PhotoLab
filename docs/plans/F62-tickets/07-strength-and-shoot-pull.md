@@ -1,6 +1,6 @@
 # 07. Strength to 150 %, and a shoot that looks alike
 
-Status: ready-for-agent
+Status: done
 Blocked by: 01
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
@@ -23,3 +23,5 @@ Who: Builder (Sonnet, medium)
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Covered zero strength against Simple, bounded settings at 150%, the median pull for a group of three, and local retries for unsafe results. A mixed batch preserved its per-photo styles. Resuming the saved shoot, previewing it, opening variants and exporting it individually reproduced the batch settings; the individual and batch exports were byte-identical.

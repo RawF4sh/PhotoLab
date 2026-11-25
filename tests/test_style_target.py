@@ -1,3 +1,4 @@
+# F60 fixture: blue_hour identifies its frozen source partition.
 """Owner target lists and the isolated start of scripts/style_target.py. No network, no corpus."""
 
 import csv
@@ -112,3 +113,65 @@ def test_a_target_photo_from_outside_the_group_is_refused(tmp_path):
     stranger.write_bytes(b"not in the group")
     with pytest.raises(ValueError, match="frozen target group"):
         st.finished_files(pick(folder, [*paths[:12], stranger]), manifest, "blue_hour")
+
+
+def test_shifted_composite_recovers_known_control_and_regional_measurements():
+    import numpy as np
+    from autoedit.edit.ops import apply_ops
+    from pair_goals import align, measure_pair, split_pair
+
+    rgb = np.random.default_rng(25).uniform(.1, .4, (48, 64, 3)).astype(np.float32)
+    after = np.roll(apply_ops(rgb, {"exposure": 1.5}), (3, -4), axis=(0, 1))
+    pair = np.concatenate([rgb, np.zeros_like(rgb[:, :1]), after], axis=1)
+    before, after, shift = align(*split_pair(pair, "horizontal"))
+    assert shift == (-3, 4)
+    assert np.allclose(after, apply_ops(before, {"exposure": 1.5}))
+    land = np.indices(before.shape[:2])[0] > 16
+    sample = measure_pair(before, after, {"land": land, "water": np.zeros_like(land)})
+    assert set(sample["regions"]) == {"global", "land"}
+    for r in sample["regions"].values():
+        assert r["controls"] == {"exposure": 1.5}
+        assert r["after"]["p50"] - r["before"]["p50"] == r["change"]["p50"]
+    assert sample["distance"] > 0
+
+
+def test_bolder_or_middle_third_percentiles_and_minimum():
+    import numpy as np
+    from pair_goals import summarize
+
+    # 45 distinct measurements with a known rank, global retouch and local EV limit.
+    def sample(i):
+        return {"distance": i, "regions": {
+            "global": {"after": {"p50": i / 100}, "controls": {"exposure": i / 100}},
+            "sky": {"after": {"p50": i / 200}, "controls": {"exposure": -i / 50}}}}
+    values = [sample(i) for i in range(45)]
+    target, limits = summarize(values[::-1], "daylight")
+    assert target["meta"] == {"photos": 45, "selected": 15, "region_counts": {"global": 15, "sky": 15}}
+    assert np.allclose(target["global"]["p50"], np.percentile(np.arange(30, 45) / 100, [10, 90]))
+    assert limits["exposure"] == pytest.approx(np.percentile(np.arange(30, 45) / 50, 90))
+    mid, _ = summarize(values, "people", middle=True)
+    assert np.allclose(mid["global"]["p50"], np.percentile(np.arange(15, 30) / 100, [10, 90]))
+    with pytest.raises(ValueError, match="45"):
+        summarize(values[:-1], "mist")
+
+
+def test_writing_a_goal_retains_neighbouring_config_and_prior_scene(tmp_path):
+    import tomllib
+    file = tmp_path / "auto.toml"
+    file.write_text("# owner settings\n[auto]\nshoot_pull = 0.5\n[limits.sunset]\nexposure = 1.2\n"
+                    "[limits.mist]\nsaturation = 44\n[scene.sunset]\nreleased = false\n")
+    result = st.update_table(file, ["limits", "sunset"], {"exposure": 1.8})
+    after = tomllib.loads(result)
+    assert result.startswith("# owner settings\n[auto]")
+    assert after["limits"] == {"sunset": {"exposure": 1.8}, "mist": {"saturation": 44}}
+    assert after["scene"] == {"sunset": {"released": False}}
+
+
+def test_pair_limit_uses_the_slider_that_recreates_a_known_colour_edit():
+    import numpy as np
+    from autoedit.edit.ops import apply_ops
+    from pair_goals import infer_controls
+
+    rgb = np.random.default_rng(61).uniform(.1, .75, (20, 24, 3)).astype(np.float32)
+    for controls in ({"tint": 50.}, {"grade_highlights_temp": 100.}):
+        assert infer_controls(rgb, apply_ops(rgb, controls)) == controls

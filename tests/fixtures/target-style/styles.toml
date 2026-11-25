@@ -1,0 +1,57 @@
+# Custom test styles exercise target, region and export machinery independently of shipped looks.
+[lamp_hold]
+label = "Lamp hold"
+look = "natural"
+concepts = ["sky", "water", "building", "bridge", "lights", "skin", "snow"]
+target = "lamp_hold"
+pull = 0.8
+limits = { exposure = 1.0, shadows_ev = 1.5, lights_ev = 0.7 }
+tested = false
+[lamp_hold.run]
+denoise = true
+
+[rich_denoised]
+label = "Rich denoised"
+look = "natural"
+concepts = ["sky", "cloud", "water", "mountain", "snow", "trees", "skin"]
+target = "rich_denoised"
+pull = 0.8
+limits = { exposure = 3.0, shadows_ev = 2.0, chroma = 0.6, temp = 8 }
+intent = ["richer"]
+tested = false
+[rich_denoised.run]
+denoise = true
+
+[shaped_moves]
+label = "Shaped moves"
+look = "natural"
+concepts = ["sky", "cloud", "mountain", "water", "skin", "snow"]
+target = "shaped_moves"
+pull = 0.7
+limits = { exposure = 1.0, shadows_ev = 1.0, chroma = 0.75, vibrance = 30 }
+intent = ["darker", "richer"]
+tested = false
+[shaped_moves.run]
+palette = "cool_blue"
+palette_strength = 0.45
+[shaped_moves.moves.sky_grad]
+when = "sky"
+within = ["sky", "cloud"]
+shape = "linear"
+from = "top"
+coverage = 0.6
+ops = { burn_ev = 0.25 }
+[shaped_moves.moves.far_shore]
+when = "always"
+shape = "band"
+at = "waterline"
+height = 0.12
+feather = 1.0
+ops = { exposure = 0.2 }
+[shaped_moves.moves.frame_vignette]
+when = "always"
+shape = "radial"
+target = "outside"
+radius_scale = 1.1
+feather = 0.45
+ops = { burn_ev = 0.6 }

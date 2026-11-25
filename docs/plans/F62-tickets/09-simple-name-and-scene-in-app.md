@@ -1,6 +1,6 @@
 # 09. Simple in the interface, and the scene shown and correctable
 
-Status: ready-for-agent
+Status: done
 Blocked by: 01, 02
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
@@ -25,3 +25,5 @@ Who: Builder (Sonnet, medium)
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Verified the two choices in the browser, detected a scene, corrected it to sunset, saw the Simple fallback, and undid the correction. The slider showed a 150% maximum. The saved scene goes through the same preview and export configuration as the local edit. Existing projects still use the standard identifier.

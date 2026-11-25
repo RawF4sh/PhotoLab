@@ -14,7 +14,7 @@ async function check() {
     const node = { tag, children: children.flat().filter(Boolean), hidden: false, textContent: '', style: { setProperty() {} },
       dataset: {}, classList: { toggle() {}, remove() {} }, append(...kids) { this.children.push(...kids); },
       prepend(...kids) { this.children.unshift(...kids); }, replaceChildren(...kids) { this.children = kids; },
-      setAttribute(key, value) { this[key] = String(value); }, removeAttribute(key) { delete this[key]; },
+      getAttribute(key) { return this[key] ?? null; }, setAttribute(key, value) { this[key] = String(value); }, removeAttribute(key) { delete this[key]; },
       get options() { return this.children; }, get lastChild() { return this.children.at(-1); }, addEventListener(name, fn) { (events[name] ||= []).push(fn); },
       removeEventListener(name, fn) { events[name] = (events[name] || []).filter(f => f !== fn); },
       async fire(name, props = {}) {
@@ -39,21 +39,23 @@ async function check() {
     location: { assign: value => { destination = value; } },
   });
   const routes = {
-    './main.js': { el, api: async (url, body) => { requests.push([url, body]); return url === '/local-styles' ? {styles:[{id:'standard',label:'Standard'}]} : {result:{}}; },
+    './main.js': { el, api: async (url, body) => { requests.push([url, body]); return url === '/local-styles' ? {styles:[{id:'standard',label:'Simple'}]} : {result:{}}; },
       state: { files, settings: {}, folderSliders: {} }, store: { get: (_key, fallback) => fallback }, nice: String,
-      thumbUrl: path => path, loadPhotoPath: noop, go: noop, toast: noop, getSchema: () => pending, setBar: noop, backButton: noop, gearButton: noop, openSheet: noop },
+      thumbUrl: path => path, loadPhotoPath: noop, go: (screen,params) => { destination = [screen,params?.index].join('/'); }, toast: noop, getSchema: () => pending, setBar: noop, backButton: noop, gearButton: noop, openSheet: noop },
     './settings.js': { runOptions: () => ({}) }, './tools.js': { runTool: noop }, './share.js': { exportsDir: noop },
     './project.js': { getPhoto: () => activePhoto, updatePhoto: (_path, patch) => Object.assign(activePhoto,patch), undoPhoto: noop,
       redoPhoto: noop, canUndo: () => false, canRedo: () => false,
-      subscribeProject: fn => { projectEvent = fn; return noop; }, persistProject: async () => true },
-    './photo_tools.js': { createPhotoTools: () => ({ panels: Array.from({length:4}, () => el('details')), mode: 'none', detailButton: () => el('button'),
+      recordManualSave: noop, subscribeProject: fn => { projectEvent = fn; return noop; }, persistProject: async () => true },
+    './photo_tools.js': { createPhotoTools: () => ({ panels: Array.from({length:4}, () => el('details')), mode: 'none', setMode:noop, detailButton: () => el('button'),
       acceptPreview: noop, sync: noop, dispose: noop }) },
     './presets.js': { openPhotoPresets: noop },
   };
   const module = new vm.SourceTextModule(fs.readFileSync(path.resolve(__dirname, '../../src/autoedit/web/static/app/photo.js'), 'utf8'), { context });
-  const sidebar = new vm.SourceTextModule(fs.readFileSync(path.resolve(__dirname,'../../src/autoedit/web/static/app/editor_sidebar.js'),'utf8'), {context});
-  await sidebar.link(() => {}); await sidebar.evaluate();
-  routes['./editor_sidebar.js'] = sidebar.namespace;
+  for (const name of ['editor_sidebar','editor_manual']) {
+    const part = new vm.SourceTextModule(fs.readFileSync(path.resolve(__dirname,'../../src/autoedit/web/static/app/'+name+'.js'),'utf8'), {context});
+    await part.link(() => {}); await part.evaluate();
+    routes['./'+name+'.js'] = part.namespace;
+  }
   await module.link(name => new vm.SyntheticModule(Object.keys(routes[name]), function () {
     for (const [key, value] of Object.entries(routes[name])) this.setExport(key, value);
   }, { context }));
@@ -89,8 +91,7 @@ async function check() {
   screen.unmount(); screen.mount(root, { index: 1 });
   assert.equal(find(n => n.class === 'pv-frame').dataset.showing, 'before');
   await button('Open original in Photo editor').fire('click');
-  assert.equal(stored.get('autoedit.editor.open'), files[1].path);
-  assert.equal(destination, '/editor/fine-tune/');
+  assert.equal(destination, 'edit/1', 'Guided should open the original in the unified editor');
   screen.unmount();
   // A photo that waits for a look opens on its edit: a review or failed mark, a missing recipe object, the Review queue.
   const shared = routes['./main.js'].state;
@@ -109,17 +110,33 @@ async function check() {
   activePhoto = {}; requests.length = 0;
   screen.mount(root,{index:1,editor:true});
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(find(n=>n['aria-label']==='Editing tools').tag, 'aside');
+  assert.equal(find(n=>n['aria-label']==='Editing tools').tag, 'nav');
   const tabs = ['Adjust','AI Edit','Isolate','Learn','Ask Gemini'].map(button);
-  assert(tabs.every(Boolean)); assert.equal(tabs[1]['aria-expanded'],'true');
+  assert(tabs.every(Boolean)); assert.equal(tabs[0]['aria-expanded'],'true');
+  const strip = find(n => n.id === 'editor-folder-photos');
+  assert.equal(strip.hidden, true);
+  await button('Photos').fire('click'); assert.equal(strip.hidden, false);
+  const native = find(n => n.tag === 'iframe');
+  assert.equal(native.src, '/editor/panel/');
+  const opened = [];
+  native.contentWindow = {autoeditManual:{open:async (...args) => { opened.push(args); return {manual:null}; },flush:noop}};
+  await native.fire('manual-ready');
+  assert.equal(opened[0][0],files[1].path);
+  assert.equal(opened[0][2],false, 'manual opens the original without an AI render');
   assert(requests.every(([route])=>route==='/local-styles'));
   assert(button('Before / After').hidden);
+  await tabs[1].fire('click');
+  assert.equal(native.inert,true);
   await button('Run AI Edit').fire('click');
   const preview = requests.find(([route])=>route==='/preview')[1];
   assert.equal(preview.local_only,true); assert.equal(preview.allow_cloud,false);
   assert.equal(preview.style,'standard'); assert.equal(activePhoto.ai_enabled,true);
   await tabs[0].fire('click');
   assert.equal(tabs[0]['aria-expanded'],'true'); assert.equal(tabs[1]['aria-expanded'],'false');
+  assert.equal(opened.at(-1)[2],true, 'Adjust receives the applied local stage on the same photo');
+  assert.equal(native.inert,false);
+  await tabs[3].fire('click');
+  assert(requests.some(([route,b])=>route==='/preview' && b.steps),'Learn loads the per-photo steps directly');
   assert(!requests.some(([route])=>route==='/assist'));
   screen.unmount();
 }

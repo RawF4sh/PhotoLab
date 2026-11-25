@@ -1,6 +1,6 @@
 # 08. Retire Blue hour, Sunset glow and Moody landscape
 
-Status: ready-for-agent
+Status: done
 Blocked by: 01
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
@@ -23,3 +23,5 @@ specs.
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — The local catalogue now offers Simple and Auto. The three old local target/style blocks were removed. Regression fixtures exercise lamp protection, specialist limits and compositional moves without shipping those styles. The separate Gemini briefs retain compatible request identifiers. The two-item local menu was verified in a browser.

@@ -103,6 +103,12 @@ def style_thresholds(audit, thresholds, selected_style):
     if (not intent or not style.get("target") or not selected_style or selected_style in ("natural", "standard")
             or style.get("name") != selected_style):
         return thresholds
+    if selected_style == "auto":
+        scene = (audit or {}).get("auto", {})
+        if scene.get("fallback") or not scene.get("target") or scene.get("scene") not in (
+                "landscape", "twilight", "sunset", "daylight", "mist"):
+            return thresholds
+        thresholds = {**thresholds, **{k: style[k] for k in ("clip_budget", "shadow_clip_budget") if k in style}}
     return {**thresholds, "preserve_exposure": "darker" in intent or thresholds.get("preserve_exposure", False),
             "richer": "richer" in intent}
 

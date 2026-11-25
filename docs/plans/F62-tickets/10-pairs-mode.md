@@ -1,6 +1,6 @@
 # 10. Measure before-and-after pairs
 
-Status: ready-for-agent
+Status: done
 Spec: [F62](../F62-auto.md), milestone M2
 Who: Builder (Sonnet, medium)
 
@@ -29,3 +29,5 @@ Who: Builder (Sonnet, medium)
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — The isolated pairs command aligns split or separate images, measures each available region and estimates equivalent control moves. It emits numeric targets, limits and optional routing, and rejects a scene below 45 kept pairs. A known 1.5 EV edit and translated image pairs were recovered in the tests.

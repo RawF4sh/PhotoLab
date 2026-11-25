@@ -5,6 +5,14 @@ import { comparePhoto, thumbnail } from './editor_compare.js';
 
 const $ = id => document.getElementById(id);
 const frame = $('editor');
+const embedded = location.pathname === '/editor/panel/' && window.parent !== window;
+function notifyHost(type, detail) {
+  if (embedded) window.frameElement?.dispatchEvent(new CustomEvent(type, {detail}));
+}
+function focusCanvas() {
+  if (!embedded || !window.frameElement?.inert) frame.focus();
+}
+if (embedded) document.body.classList.add('embedded-editor');
 let ready = false;
 let dirty = false;
 let bootWatch;
@@ -89,7 +97,7 @@ async function focusFilter(value) {
 async function showPhoto(id) {
   await command('library.select', {ids:[id]});
   await command('view.detail');
-  frame.focus();
+  focusCanvas();
 }
 
 async function api(route, body) {
@@ -160,7 +168,7 @@ async function importPicture(source) {
   const previous = (await command('library.state')).selection.active;
   if (filter || source.working_copy) await focusFilter(name);
   frame.contentWindow.postMessage({type:'lightcraft:open', name, bytes}, location.origin, [bytes]);
-  frame.focus();
+  focusCanvas();
   const start = Date.now();
   while (Date.now() - start < 90000) {
     const {selection} = await command('library.state');
@@ -211,7 +219,21 @@ async function removePicture(photo) {
   }
 }
 
-const stage = nativeStage({command,api,tell,importPicture,removePicture});
+const stage = nativeStage({command,api,tell,importPicture,removePicture,
+  onSave:(path,manual) => notifyHost('manual-saved', {path,manual})});
+if (embedded) {
+  window.autoeditManual = {
+    open:openPhoto, flush:() => stage.flush(),
+    async exportPhoto() {
+      await stage.flush();
+      if (!stage.current?.manual && !stage.current?.useAI) {
+        throw Error('Make an adjustment or run AI Edit before exporting.');
+      }
+      return stage.exportPhoto();
+    },
+    get busy() { return stage.busy; },
+  };
+}
 function localOptions() {
   try { return JSON.parse(localStorage.getItem('autoedit.app.v1') || '{}').settings || {}; }
   catch { return {}; }
@@ -227,6 +249,7 @@ async function openPhoto(path, options = localOptions(), useAI = false) {
     $('filename').textContent = path.split(/[/\\]/).pop();
     if (opened?.lost) tell('The saved manual edit for this photo could not be read and was removed. Fine-tune continues from what this browser still has.', true);
     else tell('');
+    return opened;
   } finally {
     $('open').disabled = !ready;
     lockPhotoActions(!ready || !stage.current);
@@ -241,6 +264,7 @@ function showBoot(title, message = '', retry = false) {
   $('boot-message').textContent = message;
   $('retry').hidden = !retry;
   $('install').hidden = true;
+  notifyHost(retry ? 'manual-attention' : 'manual-loading');
 }
 
 function failed(message) {
@@ -253,7 +277,7 @@ function watchEditor() {
   clearInterval(monitor);
   monitor = setInterval(async () => {
     const message = frame.contentDocument?.getElementById('lightcraft_blocking')?.textContent || '';
-    if (ready) stage.tick();
+    if (ready && (!embedded || !window.frameElement?.inert)) stage.tick();
     if (message.startsWith('LightCraft stopped')) {
       clearInterval(monitor);
       ready = false;
@@ -289,6 +313,7 @@ async function start() {
           ', a separate open-source editor. AutoEdit downloads it once from its GitHub releases' + size +
           ', checks it against the published checksum and keeps it on this computer.');
         $('install').hidden = false;
+        notifyHost('manual-attention');
         return;
       }
       showBoot('Installing photo editor…', 'Downloading LightCraft ' + state.version + ' for local use.');
@@ -325,6 +350,10 @@ window.addEventListener('message', async ({source, origin, data}) => {
     }
     $('open').disabled = false;
     lockPhotoActions(true);
+    if (embedded) {
+      notifyHost('manual-ready');
+      return;
+    }
     const handed = sessionStorage.getItem('autoedit.editor.open');
     const path = handed || sessionStorage.getItem('autoedit.finetune.source');
     if (path) {
@@ -352,7 +381,7 @@ window.addEventListener('beforeunload', event => {
 
 setupEditorAssist({command, onApplied: () => {
   tell('Gemini edit applied. Adjust the sliders, compare with the original, or undo.');
-  frame.focus();
+  focusCanvas();
 }, renderThumbnail: async photo => thumbnail(frame, photo, await command('web.stats'))});
 
 act('retry', start);
@@ -365,7 +394,7 @@ act('detail', async () => {
   tell('Opening full-resolution detail…', true);
   await stage.inspectDetail();
   tell('Full resolution · 100%');
-  frame.focus();
+  focusCanvas();
 });
 act('compare', async () => {
   const source = await activeSource();
@@ -379,7 +408,7 @@ act('native-split', async () => {
   $('comparison').close();
   await command('view.detail');
   await command('view.beforeAfterSplit');
-  frame.focus();
+  focusCanvas();
 });
 act('export', async () => {
   tell('Preparing full-size export…', true);

@@ -148,3 +148,96 @@ def test_thin_image_preserves_three_bands_when_sampling():
     source = np.full((3, 4000, 3), .3, np.float32)
     result = assess_pixels(source, source)
     assert result["passed"] and result["metrics"]["sample_shape"] == [3, 1000, 3]
+
+
+def test_new_sky_rim_requires_a_brighter_peak_than_both_flanks():
+    from autoedit.quality import sky_edge_halo
+    from autoedit.imageio import luma
+
+    cfg = load_quality_config()
+    y, x = np.ogrid[:144, :512]
+    ridge = 65 + np.rint(6 * np.sin(x / 35))
+    sky = y < ridge
+    source = np.repeat(np.where(sky, 0.7, 0.34).astype(np.float32)[..., None], 3, axis=2)
+    # Darkening the sky on an imperfect feather leaves a thin bright strip of sky untouched.
+    feather = np.clip((ridge - y - 1) / 3, 0.0, 1.0)
+    output = (source - 0.30 * feather[..., None]).astype(np.float32)
+    masks = {"sky": sky & (x < 245), "cloud": sky & (x >= 245)}
+    assessment = assess_pixels(source, output, masks)
+    assert "sky_edge_halo" in assessment["failures"]
+    assert assessment["metrics"]["sky_edge_halo"] > cfg["ridge_delta"]
+    reduced = source + 0.25 * (output - source)
+    assert "sky_edge_halo" not in assess_pixels(source, reduced, masks)["failures"]
+    # An existing rim, or a stronger clean step with no bright rim, must pass.
+    assert sky_edge_halo(luma(output), luma(output), masks, cfg) == 0
+    sharp = source - 0.30 * sky[..., None]
+    assert sky_edge_halo(luma(source), luma(sharp), masks, cfg) < 1e-5
+    assert sky_edge_halo(luma(source), luma(output), {}, cfg) is None
+
+
+def test_small_light_and_skin_faults_are_measured_against_the_same_region_of_the_original():
+    source = np.full((96, 128, 3), 0.46, dtype=np.float32)
+    light = np.zeros((96, 128), bool)
+    light[13:16, 15:19] = True
+    skin = np.zeros_like(light)
+    skin[40:50, 45:52] = True
+    source[light] = 0.95
+    source[skin] = (0.4, 0.26, 0.2)
+    masks = {"sun": light, "skin": skin}
+    assert assess_pixels(source, source, masks)["passed"]
+    output = source.copy()
+    output[light] = 1.0
+    output[skin] = (0.25, 0.7, 0.25)
+    report = assess_pixels(source, output, masks)
+    assert "blown_light_source:sun" in report["failures"]
+    assert "skin_colour_shift:skin" in report["failures"]
+    assert "introduced_luma_high_clipping" not in report["failures"]
+
+
+def test_auto_retries_share_one_decision_and_return_the_accepted_editable_settings():
+    from unittest.mock import patch
+    from autoedit.contract import RunConfig
+    from autoedit.imageio import Image
+    from autoedit.pipeline import Pipeline
+
+    rgb = np.broadcast_to(np.linspace(.1, .55, 96, dtype=np.float32)[None, :, None], (64, 96, 3)).copy()
+    rgb[:32, :, 2] += .08
+    image = Image(rgb=rgb)
+    pipe = Pipeline.build(RunConfig(style="auto", scene="daylight", intensity=1, auto_unreleased=True,
+                                    backend="stub", compose=False, concepts=["sky"]))
+    fault = {"failures": ["sky_edge_halo"], "metrics": {"sky_edge_halo": .18}}
+    ok = {"failures": [], "metrics": {"sky_edge_halo": .07}}
+    resolved = []
+    with patch.object(pipe.decider, "decide", wraps=pipe.decider.decide) as decider, \
+         patch.object(pipe.segmenter, "segment", wraps=pipe.segmenter.segment) as segmenter, \
+         patch("autoedit.quality.assess_pixels", side_effect=[fault, ok]):
+        pixels, result = pipe.process_one("retry.jpg", image=image, batch_group="one shoot", on_resolved=resolved.append)
+    assert decider.call_count == segmenter.call_count == len(resolved) == 1
+    audit = result.audit["auto"]
+    assert audit["strength"] == .75 and len(audit["safety_attempts"]) == 2
+    assert "sky_edge_halo" in result.notes[-1] and result.batch_group == "one shoot"
+    with patch("autoedit.quality.assess_pixels", return_value=ok):
+        expected, fresh = pipe.process_one("retry.jpg", image=image, auto_strength=.75, batch_group="one shoot")
+    assert np.array_equal(pixels, expected) and fresh.global_settings == result.global_settings
+    stages = []
+    with patch("autoedit.quality.assess_pixels", side_effect=[fault, ok, ok]):
+        shown, replay = pipe.process_one("retry.jpg", image=image, on_stage=lambda name, rgb: stages.append(name))
+    assert stages.count("candidate_decode") == stages.count("final_float") == 1
+    assert np.array_equal(pixels, shown) and replay.audit["auto"]["safety_attempts"] == audit["safety_attempts"]
+
+
+def test_auto_quality_uses_the_active_landscape_budget_only():
+    from autoedit.quality_runner import style_thresholds
+    cfg = load_quality_config()
+    style = {"name": "auto", "intent": ["darker", "richer"], "target": "auto_landscape",
+             "clip_budget": .011, "shadow_clip_budget": .018}
+    for label in ("sunset", "mist", "twilight", "daylight", "landscape"):
+        audit = {"local_style": style, "auto": {"target": "auto_landscape", "scene": label}}
+        active = style_thresholds(audit, cfg, "auto")
+        assert active["preserve_exposure"] and active["richer"]
+        assert (active["clip_budget"], active["shadow_clip_budget"]) == (.011, .018)
+        assert active["ridge_delta"] == cfg["ridge_delta"] and active["banding_fail"] == cfg["banding_fail"]
+        assert style_thresholds(audit, cfg, "standard") == cfg
+    for info in ({"scene": "people", "target": "auto_landscape"},
+                 {"scene": "sunset", "target": None, "fallback": "Simple"}):
+        assert style_thresholds({"local_style": style, "auto": info}, cfg, "auto") == cfg

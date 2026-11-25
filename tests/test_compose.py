@@ -75,3 +75,52 @@ def test_sky_grad_requires_min_coverage():
     real["sky"][:15] = True                                  # 30%
     assert "sky_grad" in settings_for(moves, real, 1.0)
     assert Move(name="m", when="sky", shape="linear", min_coverage=0.0).min_coverage == 0.0
+
+
+def test_auto_shapes_follow_the_goal_strength_and_scene_limits():
+    import tomllib
+    from autoedit import compose
+    from autoedit.edit import style_target
+    from autoedit.imageio import luma
+    from autoedit.light import Light
+    from autoedit.paths import config_path
+
+    with open(config_path("auto.toml"), "rb") as stream:
+        cfg = tomllib.load(stream)
+    source = np.full((96, 180, 3), .37, dtype=np.float32)
+    source[:49] = (.60, .72, .91)
+    sky = np.zeros(source.shape[:2], bool)
+    sky[:49] = True
+    masks = {"sky": sky}
+    goal = {}
+    for name, mask in (("global", None), ("sky", sky)):
+        measured = style_target.features(source, mask)
+        goal[name] = {key: [value, value] for key, value in measured.items()}
+    limits = dict(cfg["limits"]["landscape"])
+    def build(target, strength=1, scene="sunset"):
+        return compose.goal_moves(source, masks, target, scene, cfg["moves"], strength, limits)
+    assert not build(goal)
+    far = {"global": {"p50": [0, 0]}, "sky": {"p50": [0, 0], "highlight_warmth": [1, 1]}}
+    assert not build(far, 0)
+    moves = build(far, 1.5)
+    by_name = {m.name: m for m in moves}
+    assert by_name["auto_sky_grad"].within == ("sky", "cloud")
+    assert by_name["auto_sky_grad"].ops["exposure"] == -0.90
+    assert by_name["auto_frame_vignette"].ops["exposure"] == -0.35
+    assert by_name["auto_horizon_glow"].ops == {"temp": 28, "grade_highlights_temp": 60}
+    assert all(m.name != "auto_horizon_glow" for m in build(far, scene="daylight"))
+    near = {"sky": {"p50": [0.0, goal["sky"]["p50"][0] - .02]}}
+    low = build(near, 0.5)[0].ops["exposure"]
+    assert np.isclose(build(near, 1)[0].ops["exposure"], 2 * low)
+    assert "auto_horizon_glow" not in compose.settings_for(moves, masks, .8)
+    light = Light(.5, .22, .03, "concept", 1.)
+    settings = compose.settings_for(moves, masks, .8, light)
+    layers = compose.plan(moves, masks, source.shape[:2], .8, light, guide=luma(source),
+                          feather_px={"sky": .02}, region_masks=masks)
+    assert {name: ops for name, _, ops in layers} == settings
+    sky_layer = next(alpha for name, alpha, _ in layers if name == "auto_sky_grad")
+    assert sky_layer[49:].max() < .04 and sky_layer[20].mean() > .5
+    # The existing fit uses 0.20 EV in the sky. Both gradients together may use just 0.05 more.
+    clipped = compose.goal_moves(source, masks, far, "daylight", cfg["moves"], 1.5,
+                                 {**limits, "exposure": .25}, {"exposure": -.1}, {"sky": {"exposure": -.1}})
+    assert np.isclose(sum(m.ops.get("exposure", 0) for m in clipped), -.05)

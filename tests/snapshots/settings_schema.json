@@ -50,7 +50,8 @@
         "editorial",
         "warm_film",
         "dramatic",
-        "cinematic_preserved"
+        "cinematic_preserved",
+        "auto"
       ],
       "help": "The overall look: which regions are edited and how strongly.",
       "advanced": false

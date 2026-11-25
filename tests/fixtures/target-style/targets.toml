@@ -1,0 +1,29 @@
+# Custom test styles exercise target, region and export machinery independently of shipped looks.
+[lamp_hold.meta]
+photos = 0
+[lamp_hold.global]
+p50 = [0.392, 0.490]
+[lamp_hold.lights]
+hold = true
+
+[rich_denoised.meta]
+photos = 0
+[rich_denoised.global]
+p50 = [0.34, 0.48]
+[rich_denoised.sky]
+p50 = [0.46, 0.68]
+warmth = [0.02, 0.15]
+[rich_denoised.water]
+p50 = [0.30, 0.46]
+[rich_denoised.mountain]
+p50 = [0.27, 0.40]
+[rich_denoised.trees]
+p50 = [0.21, 0.34]
+
+[shaped_moves.meta]
+photos = 0
+[shaped_moves.global]
+p10 = [0.07, 0.14]
+chroma = [0.09, 0.18]
+[shaped_moves.sky]
+p50 = [0.711284, 0.903194]

@@ -19,14 +19,15 @@ from .imageio import Image, luma
 from . import stats, tonemetrics
 
 
-_INTEGER_FIELDS = {"schema_version", "max_metric_edge", "chunk_rows", "texture_min_pairs",
+_INTEGER_FIELDS = {"schema_version", "max_metric_edge", "chunk_rows", "texture_min_pairs", "ridge_min_crossings",
                    "artifact_patch_size", "artifact_grid"}
 _NUMERIC_FIELDS = _INTEGER_FIELDS | {
     "shadow_level", "highlight_level", "clip_budget", "shadow_clip_budget", "dark_source",
     "dark_regress", "sat_delta", "chroma_delta", "banding_fail", "texture_high_min",
     "texture_high_max", "texture_max_step_codes", "texture_min_retention",
     "texture_max_new_plateau", "halo_delta", "halo_percentile", "neutral_chroma_max",
-    "neutral_luma_min", "neutral_luma_max", "finite_tolerance",
+    "neutral_luma_min", "neutral_luma_max", "finite_tolerance", "ridge_radius", "ridge_percentile", "ridge_delta",
+    "light_clip_fraction", "skin_colour_delta", "skin_colour_percentile",
 }
 
 
@@ -63,8 +64,13 @@ def _validate_quality_config(cfg: dict) -> dict:
                       ("neutral_luma_min", "neutral_luma_max")):
         if not 0 <= cfg[low] < cfg[high] <= 1:
             raise ValueError(f"quality {low}/{high} must be ordered within [0, 1]")
-    if cfg["halo_percentile"] > 100:
-        raise ValueError("quality halo_percentile must be within [0, 100]")
+    for field in ("halo_percentile", "ridge_percentile", "skin_colour_percentile"):
+        if cfg[field] > 100:
+            raise ValueError(f"quality {field} must be within [0, 100]")
+    if not 0 < cfg["ridge_radius"] < 0.5:
+        raise ValueError("quality ridge_radius must be a positive fraction smaller than half the frame")
+    if cfg["light_clip_fraction"] > 1:
+        raise ValueError("quality light_clip_fraction must be within [0, 1]")
     return cfg
 
 
@@ -206,6 +212,68 @@ def _texture(source, output, cfg, masks=None, sampled_luma=None):
             "maximum_new_plateau": max((r["new_plateau"] for r in reports), default=None)}
 
 
+def sky_edge_halo(before_luma, after_luma, masks, cfg):
+    """New light above both flanks of the sky edge, discounted by an existing rim at the same pixel.
+
+    Probe horizontal and vertical crossings so a steep ridge or building edge counts too.
+    Ignore frame edges and short slivers that do not have sky and land on opposite flanks.
+    Sky and cloud are joined before probing their boundary.
+    """
+    regions = [masks[name] for name in ("sky", "cloud") if name in masks]
+    if not regions:
+        return None
+    sky = np.logical_or.reduce(regions)
+    radius = max(2, round(cfg["ridge_radius"] * max(sky.shape)))
+    wing = max(1, radius // 3)
+    offsets = np.arange(-radius, radius + 1)[:, None]
+    scores = []
+    for before, after, mask in ((before_luma, after_luma, sky), (before_luma.T, after_luma.T, sky.T)):
+        y, x = np.nonzero(mask[1:] != mask[:-1])
+        inside = (y >= radius) & (y + radius < mask.shape[0])
+        y, x = y[inside], x[inside]
+        across = (mask[y-radius, x] == mask[y, x]) & (mask[y+radius, x] == mask[y+1, x])
+        y, x = y[across], x[across]
+        # Cap scratch memory even on an exceptionally fragmented proxy mask.
+        for i in range(0, y.size, 4096):
+            rows = y[i:i+4096][None, :] + offsets
+            cols = x[i:i+4096]
+            def excess(luminance):
+                profile = luminance[rows, cols]
+                flank = np.maximum(profile[:wing].mean(axis=0), profile[-wing:].mean(axis=0))
+                return profile[radius//2:-(radius//2)] - flank
+            introduced = excess(after) - np.maximum(0.0, excess(before))
+            scores.append(np.maximum(0.0, introduced.max(axis=0)))
+    if sum(arr.size for arr in scores) < cfg["ridge_min_crossings"]:
+        return None
+    return float(np.percentile(np.concatenate(scores), cfg["ridge_percentile"]))
+
+
+def _protected_regions(source, output, masks, cfg, metrics, failures):
+    """Small lights and changes to skin colour can be invisible in frame-wide statistics."""
+    from .edit.oklab import linear_to_oklab
+    from .imageio import srgb_to_linear
+
+    for name in ("sun", "lights"):
+        mask = masks.get(name)
+        if mask is not None and mask.any():
+            high = cfg["highlight_level"]
+            newly_blown = (luma(source[mask]) <= high) & (luma(output[mask]) > high)
+            fraction = float(newly_blown.mean())
+            metrics[f"{name}_newly_blown_fraction"] = fraction
+            if fraction > cfg["light_clip_fraction"]:
+                failures.append(f"blown_light_source:{name}")
+    for name in ("skin", "face"):
+        mask = masks.get(name)
+        if mask is not None and mask.any():
+            original = linear_to_oklab(srgb_to_linear(source[mask]))
+            edited = linear_to_oklab(srgb_to_linear(output[mask]))
+            chromatic_distance = np.linalg.norm(edited[:, 1:] - original[:, 1:], axis=1)
+            shift = float(np.percentile(chromatic_distance, cfg["skin_colour_percentile"]))
+            metrics[f"{name}_colour_shift"] = shift
+            if shift > cfg["skin_colour_delta"]:
+                failures.append(f"skin_colour_shift:{name}")
+
+
 def assess_pixels(source, output, masks=None, thresholds=None, prepared=None) -> dict:
     """Return {passed, failures, metrics, scopes}; never modify either RGB input.
 
@@ -222,7 +290,7 @@ def assess_pixels(source, output, masks=None, thresholds=None, prepared=None) ->
               "scopes": {"clipping": "all pixels, chunked", "global": "deterministic spatial sample",
                          "texture": "native patches, RGB8 luminance differences",
                          "banding": "source-relative sampled smooth regions",
-                         "halo": "sampled mask-boundary curvature; unavailable without masks"}}
+                         "halo": "sampled mask-boundary curvature and new bright rim across the sky edge"}}
     if a.shape != b.shape or a.ndim != 3 or a.shape[-1] != 3 or min(a.shape[:2]) < 3:
         failures.append("invalid_shape")
         return result
@@ -319,5 +387,10 @@ def assess_pixels(source, output, masks=None, thresholds=None, prepared=None) ->
     metrics["boundary_curvature_p99"] = float(np.percentile(curvature[boundary], cfg["halo_percentile"])) if boundary.any() else None
     if boundary.any() and metrics["boundary_curvature_p99"] > cfg["halo_delta"]:
         failures.append("severe_region_boundary_artifact")
+    ridge = sky_edge_halo(al, bl, sampled_masks, cfg)
+    metrics["sky_edge_halo"] = ridge
+    if ridge is not None and ridge > cfg["ridge_delta"]:
+        failures.append("sky_edge_halo")
+    _protected_regions(sa, sb, sampled_masks, cfg, metrics, failures)
     result["passed"] = not failures
     return result
