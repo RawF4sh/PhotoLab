@@ -401,9 +401,9 @@ def test_fivek_pairs_are_chosen_by_time_of_day_with_counts():
 
 
 def test_fivek_per_kind_number_and_cap_are_respected():
-    net = made_up_index({"night": 45, "dawn or dusk": 41, "day": 20})
+    net = made_up_index({"night": 50, "dawn or dusk": 95, "day": 20})
     rows, text = run_discover(net, 1000)
-    assert kinds_of(rows) == corpus.FIVEK_PAIRS_PER_KIND      # 45, 41 and 20 are each more than wanted
+    assert kinds_of(rows) == corpus.FIVEK_PAIRS_PER_KIND      # 50, 95 and 20 are each more than wanted
     assert "fewer than" not in text
     rows, _ = run_discover(net, 30)
     assert len(rows) == 30

@@ -408,6 +408,26 @@ def test_richer_is_declared_by_a_style_never_by_a_config_file(tmp_path):
     assert review and warnings and score < gates.assess(pre, vivid, richer=True)[0]
 
 
+def test_a_style_run_setting_reaches_a_command_line_run(tmp_path):
+    """The packaged defaults.toml says denoise = false. That value alone must not hide a style's
+    run setting on the command line, as it did not in the app; a file or a flag still wins."""
+    import argparse
+
+    from autoedit.cli import load_run_config
+    from autoedit.pipeline import Pipeline
+
+    def cfg(**kw):
+        args = argparse.Namespace(configs_dir=None, backend="stub", **kw)
+        return Pipeline.build(load_run_config(args)).cfg
+
+    assert cfg(style="sunset_glow").denoise
+    assert not cfg(style="natural").denoise and not cfg().denoise
+    assert not cfg(style="sunset_glow", denoise=False).denoise
+    run = tmp_path / "run.toml"
+    run.write_text("[run]\ndenoise = false\n")
+    assert not cfg(style="sunset_glow", config=str(run)).denoise
+
+
 def test_lights_rules_golden():
     """[opt_in.lights]: the lamps take back the frame's lift by how dark the whole frame is, and
     pull their highlights down by how much of them is clipped. A lit area that is mostly clipped

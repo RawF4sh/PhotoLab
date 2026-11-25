@@ -24,6 +24,12 @@ All notable changes to this project are documented here. Format follows
   are in the packaged candidate: Blue hour has no brightness range for sky or water any more (it
   greyed night skies), and the lamp rule lets go of a lit area that is mostly clipped (it turned a
   blown lit sign grey). Both act only when Blue hour is named.
+- Blue hour ran a round on twilight frames, its kind, and two more changes are in the packaged
+  candidate: noise reduction on, and a whole-frame lift of at most 1.0 EV. On 24 held-back photos
+  it beats Standard on 11 of the 15 that differ; one clear loss keeps it from the menu until the
+  owner's vote.
+- Fixed: a style's `denoise` run setting never applied on the command line, because the packaged
+  `defaults.toml` value counted as chosen. The app was not affected; default runs are unchanged.
 - The loop's keep rule counts a review mark as new only when Standard does not give the same
   photo one for the same kinds of reason. `web_round.py score` reads that from a `vs-standard/`
   folder beside the sheets; without it every mark counts, as before.

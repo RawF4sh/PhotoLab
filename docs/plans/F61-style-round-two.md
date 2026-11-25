@@ -7,8 +7,10 @@ O5) and asked for the engine changes and the loop tools to be built. T1 to T8 ar
 [built and checked](#built-and-checked-2026-11-24). On the owner's word the FiveK originals were
 fetched the same day and the [Blue hour round](#the-blue-hour-round-2026-11-24) ran: five
 iterations on 16 night originals. The owner kept its second iteration (O7), so two changes went
-into the packaged candidate. The round is stopped for one more decision of the owner (O8), and
-its held-back photos are still shut.
+into the packaged candidate. On the owner's answer to O8 the last 49 FiveK pairs were fetched and
+Blue hour ran a [round on twilight frames](#the-twilight-round-2026-11-24): on its 24 held-back
+photos it beats Standard on 11 of the 15 that differ and is closer to the retoucher, and misses the
+bar by one clear loss. The owner's blind vote is next.
 
 ## Goal
 
@@ -261,7 +263,8 @@ For a style, on its held-back originals:
 | O5 | The six blind galleries of round one | **Answered on 2026-11-24: skip the vote.** They show finished photos edited a second time, which is the wrong test. |
 | O6 | Standard is marked for review on about a quarter of blue-hour photos | A separate item for the first improvement loop. Not part of this round. The Blue hour round gave it numbers and made it block a fix: see O7 and the round's findings. |
 | O7 | Keep iteration 2 of the Blue hour round? It won 10 of the 10 photos that differ, and the keep rule rejects it for one new review mark that Standard gives the same photo. | **Answered on 2026-11-24: yes, keep it.** A review mark counts as new only when Standard does not give the photo one for the same kinds of reason. Iterations 2 and 5 are in the packaged candidate. |
-| O8 | Which photos is Blue hour for? On night frames it does not beat Standard. On dusk frames it wins where buildings fill the frame at twilight and loses on sunsets. | Twilight frames with buildings and lamps, taken from both FiveK labels by a look at the original, before any result. Sunsets stay with Sunset glow. That needs more dusk pairs than are here, so a new word to fetch. |
+| O8 | Which photos is Blue hour for? On night frames it does not beat Standard. On dusk frames it wins where buildings fill the frame at twilight and loses on sunsets. | **Answered on 2026-11-24: yes, twilight frames; fetch the dusk pairs.** See the twilight round. |
+| O9 | Blue hour on twilight frames misses the bar by one clear loss (a lit fountain blown to white) and passes the other three. Release it? | The owner's blind vote on the 24 held-back photos decides, as the bar says. If it does, `tested = true` and Blue hour joins the menu with the note "for towns and cities at twilight". |
 
 ## Built and checked (2026-11-24)
 
@@ -463,6 +466,61 @@ excused. The same check found the `kinds.txt` line, the removed ranges and the l
 - The panel for defects was not rendered, for the same reason.
 - Sunset glow's round has not started. Its 16 tuning photos were looked at with Blue hour for
   point 5; its held-back photos are shut.
+
+## The twilight round (2026-11-24)
+
+**Result: the bar is missed by one clear loss; the owner's vote is next (O9).** Ledger:
+`out-webloop/LEDGER.md`, iterations: `out-webloop/twilight/round-2/`. Neither is committed.
+
+**Photos.** The plan took the last 49 FiveK pairs of the approved 150 (all dawn or dusk); 150 pairs,
+8.7 GB are here. An independent checker sorted the 133 night and dusk originals from untouched
+contact sheets, before any result: 43 twilight (the sky still holds light, buildings or lamps a
+main subject), 44 sunset, 31 night, 15 other. Twilight became Blue hour's kind, by a line per
+photo of `kinds.txt`. The split lives in `out-webloop/twilight/round-2/`, with every photo already
+seen with results listed so that it can only be a tuning photo: 16 tuning photos (13 seen before)
+and 24 held-back photos, none ever rendered.
+
+**Start.** The packaged Blue hour against Standard on the tuning photos: 2 better, 8 same, 6 worse.
+
+| # | One change | Blind against the best so far | Distance | Kept |
+| --- | --- | --- | --- | --- |
+| 1 | Noise reduction on (`[blue_hour.run] denoise = true`) | 4 / 11 / 1 | 0.469 and 0.469 | yes |
+| 2 | Pull halved, 0.8 to 0.4 | 0 / 15 / 1 | 0.469 and 0.469 | no |
+| 3 | The sky held out of the frame's lift | 3 / 11 / 2, a clear halo around windmill sails | 0.469 to 0.503 | no |
+| 4 | The whole frame lift capped at 1.0 EV | 2 / 13 / 1 | 0.469 to 0.468 | yes |
+
+After iteration 1 the candidate stood at 6 better, 5 same, 5 worse against Standard on the tuning
+photos.
+
+**A bug found on the way.** On the command line, and so in every loop tool, a style's run setting
+`denoise` never applied: `defaults.toml` sets `denoise = false`, and a value from the packaged
+defaults counted as chosen. The app reads no defaults file, so there it worked. Sunset glow's
+`denoise = true` had therefore never acted in a loop round. Fixed in `cli.load_run_config`, with a
+test; default runs are unchanged.
+
+**The bar, on the 24 held-back photos against Standard** (`web_round.py bar`):
+
+| Bar | Result | |
+| --- | --- | --- |
+| Better on 70 % or more of at least 10 decided | 11 better, 4 worse, 9 same: 73 % of 15 | met |
+| Clearly worse on none | one: a lit fountain whose spray is blown to a flat white blob | **missed** |
+| No new review mark against Standard | none | met |
+| Distance from the retoucher smaller than Standard's | 0.531 against 0.593, 22 pairs | met |
+| The panel for defects | not rendered | open |
+| The owner's blind vote | gallery ready | open |
+
+**Packaged.** The two kept changes are in `configs/styles.toml`; Blue hour stays `tested = false`.
+
+**Checks of the packaged change.** Both suites pass (1,371 and 4 skipped on the system Python,
+1,375 on `.venv`). The stub run and eight RAW files are byte-identical to the commit before the
+styles. The tone report with Blue hour on the 110 RAW files: 0 dark made darker, 0 pushed into
+clipping; 91 accepted as proposed, 18 blended, 1 left as the original, as before the round.
+
+**What it means.** Blue hour is a style for towns and cities at twilight. There it does what the
+owner's bridge showed: the buildings come up while the sky keeps its colour, and a blind checker
+prefers it to Standard on nearly three of four photos that differ. What it still does badly is a
+large bright light source: a fountain, glass, lit windows that bloom. The FiveK budget is used up,
+so another tuning round needs new held-back photos (the owner's own, or a new approval).
 
 ## Left out, and what would bring each back
 

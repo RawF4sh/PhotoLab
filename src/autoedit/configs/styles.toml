@@ -40,8 +40,12 @@ look = "natural"
 concepts = ["sky", "water", "building", "bridge", "lights", "skin", "snow"]
 target = "blue_hour"
 pull = 0.8
-limits = { exposure = 1.5, shadows_ev = 1.5, lights_ev = 0.7 }
+# F61 twilight round: the whole frame lift is capped at 1.0 EV (it lifted grain into a night
+# sky at ISO 3200), and noise reduction is on (cleaner skies from ISO 1250 up).
+limits = { exposure = 1.0, shadows_ev = 1.5, lights_ev = 0.7 }
 tested = false
+[blue_hour.run]
+denoise = true
 
 [sunset_glow]
 label = "Sunset glow"

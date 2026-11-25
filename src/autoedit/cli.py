@@ -83,7 +83,8 @@ def load_run_config(args) -> RunConfig:
     configs_dir = args.configs_dir or paths.configs_dir()
     profile = getattr(args, "profile", None)
     defaults_path = os.path.join(configs_dir, "defaults.toml")
-    kw = _flatten(paths.read_config(defaults_path))
+    packaged = _flatten(paths.read_config(defaults_path))
+    kw = dict(packaged)
     kw.update(paths.config_paths(configs_dir, profile))
     # What the user wrote down: the profile's defaults and the run file.
     explicit = _flatten((paths._overlay("defaults.toml", profile) or ("", {}))[1])
@@ -111,6 +112,7 @@ def load_run_config(args) -> RunConfig:
 
         kw.update(exports.preset_kwargs(
             preset, kw.get("exports_path") or paths.config_path("exports.toml", packaged_fallback=True)))
+    chosen = {k for k, v in kw.items() if k not in packaged or packaged[k] != v}   # a genre or a preset
     kw.update(explicit)
     kw["export"] = preset or None
     kw["genre"] = genre or None
@@ -184,6 +186,13 @@ def load_run_config(args) -> RunConfig:
     if concepts:
         kw["concepts"] = [c.strip() for c in concepts.split(",") if c.strip()]
     kw["profile_dir"] = profile
+    # A style's run settings ([STYLE.run] in styles.toml) yield only to a value someone chose: a
+    # genre, a preset, a file or a flag. The packaged default alone must not count as chosen, or it
+    # always wins (Pipeline.build applies a style's run settings to the fields left unset).
+    # ponytail: a genre that sets the packaged value itself is taken as unset too.
+    for k in ("denoise", "palette", "palette_strength"):
+        if k in kw and k not in chosen and k not in explicit and overrides.get(k) is None:
+            del kw[k]
     return RunConfig(**kw)
 
 

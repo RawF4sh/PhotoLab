@@ -388,7 +388,9 @@ def discover_commons(net, limit):
 FIVEK_KIND_OF_TIME = {"night": "blue_hour", "dawn or dusk": "sunset", "day": "control"}
 # Blue hour takes four more than the 40 the split needs: a shoot gives at most two photos to a
 # side, and the 40 night pairs first fetched came to 39 usable ones.
-FIVEK_PAIRS_PER_KIND = {"blue_hour": 44, "sunset": 40, "control": 16}
+# Dawn or dusk takes 89: the last 49 pairs of the owner's 150 (2026-11-24), so that twilight
+# frames with buildings can be sorted out of them for Blue hour (F61, O8).
+FIVEK_PAIRS_PER_KIND = {"blue_hour": 44, "sunset": 89, "control": 16}
 FIVEK_SEED = 61
 
 

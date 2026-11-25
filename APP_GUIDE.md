@@ -665,7 +665,7 @@ Your own differences can live in a **profile** folder (`--profile DIR`, `AUTOEDI
 ## 14. Testing
 
 Runnable both as `PYTHONPATH=src python3 tests/run_all.py` (no pytest needed) and pytest-collectable —
-**1,374 tests** across 141 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`; name test files after it to run a part). A test whose optional library is missing prints SKIP: four do on an interpreter without `tifffile`. Coverage: each edit op's math, identity no-op, real
+**1,375 tests** across 141 files, currently green (run `PYTHONPATH=src python3 tests/run_all.py`; name test files after it to run a part). A test whose optional library is missing prints SKIP: four do on an interpreter without `tifffile`. Coverage: each edit op's math, identity no-op, real
 dehaze, OKLab palette (direction / neutral protection / gamut / auto-grade restraint), banding
 detector + dither + sidecar consistency, segmentation cache, RAW+JPEG grouping, EXIF orientation
 (all 8 values), decode robustness (grayscale/RGBA/CMYK/16-bit), the `veil` atmospheric-haze
