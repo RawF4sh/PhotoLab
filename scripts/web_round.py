@@ -32,6 +32,9 @@ from autoedit import tonemetrics as tm
 from autoedit.contract import Result
 
 ROLES = ("best", "candidate")
+BAR_DECIDED = 10  # photos that must be Better or Worse for the bar
+BAR_SHARE = 0.7  # Better divided by decided
+BAR_PAIRS = 5  # pairs both sides can be compared on before the distance is part of the bar
 NATIVE_FLAGS = ("dark_made_darker", "bright_pushed_to_clip", "shadow_pushed_to_clip")
 
 
@@ -71,6 +74,11 @@ def native_flags(key):
     return flagged
 
 
+def review_kinds(reason):
+    """The kinds of warning in a review reason, without their numbers."""
+    return {re.sub(r"[-+]?\d+(?:\.\d+)?", "#", part).strip() for part in (reason or "").split(";") if part.strip()}
+
+
 def checksum(path):
     with path.open("rb") as file:
         return hashlib.file_digest(file, "sha256").hexdigest()
@@ -85,19 +93,26 @@ def frozen_inputs(directory, panel):
     if root is None:
         raise ValueError("the iteration must belong to a frozen web corpus split")
     split = read_json(root / "split.json")
-    controls = split["control"]["panel"]
+    controls = split.get("control", {}).get("panel", [])
     if len(controls) != 16 or len(set(controls)) != 16:
         raise ValueError("the frozen Standard panel needs sixteen distinct photographs")
-    panels = [roles["panel"] for kind, roles in split.items() if kind != "control"]
-    if len(panel) != 16 or not any(
-        set(ids) == set(panel) and len(ids) == 16 for ids in panels
-    ):
+    judged = [
+        kind
+        for kind, roles in split.items()
+        if kind != "control"
+        and len(roles["panel"]) == 16
+        and set(roles["panel"]) == set(panel)
+    ]
+    if len(panel) != 16 or not judged:
         raise ValueError(
             "blind judging must cover a complete sixteen-photo frozen style panel"
         )
+    own = root / f"pairs-{judged[0]}.txt"  # round two keeps one pairs list per kind
     entries = [
         line.split("\t")
-        for line in (root / "pairs-evaluation.txt").read_text().splitlines()
+        for line in (own if own.is_file() else root / "pairs-evaluation.txt")
+        .read_text()
+        .splitlines()
         if line.strip()
     ]
     if not entries or any(len(entry) != 2 or not all(entry) for entry in entries):
@@ -159,6 +174,112 @@ def check_tone(doc, panel):
     return {"safe_as_rendered": safe, "failures": failed}
 
 
+def reference_medians(distances, rows):
+    """The median distance from the reference per arm, over the pairs both arms can be compared on.
+    Also the pairs left out, those where only the candidate cannot be compared, and how many
+    were compared."""
+    measures = {role: [] for role in ROLES}
+    excluded, candidate_lost = [], []
+    for stem, values in distances.items():
+        if not all(values[side]["comparable"] for side in "AB"):
+            excluded.append(stem)
+            if any(values[side]["comparable"] and rows[stem][side] == "best" for side in "AB"):
+                candidate_lost.append(stem)
+            continue
+        for side in "AB":
+            measures[rows[stem][side]].append(values[side]["cells_ev"])
+    median = {role: statistics.median(x) for role, x in measures.items()} if measures["best"] else None
+    return median, excluded, candidate_lost, len(measures["best"])
+
+
+def outcomes(answers, key):
+    """Each vote as Better, Same or Worse for the candidate, and the clear losses."""
+    results, clearly_worse = {}, []
+    for stem, (pick, reason) in answers.items():
+        results[stem] = result = (
+            "Same"
+            if pick == "="
+            else "Better"
+            if key["rows"][stem][pick] == "candidate"
+            else "Worse"
+        )
+        if result == "Worse" and (
+            reason.upper().startswith("CLEAR")
+            or re.search(r"(?<!not )(?<!n't )\bclear(ly)?\b", reason, re.I)
+        ):
+            clearly_worse.append(stem)
+    return results, clearly_worse
+
+
+def bar(directory):
+    """The bar of F61 for one held-back comparison (best = Standard, candidate = the style)."""
+    answers = votes(directory / "verdicts.txt")
+    key = read_json(directory / "sheets/key.json")
+    if set(answers) != set(key["rows"]):
+        raise ValueError("judge every photo exactly once before the bar")
+    check_native_backend(key, set(answers), "held-back comparison")
+    results, clear_losses = outcomes(answers, key)
+    counts = Counter(results.values())
+    better, worse = counts["Better"], counts["Worse"]
+    decided = better + worse
+    share = better / decided if decided else None
+    flags = native_flags(key)
+    marks = sorted(
+        stem
+        for stem, name in flags["candidate"] - flags["best"]
+        if name == "needs_review"
+    )
+    changed = sum(
+        checksum(Path(key["renders"]["best"]) / f"{stem}.jpg")
+        != checksum(Path(key["renders"]["candidate"]) / f"{stem}.jpg")
+        for stem in key["rows"]
+    )
+    by_shoot = {}
+    root = next(
+        (p for p in (directory, *directory.parents) if (p / "split.json").is_file()),
+        None,
+    )
+    if root is not None and (root / "shoots.json").is_file():
+        shoots = read_json(root / "shoots.json")
+        for stem, result in results.items():
+            tally = by_shoot.setdefault(
+                shoots.get(stem, "unknown"), dict(better=0, worse=0, same=0)
+            )
+            tally[result.lower()] += 1
+    # The distance from the reference is part of the bar when at least BAR_PAIRS photos came with
+    # a reference. Then as many must be comparable on both sides, and the style must be closer.
+    median, candidate_lost, compared, distances = None, [], 0, {}
+    measured = directory / "sheets/distances.json"
+    if measured.is_file():
+        distances = read_json(measured)
+        if not set(distances) <= set(key["rows"]):
+            raise ValueError("the reference distances name photos that were not judged")
+        median, _, candidate_lost, compared = reference_medians(distances, key["rows"])
+    closer = len(distances) < BAR_PAIRS or (
+        compared >= BAR_PAIRS and median["candidate"] < median["best"]
+    )
+    return dict(
+        better=better,
+        worse=worse,
+        same=counts["Same"],
+        decided=decided,
+        share=share,
+        clear_losses=clear_losses,
+        new_review_marks=marks,
+        changed=changed,
+        median_36_cell_ev=median,
+        reference_pairs=compared,
+        candidate_not_comparable=candidate_lost,
+        by_shoot=by_shoot,
+        passes=decided >= BAR_DECIDED
+        and share >= BAR_SHARE
+        and not clear_losses
+        and not marks
+        and closer
+        and not candidate_lost,
+    )
+
+
 def score(directory):
     # Require the blind file before loading the roll's key.
     answers = votes(directory / "verdicts.txt")
@@ -167,22 +288,8 @@ def score(directory):
         raise ValueError("judge every panel photo exactly once before scoring")
     expected_controls, expected_pairs = frozen_inputs(directory, answers)
     check_native_backend(key, set(answers), "style panel")
-    counts = Counter()
-    clearly_worse = []
-    for stem, (pick, reason) in answers.items():
-        result = (
-            "Same"
-            if pick == "="
-            else "Better"
-            if key["rows"][stem][pick] == "candidate"
-            else "Worse"
-        )
-        counts[result] += 1
-        if result == "Worse" and (
-            reason.upper().startswith("CLEAR")
-            or re.search(r"(?<!not )(?<!n't )\bclear(ly)?\b", reason, re.I)
-        ):
-            clearly_worse.append(stem)
+    results, clearly_worse = outcomes(answers, key)
+    counts = Counter(results.values())
     flags = native_flags(key)
     controls = read_json(directory / "controls/key.json")
     pairs = read_json(directory / "pairs/key.json")
@@ -203,28 +310,39 @@ def score(directory):
     distances = read_json(directory / "pairs/distances.json")
     if set(distances) != set(pairs["rows"]):
         raise ValueError("reference coverage missing")
-    measures = {role: [] for role in ROLES}
-    excluded = []
-    candidate_lost = []
-    for stem, values in distances.items():
-        if not all(values[side]["comparable"] for side in "AB"):
-            excluded.append(stem)
-            if any(
-                values[side]["comparable"] and pairs["rows"][stem][side] == "best"
-                for side in "AB"
-            ):
-                candidate_lost.append(stem)
-            continue
-        for side in "AB":
-            role = pairs["rows"][stem][side]
-            measures[role].append(values[side]["cells_ev"])
-    if not measures["best"]:
+    median, excluded, candidate_lost, compared = reference_medians(distances, pairs["rows"])
+    if median is None:
         raise ValueError("no comparable expert reference pairs")
-    median = {role: statistics.median(x) for role, x in measures.items()}
     tone = {
         r: check_tone(read_json(directory / f"tone-{r}.json"), answers) for r in ROLES
     }
     new_flags = sorted(flags["candidate"] - flags["best"])
+    # O7: a review mark is new only when Standard does not give the same photo one. The key of a
+    # run of the same panel with Standard as its best arm is optional.
+    shared = None
+    vs_path = directory / "vs-standard/key.json"
+    if vs_path.is_file():
+        vs = read_json(vs_path)
+        if set(vs["rows"]) != set(answers):
+            raise ValueError("the Standard comparison did not cover the judged panel")
+        if vs["candidate"] != key["candidate"]:
+            raise ValueError("the Standard comparison was built from another candidate")
+        check_native_backend(vs, set(answers), "Standard on the style panel")
+        docs = {s: read_json(Path(vs["renders"]["best"]) / f"{s}.autoedit.json") for s in answers}
+        if any(d.get("style") not in ("natural", "standard") or d.get("audit", {}).get("local_style")
+               for d in docs.values()):
+            raise ValueError("the Standard comparison's best arm was not rendered under Standard")
+        if vs["best"] not in (key["best"], key["candidate"]):
+            raise ValueError("the Standard comparison's best arm came from another config folder")
+        standard = {s for s, n in native_flags(vs)["best"] if n == "needs_review"}
+
+        def excused(stem):
+            # Same kinds of warning only: a kind Standard lacks on that photo is a new problem.
+            mine = review_kinds(read_json(Path(key["renders"]["candidate"]) / f"{stem}.autoedit.json").get("review_reason"))
+            return stem in standard and bool(mine) and mine <= review_kinds(docs[stem].get("review_reason"))
+
+        shared = sorted(s for s, n in new_flags if n == "needs_review" and excused(s))
+        new_flags = [f for f in new_flags if not (f[1] == "needs_review" and f[0] in shared)]
     gates = {
         "blind_preference": counts["Better"] > counts["Worse"] and not clearly_worse,
         "native": not new_flags,
@@ -243,7 +361,7 @@ def score(directory):
         tone=tone,
         new_native_flags=new_flags,
         changed_controls=changed,
-        reference_pairs=len(measures["best"]),
+        reference_pairs=compared,
         excluded_pairs=excluded,
         reasons=[
             f"pair {stem}: the candidate side cannot be compared with the expert edit"
@@ -251,12 +369,19 @@ def score(directory):
         ],
         median_36_cell_ev=median,
     )
+    if shared is not None:
+        summary["review_marks_standard_gives_too"] = shared
     write_atomic(directory / "gates.json", json.dumps(summary, indent=2).encode())
     return summary
 
 
 def gallery(sheets, listed, manifest, out, seed):
-    sources = [Path(line) for line in listed.read_text().splitlines() if line.strip()]
+    # A line is a photo, optionally followed by a tab and a reference path (ignored here).
+    sources = [
+        Path(line.split("\t")[0])
+        for line in listed.read_text().splitlines()
+        if line.strip()
+    ]
     with manifest.open(newline="") as fh:
         by_id = {r["id"]: r for r in csv.DictReader(fh)}
     key = read_json(sheets / "key.json")
@@ -266,23 +391,34 @@ def gallery(sheets, listed, manifest, out, seed):
         )
     split = read_json(listed.parent / "split.json")
     ids = [p.stem for p in sources]
-    if len(set(ids)) != len(ids) or not any(
-        ids == roles["holdout"] for roles in split.values()
-    ):
+    # Round two's control has a panel only, so a kind may have no held-back group.
+    kind = next((k for k, roles in split.items() if ids == roles.get("holdout")), None)
+    if len(set(ids)) != len(ids) or kind is None:
         raise ValueError("gallery list must match a frozen held-back group")
+    shoots_file = listed.parent / "shoots.json"
+    shoots = read_json(shoots_file) if shoots_file.is_file() else None
     entries = []
     for path in sources:
-        row = by_id[path.stem]
-        if (
-            row["source"] != "commons"
-            or row["role"] != "finished"
-            or row["track"] != "L"
-        ):
-            raise ValueError(
-                "owner gallery takes only licensed held-back style photographs"
-            )
-        if (manifest.parent / row["file"]).resolve() != path.resolve():
-            raise ValueError("holdout list does not match corpus provenance")
+        row = by_id.get(path.stem)
+        if row is None:
+            # the owner's own original: no manifest row, in owner/originals/<kind>/
+            parts = path.resolve().parent.parts[-3:]
+            home = (manifest.parent / "owner" / "originals").resolve()
+            if len(parts) < 3 or path.resolve().parent.parent != home:
+                raise ValueError(
+                    "owner gallery takes only licensed held-back style photographs"
+                )
+            row = dict(kind=parts[2], author="owner", sha256=checksum(path))
+        else:
+            if (row["source"], row["role"], row["track"]) not in (
+                ("commons", "finished", "L"),
+                ("fivek", "before", "L"),
+            ):
+                raise ValueError(
+                    "owner gallery takes only licensed held-back style photographs"
+                )
+            if (manifest.parent / row["file"]).resolve() != path.resolve():
+                raise ValueError("holdout list does not match corpus provenance")
         methods = {}
         for role, method in zip(ROLES, ("baseline", "autoedit")):
             root = Path(key["renders"][role]).resolve()
@@ -290,14 +426,18 @@ def gallery(sheets, listed, manifest, out, seed):
                 "path": str(root / f"{path.stem}.jpg"),
                 "sidecar": str(root / f"{path.stem}.autoedit.json"),
             }
-        group = hashlib.sha256(same_author(row["author"]).encode()).hexdigest()[:16]
+        group = (
+            shoots.get(path.stem, "unknown")
+            if shoots
+            else hashlib.sha256(same_author(row["author"]).encode()).hexdigest()[:16]
+        )
         entries.append(
             dict(
                 capture_id=path.stem,
                 source=str(path.resolve()),
                 source_sha256=row["sha256"],
                 group=group,
-                scene=row["kind"],
+                scene=kind,
                 split="holdout",
                 methods=methods,
             )
@@ -314,6 +454,8 @@ if __name__ == "__main__":
     commands = parser.add_subparsers(dest="command", required=True)
     audit = commands.add_parser("score")
     audit.add_argument("directory", type=Path)
+    threshold = commands.add_parser("bar")
+    threshold.add_argument("directory", type=Path)
     publish = commands.add_parser("gallery")
     publish.add_argument("sheets", type=Path)
     publish.add_argument("--list", type=Path, required=True)
@@ -324,6 +466,8 @@ if __name__ == "__main__":
     answer = (
         score(args.directory)
         if args.command == "score"
+        else bar(args.directory)
+        if args.command == "bar"
         else gallery(args.sheets, args.list, args.manifest, args.out, args.seed)
     )
     print(json.dumps(answer, indent=2))

@@ -83,7 +83,7 @@ F37 first"), because those tasks wait for the measurement on the owner's photos.
 | F58 | Original-first photo editor and RAW import | L | built on 2026-11-24 on the fallback of its decision D1 (AutoEdit's photo screen is the editor, LightCraft opens as Fine-tune), then checked by a second session with eight fixes. Automatic edit and Photo editor share the local edit. The editor has the split comparison, Isolate, Learn and optional Ask Gemini. Fine-tune restores LightCraft's settings from the project and exports at full size through AutoEdit. Open, the owner's: the RAW brightness default (D6), whether Automatic evens a folder's brightness (D12), and LightCraft's remove and fill tools (D4); spec and results [F58](plans/F58-editor-sidebar-and-cr2.md), [probe](plans/F58-probe.md) |
 | F59 | Photographer-directed local styles | L | engine built on 2026-11-24 and checked by a second session with six fixes; **no specialized style is released**. Each landscape candidate ran one round and missed its bars. Against Standard on 24 held-back photos, better / same / worse was 5 / 9 / 10 for Blue hour, 2 / 19 / 3 for Sunset glow and 3 / 0 / 21 for Moody landscape. Standard is unchanged. Next: round two in [F61](plans/F61-style-round-two.md). Open: finished portraits for Natural portrait; spec and results [F59](plans/F59-local-styles.md) |
 | F60 | Web photo evaluation loop | L | tools built and first run done on 2026-11-24, checked by a second session with eleven fixes: 491 files fetched inside the approved budgets, 186 of 190 format samples opened and exported at full size, one round per landscape style, six blind galleries for the owner's vote. FiveK is used for measuring only. One photographer is on both sides of the frozen split; round two does not use the group that crossed; spec and results [F60](plans/F60-web-photo-loop.md) |
-| F61 | Style round two: unedited originals and four engine changes | L | spec (2026-11-24), nothing built. The first round tuned and judged the styles on finished photos, where the right edit is close to none, so round two tests on RAW originals and starts from the owner's examples again. Four engine changes come first: a style aims inside its range, every searched control has a limit, a move may work inside several regions, and a band is placed on a waterline only. Six decisions are the owner's, the first before anything is fetched; spec [F61](plans/F61-style-round-two.md) |
+| F61 | Style round two: unedited originals and four engine changes | L | engine changes and loop tools (T1 to T8) built and checked on 2026-11-24. The FiveK originals were fetched the same day (101 pairs, 6.1 GB) and the **Blue hour round ran on 16 night originals: no release, stopped for an owner decision**, held-back photos still shut. Without its sky range the candidate won 10 of the 10 photos that differ; the owner kept that change, and it is in the packaged candidate with a fix of the lamp rule. Against Standard it stands at 1 / 8 / 7 on night frames and 4 / 9 / 3 on dusk frames, where it wins on twilight with buildings. The first round tuned and judged the styles on finished photos, where the right edit is close to none, so round two tests on RAW originals and starts from the owner's examples again. Built: a style aims inside its range, every searched control has a limit, a move may work inside several regions, a band is placed on a waterline only, FiveK pairs by time of day, a split by shoot, and the release bar as a command. On the owner's three examples the start values of round two bring the distance from the photographer's result from 0.52 to 0.42, from 0.70 to 0.37 and from 0.86 to 0.80 stops. Next: the owner's answer to O8 (which photos Blue hour is for); Moody waits for the owner's own RAW files; spec and results [F61](plans/F61-style-round-two.md) |
 
 Size: S is a few files and one short spec; M is a new op or module with its tests; L is a new
 subsystem. Status values: planned, spec, building, checking, done. Two more exist since the
@@ -713,23 +713,38 @@ specialized style has passed yet.
 - **First run:** 491 files, 186 of 190 format samples exported, RAW picker support for six more
   formats, three rounds, six galleries for the owner. No fetched file is in any commit.
 
-### F61. Style round two (L): spec
+### F61. Style round two (L): tools built, Blue hour round run and stopped for the owner
 
 - **Why:** the first round tuned and judged the styles on finished web photos. On those, Blue
   hour's exposure differs from Standard's by a median of 0.00 EV, and two of Moody's three kept
-  changes made a move smaller. On the owner's own examples the candidates now barely differ from Standard.
-- **Plan:** test on RAW originals, with a retoucher's or the owner's finished version as the
-  reference. Measure a target on finished photos the owner picks. Start each style from the
-  owner's example again. Four engine changes first: aim inside a range, a limit per control, a
-  move inside several regions, a band on a waterline only.
+  changes made a move smaller. On the owner's own examples the candidates barely differed from
+  Standard.
+- **Built:** a style aims inside its range, every control its search moves has a limit, a move
+  may work inside several regions, and a band is placed on a waterline only. The loop takes FiveK
+  RAW originals by time of day, splits them by shoot, and answers the release bar with a command.
+- **First sign:** on the owner's three examples the start values of round two bring the distance
+  from the photographer's result from 0.52 to 0.42 (bridge), 0.70 to 0.37 (Dolomites lake) and
+  0.86 to 0.80 stops (lake at sunset). Three photos the styles were drawn from: a sign, no proof.
+- **Blue hour round (2026-11-24):** five iterations on 16 FiveK night originals, each judged blind
+  by an independent checker. Taking out the sky's brightness range won 10 of the 10 photos that
+  differ; the owner kept it although one photo gains a review mark that Standard gives too, and
+  the keep rule now counts such a mark as not new. It is packaged, with a lamp rule that leaves a
+  blown lit sign white. Against
+  Standard the candidate is better on 1, the same on 8 and worse on 7 night photos: Standard
+  already lifts a night frame as far as it bears. On 16 dusk photos it is 4, 9 and 3, winning
+  where buildings fill the frame at twilight. The held-back photos were not opened.
 - **Done when:** per style, the held-back originals and the owner's blind vote pass it.
 
 ### Next
 
-1. The owner's decisions in [F61](plans/F61-style-round-two.md), O1 first.
-2. F61's engine changes (T1 to T4) and loop tools (T5 to T8), then the Check.
-3. The round: Blue hour, Moody landscape, Sunset glow.
-4. Finished portraits from the owner or a photographer, for Natural portrait.
+1. The owner's answer on the Blue hour round: which photos Blue hour is for (O8 of F61).
+   Twilight frames with buildings need more dusk pairs, so a word to fetch.
+2. Standard on night frames (O6 of F61): its review rule marks a black sky, and it lifts night
+   shadows to a grey.
+3. The round of Sunset glow, on its own dusk originals.
+4. The owner's own RAW files of overcast and mist for Moody landscape (O2 of F61), and which
+   finished photos have each look (O4).
+5. Finished portraits from the owner or a photographer, for Natural portrait.
 
 ## Ideas, not planned yet (added 2026-11-16)
 
@@ -837,7 +852,7 @@ Open decisions. Each is a one-line change once it is made; the evidence is named
 | Is grain 25 the right light grain, and should a packaged look carry grain? (F23, unattended run) | `out-features/F23/crops.jpg`; [F23 result](plans/F23-grain.md) | `_GRAIN_SIGMA` in `edit/ops.py`; `grain = N` in a look of `looks.toml` |
 | Fill the holes inside a marked thing? | [F37 result](plans/F37-point-and-tell.md), "Found on the way": SAM 3's mask has holes on dark, even surfaces. Filling them changes what a mark edits against what SAM 3 returned | A small task of its own |
 | The editor (F58): the RAW brightness default (D6); should Automatic edit even a folder's brightness again, or keep exporting each photo on its own as the build does (D12); may LightCraft's remove and fill tools be used in the manual stage (D4) | [F58](plans/F58-editor-sidebar-and-cr2.md), "Decisions for the owner" | The editor's neutral original, Automatic's exports, the edit declaration |
-| Styles (F61): may FiveK RAW originals be the tuning and held-back photos (its licence says research); which finished photos have the look you mean, per style; own RAW files per kind; a bar that counts only the photos where a difference is seen; skip the vote on the six galleries of round one; Standard's review marks on low-key photos as an item of its own | [F61](plans/F61-style-round-two.md), "Decisions for the owner", O1 to O6 | The photos, the targets and the bar of round two |
+| Styles (F61): after the Blue hour round, which photos Blue hour is for, twilight with buildings or night (O8; O7, keeping its second iteration, was answered yes on 2026-11-24); own RAW files of overcast and mist for Moody landscape (O2); which finished photos have the look you mean, per style (O4, started from the three examples); Standard's review marks on low-key photos as an item of its own (O6). Answered on 2026-11-24: FiveK originals may be test photos, the bar counts decided photos, no vote on the galleries of round one | [F61](plans/F61-style-round-two.md), "Decisions for the owner" | The photos, the targets and the start of round two |
 
 Things only the owner can do, left open by the unattended run:
 

@@ -514,12 +514,14 @@ shadows_ev = "0.4"
 
 # Compensate the frame's lift over compact light sources. The opt-in run searches
 # their aliases; the style target also holds this mask out of its brightness pull.
+# A lit area that is mostly clipped has no detail to bring back, and a pull turns it flat grey
+# (a large lit sign, F61 round two). Both pulls are whole up to 35 % clipped and gone at 55 %.
 [opt_in.lights.landscape.lights]
-exposure = "-clamp(0.82 * (0.52 - mean_lum), 0, 0.55)"
-highlights = "-clamp(12 + 20 * region_clip_high, 12, 32)"
+exposure = "-clamp(0.82 * (0.52 - mean_lum), 0, 0.55) * clamp((0.55 - region_clip_high) / 0.2, 0, 1)"
+highlights = "-clamp(12 + 20 * region_clip_high, 12, 32) * clamp((0.55 - region_clip_high) / 0.2, 0, 1)"
 [opt_in.lights.other.lights]
-exposure = "-clamp(0.82 * (0.52 - mean_lum), 0, 0.55)"
-highlights = "-clamp(12 + 20 * region_clip_high, 12, 32)"
+exposure = "-clamp(0.82 * (0.52 - mean_lum), 0, 0.55) * clamp((0.55 - region_clip_high) / 0.2, 0, 1)"
+highlights = "-clamp(12 + 20 * region_clip_high, 12, 32) * clamp((0.55 - region_clip_high) / 0.2, 0, 1)"
 [opt_in.lights.people.lights]
-exposure = "-clamp(0.82 * (0.52 - mean_lum), 0, 0.55)"
-highlights = "-clamp(12 + 20 * region_clip_high, 12, 32)"
+exposure = "-clamp(0.82 * (0.52 - mean_lum), 0, 0.55) * clamp((0.55 - region_clip_high) / 0.2, 0, 1)"
+highlights = "-clamp(12 + 20 * region_clip_high, 12, 32) * clamp((0.55 - region_clip_high) / 0.2, 0, 1)"

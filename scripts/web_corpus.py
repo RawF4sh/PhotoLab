@@ -384,7 +384,16 @@ def discover_commons(net, limit):
     return output
 
 
-def discover_fivek(net, limit):
+# Round two: the pairs of the index are taken by time of day. A time not listed is left out.
+FIVEK_KIND_OF_TIME = {"night": "blue_hour", "dawn or dusk": "sunset", "day": "control"}
+# Blue hour takes four more than the 40 the split needs: a shoot gives at most two photos to a
+# side, and the 40 night pairs first fetched came to 39 usable ones.
+FIVEK_PAIRS_PER_KIND = {"blue_hour": 44, "sunset": 40, "control": 16}
+FIVEK_SEED = 61
+
+
+def discover_fivek(net, limit, known=()):
+    """Read every eligible pair of the index; keep `known` pairs, fill each kind up to its number."""
     names = {}
     for family, licence in (
         ("Adobe", "FiveK Adobe research"),
@@ -395,7 +404,7 @@ def discover_fivek(net, limit):
         ):
             names[name.strip()] = (family, licence)
     html = metadata(net, FIVEK, 25_000_000).decode()
-    result = []
+    eligible, places = {}, {}
     rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.I | re.S)
     for row in rows:
         if not re.search(
@@ -406,17 +415,67 @@ def discover_fivek(net, limit):
         dst = re.search(r'href="(img/tiff16_c/([^"/]+)\.tif)"', row)
         if not src or not dst or src[2] != dst[2] or src[2] not in names:
             continue
-        family, licence = names[src[2]]
         pair = "pair-" + hashlib.sha256(src[2].encode()).hexdigest()[:16]
         period = re.search(r"Time:\s*<br>([^<]+)", row)
         period = period[1].strip() if period else "unknown"
-        kind = "blue_hour" if period == "night" else "control"
+        # Where the index says a photo was taken indoors, it is left out. A row without that
+        # label is kept: the label's wording could not be checked before the first real plan.
+        place = re.search(r"(?:Location|Place):\s*<br>([^<]+)", row, re.I)
+        place = place[1].strip().lower() if place else "not labelled"
+        places[place] = places.get(place, 0) + 1
+        if place != "not labelled" and not place.startswith("outdoor"):
+            continue
+        eligible[pair] = (src, dst, names[src[2]], period)
+    times = {}
+    for *_, period in eligible.values():
+        times[period] = times.get(period, 0) + 1
+    print(
+        "fivek eligible pairs by time: "
+        + ", ".join(f"{t}={n}" for t, n in sorted(times.items())),
+        flush=True,
+    )
+    print(
+        "fivek rows by place: " + ", ".join(f"{t}={n}" for t, n in sorted(places.items())),
+        flush=True,
+    )
+    gone = sum(p not in eligible for p in known)
+    if gone:   # 5. say so: such a pair stays in the manifest and leaves the plan
+        print(f"fivek: {gone} pairs already here are no longer eligible in the index", flush=True)
+    ranked = sorted(
+        eligible,
+        key=lambda p: hashlib.sha256(f"{FIVEK_SEED}:{p}".encode()).digest(),
+    )
+    chosen = [p for p in ranked if p in known]
+    taken = dict.fromkeys(FIVEK_PAIRS_PER_KIND, 0)
+    for p in chosen:
+        kind = FIVEK_KIND_OF_TIME.get(eligible[p][3])
+        if kind:
+            taken[kind] += 1
+    for p in ranked:
+        kind = FIVEK_KIND_OF_TIME.get(eligible[p][3])
+        if (
+            p in chosen
+            or not kind
+            or taken[kind] >= FIVEK_PAIRS_PER_KIND[kind]
+            or len(chosen) * 2 + 2 > limit
+        ):
+            continue
+        chosen.append(p)
+        taken[kind] += 1
+    for kind, want in FIVEK_PAIRS_PER_KIND.items():
+        print(f"fivek {kind}: took {taken[kind]} pairs (up to {want})", flush=True)
+        if kind != "control" and taken[kind] < want:
+            print(f"fivek {kind}: only {taken[kind]} pairs, fewer than the {want} wanted", flush=True)
+    result = []
+    for pair in chosen:
+        src, dst, (family, licence), period = eligible[pair]
+        kind = FIVEK_KIND_OF_TIME.get(period, "control")
         page = FIVEK + "#" + src[2][1:5]
         for role, m in (("before", src), ("after", dst)):
             credit = (
                 "FiveK dataset contributor"
                 if role == "before"
-                else "MIT–Adobe FiveK, expert C"
+                else "MIT\u2013Adobe FiveK, expert C"
             )
             result.append(
                 candidate(
@@ -433,8 +492,6 @@ def discover_fivek(net, limit):
                     licence_url=FIVEK + "legal/License" + family + ".txt",
                 )
             )
-        if len(result) + 2 > limit:
-            break
     return result
 
 
@@ -859,6 +916,173 @@ def split(root, output, seed=60, targets=30, panel=16, holdout=12):
         return groups
 
 
+REFERENCE_EXTENSIONS = ("jpg", "jpeg", "tif", "tiff", "png")
+ROUND2_SEED = 61
+ROUND2_SIZES = {
+    "blue_hour": (16, 24),
+    "sunset": (16, 24),
+    "moody": (16, 24),
+    "control": (16, 0),
+}
+
+
+def shoot_key(path, ident):
+    """A short hash of camera model and capture day; a file with no readable EXIF is its own shoot."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            exif = im.getexif()
+            model = str(exif.get(272) or "").strip()
+            taken = str(exif.get_ifd(34665).get(36867) or exif.get(306) or "").strip()
+        day = taken[:10]
+        if model and day:
+            return hashlib.sha256(f"{model}|{day}".encode()).hexdigest()[:12]
+    except Exception:  # unreadable or foreign format
+        pass
+    return hashlib.sha256(f"own|{ident}".encode()).hexdigest()[:12]
+
+
+def round2_photos(root):
+    """Every usable photo by kind: {kind: {id: dict(path, ref, shoot)}}. Duplicate ids raise."""
+    found, seen = {k: {} for k in KINDS}, set()
+
+    def add(kind, ident, path, ref):
+        if ident in seen:
+            raise ValueError(f"duplicate photo id in the round-two split: {ident}")
+        seen.add(ident)
+        found[kind][ident] = dict(
+            path=str(path), ref=str(ref) if ref else "", shoot=shoot_key(path, ident)
+        )
+
+    pairs = {}
+    for r in manifest(root):
+        if r["source"] == "fivek" and r["pair"]:
+            pairs.setdefault(r["pair"], {})[r["role"]] = r
+    for roles in pairs.values():
+        if set(roles) != {"before", "after"} or any(verify(root, [r]) for r in roles.values()):
+            continue
+        when = re.search(r"time=(.+)$", roles["before"]["query"])
+        kind = FIVEK_KIND_OF_TIME.get(when[1].strip()) if when else None
+        if kind:
+            before, after = (root / roles[x]["file"] for x in ("before", "after"))
+            add(kind, before.stem, before.resolve(), after.resolve())
+    for kind in KINDS:
+        folder = root / "owner" / "originals" / kind
+        if not folder.is_dir():
+            continue
+        stems = {}
+        for f in sorted(folder.iterdir()):
+            if f.is_file() and not f.name.startswith(".") and f.suffix[1:].lower() in EXTENSIONS:
+                stems.setdefault(f.stem, []).append(f)
+        for stem, files in stems.items():
+            raws = [f for f in files if f.suffix[1:].lower() not in REFERENCE_EXTENSIONS]
+            if raws:
+                refs = [f for f in files if f not in raws]
+                add(kind, stem, raws[0].resolve(), refs[0].resolve() if refs else None)
+            else:
+                for f in files:  # no RAW beside it: each is an original without a reference
+                    add(kind, stem, f.resolve(), None)
+    return found
+
+
+def round2_choose(kind, photos, seed, panel, holdout, tuning_only=()):
+    """Shoots in a seeded order; a shoot goes to one side and gives at most two photos to it.
+    A shoot with a photo in `tuning_only` (seen in an earlier round) is never held back."""
+
+    def order(s):
+        return hashlib.sha256(f"{seed}:{kind}:{s}".encode()).digest()
+
+    shoots = {}
+    for ident, p in photos.items():
+        shoots.setdefault(p["shoot"], []).append(ident)
+    sides = {"panel": [], "holdout": []}
+    need = {"panel": panel, "holdout": holdout}
+    seen = [k for k in sorted(shoots, key=order) if set(shoots[k]) & set(tuning_only)]
+    for key in seen + [k for k in sorted(shoots, key=order) if k not in seen]:
+        side = "panel" if len(sides["panel"]) < panel else "holdout"
+        room = need[side] - len(sides[side])
+        if room > 0 and not (side == "holdout" and key in seen):
+            sides[side] += sorted(shoots[key], key=order)[: min(2, room)]
+    if any(len(sides[s]) < need[s] for s in sides):
+        raise ValueError(
+            f"{kind}: {len(photos)} photos in {len(shoots)} shoots, "
+            f"{panel + holdout} needed with at most two per shoot and side"
+        )
+    return {s: ids for s, ids in sides.items() if need[s]}
+
+
+def split_round2(root, output, seed=ROUND2_SEED):
+    """Round two's split, written only into <output>/round-2/. A kind joins the split once it has
+    enough photos, and from then on its assignment never changes. A kind with too few waits and
+    is named; it does not hold up the others."""
+    out = output / "round-2"
+    freeze = out / "split.json"
+    with lock(out):
+        found = round2_photos(root)
+        groups = json.loads(freeze.read_text()) if freeze.exists() else {}
+        if not set(groups) <= set(ROUND2_SIZES):
+            raise ValueError("unexpected kinds in saved round-two split")
+        # kinds.txt, one "ID KIND" per line: a photo's kind where it is not its label, or "none"
+        # to leave the photo out. A photo that is in the frozen split keeps its kind.
+        frozen = {i: k for k, sides in groups.items() for ids in sides.values() for i in ids}
+        moves = out / "kinds.txt"
+        for line in moves.read_text().splitlines() if moves.is_file() else ():
+            if not line.strip():
+                continue
+            parts = line.split()
+            ident, kind = parts if len(parts) == 2 else ("", "")
+            old = next((k for k in found if ident in found[k]), None)
+            if old is None or kind not in (*ROUND2_SIZES, "none"):
+                raise ValueError(f"kinds.txt: unknown photo or kind: {line.strip()}")
+            if frozen.get(ident, kind) != kind:
+                raise ValueError(f"kinds.txt: {ident} is in the frozen split as {frozen[ident]}")
+            photo = found[old].pop(ident)
+            if kind != "none":
+                found[kind][ident] = photo
+        for kind, sides in groups.items():
+            for ident in (i for ids in sides.values() for i in ids):
+                if ident not in found[kind] or not Path(found[kind][ident]["path"]).is_file():
+                    raise ValueError(f"reserved image missing or changed: {ident}")
+        # The pairs every iteration of round one was measured on are no longer unseen.
+        earlier = output / "pairs-evaluation.txt"
+        seen = (
+            {Path(line.split("\t")[0]).stem for line in earlier.read_text().splitlines() if line.strip()}
+            if earlier.is_file()
+            else set()
+        )
+        for kind, (panel, holdout) in ROUND2_SIZES.items():
+            if kind in groups or not found[kind]:
+                continue
+            try:
+                groups[kind] = round2_choose(kind, found[kind], seed, panel, holdout, seen)
+            except ValueError as short:
+                print(f"waits: {short}", flush=True)
+        if not groups:
+            return groups
+        files, shoots = {}, {}
+        for kind, sides in groups.items():
+            lines = {}
+            for side, ids in sides.items():
+                lines[side] = [
+                    found[kind][i]["path"] + ("\t" + found[kind][i]["ref"] if found[kind][i]["ref"] else "")
+                    for i in ids
+                ]
+                shoots.update({i: found[kind][i]["shoot"] for i in ids})
+                files[out / f"{side}-{kind}.txt"] = "".join(x + "\n" for x in lines[side])
+            files[out / f"pairs-{kind}.txt"] = "".join(
+                x + "\n" for x in lines["panel"] if "\t" in x
+            )
+            crops = out / f"crops-{kind}.txt"
+            if not crops.exists():
+                files[crops] = "".join(f"{i}\t0.5\t0.5\tcentre\n" for i in sides["panel"])
+        for path, text in files.items():
+            write_atomic(path, text.encode())
+        write_atomic(out / "shoots.json", json.dumps(shoots, indent=2).encode())
+        write_atomic(freeze, json.dumps(groups, indent=2).encode())
+        return groups
+
+
 def discover(root, sources, limit):
     cfg = config()
     entries = []
@@ -871,7 +1095,12 @@ def discover(root, sources, limit):
             "rawpixls": discover_raw,
             "fivek": discover_fivek,
         }[source]
-        rows = fn(Transport(source, cfg), cap)
+        extra = (
+            ({r["pair"] for r in manifest(root) if r["source"] == "fivek"},)
+            if source == "fivek"
+            else ()
+        )
+        rows = fn(Transport(source, cfg), cap, *extra)
         for row in rows:
             check_row(row, cfg, root)
         write_atomic(
@@ -939,6 +1168,9 @@ def main():
         default=24,
         help="held-back photos per kind when first reserving the split",
     )
+    ap.add_argument(
+        "--round", type=int, choices=(1, 2), default=1, help="split: which round's split to write"
+    )
     args = ap.parse_args()
     if args.action == "select":
         selected = select(args.root, args.out, holdout=args.holdout)
@@ -953,6 +1185,10 @@ def main():
         for msg in errors:
             print(msg)
         return int(bool(errors) or not manifest(args.root))
+    if args.action == "split" and args.round == 2:
+        for kind, sides in split_round2(args.root, args.out).items():
+            print(kind, {side: len(ids) for side, ids in sides.items()})
+        return 0
     if args.action == "split":
         split(args.root, args.out, holdout=args.holdout)
         return 0

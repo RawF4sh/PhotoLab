@@ -40,6 +40,24 @@ def load(path, name):
     return result
 
 
+def check_limits(style_name, target, limits):
+    """Refuse a target that moves a control the style gives no limit for."""
+    for table in target.values():
+        for measure in table:
+            if measure != "hold" and CONTROLS[measure] not in limits:
+                raise ValueError(f"{style_name}: the target moves {CONTROLS[measure]} (through {measure}) "
+                                 "and the style sets no limit for it")
+
+
+def _aimed(value, lo, hi, aim):
+    """Where a measure is pulled: inside its range it stays, outside it aims `aim` of the width in from the edge."""
+    if value < lo:
+        return lo + aim * (hi - lo)
+    if value > hi:
+        return hi - aim * (hi - lo)
+    return value
+
+
 def clipping_ok(source, candidate, cfg, mask=None):
     """Use the native quality gate's newly clipped RGB and luma pixel budgets on this proxy."""
     if mask is not None:
@@ -91,7 +109,7 @@ def over_budget(regions, frame_ev, base_ev, cap, held=()):
 
 
 def fit(source, base, ranges, strength, limits, safety, mask=None, global_after=None, held_regions=(),
-        caps=None, forbidden=()):
+        caps=None, forbidden=(), aim=0.0):
     """Search the existing edit controls toward the nearest edges. A successful step must
     improve the requested measurements without crossing its target or the clipping budget.
 
@@ -121,7 +139,7 @@ def fit(source, base, ranges, strength, limits, safety, mask=None, global_after=
 
     best = dict(base)
     first = reference_features(render(small, best), sample_mask)
-    goals = {k: first[k] + strength * (float(np.clip(first[k], lo, hi)) - first[k])
+    goals = {k: first[k] + strength * (_aimed(first[k], lo, hi, aim) - first[k])
              for k, interval in ranges.items() if k in CONTROLS for lo, hi in [interval]}
     if not goals or _loss(first, goals) < 1e-6:
         return base, []
@@ -165,7 +183,7 @@ def fit(source, base, ranges, strength, limits, safety, mask=None, global_after=
         return base, []
     # Sampling can miss lamps and dark edges. Scale the full plan back if necessary.
     original = reference_features(render(source, base), mask)
-    full_goals = {k: original[k] + strength * (float(np.clip(original[k], *ranges[k])) - original[k]) for k in goals}
+    full_goals = {k: original[k] + strength * (_aimed(original[k], *ranges[k], aim) - original[k]) for k in goals}
     for factor in (1, .5, .25, .125):
         candidate = {k: base.get(k, 0) + factor * (value - base.get(k, 0)) for k, value in best.items()}
         rgb = render(source, candidate)

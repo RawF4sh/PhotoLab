@@ -49,7 +49,7 @@ look = "natural"
 concepts = ["sky", "cloud", "water", "mountain", "snow", "trees", "skin"]
 target = "sunset_glow"
 pull = 0.8
-limits = { exposure = 3.0, shadows_ev = 2.0, chroma = 0.6 }
+limits = { exposure = 3.0, shadows_ev = 2.0, chroma = 0.6, temp = 8 }
 intent = ["richer"]
 tested = false
 [sunset_glow.run]
@@ -61,7 +61,7 @@ look = "natural"
 concepts = ["sky", "cloud", "mountain", "water", "skin", "snow"]
 target = "moody_landscape"
 pull = 0.7
-limits = { exposure = 1.0, shadows_ev = 1.0, chroma = 0.75 }
+limits = { exposure = 1.0, shadows_ev = 1.0, chroma = 0.75, vibrance = 30 }
 intent = ["darker", "richer"]
 tested = false
 [moody_landscape.run]
@@ -69,7 +69,7 @@ palette = "cool_blue"
 palette_strength = 0.45
 [moody_landscape.moves.sky_grad]
 when = "sky"
-within = "sky"
+within = ["sky", "cloud"]
 shape = "linear"
 from = "top"
 coverage = 0.6
@@ -77,7 +77,7 @@ ops = { burn_ev = 0.25 }
 [moody_landscape.moves.far_shore]
 when = "always"
 shape = "band"
-at = "horizon"
+at = "waterline"
 height = 0.12
 feather = 1.0
 ops = { exposure = 0.2 }

@@ -167,6 +167,8 @@ class Pipeline:
         pipe_reveal = reveal_mod.load(cfg.reveal_path) if (cfg.reveal_check or cfg.hide) else None   # asking to hide runs the check
         if cfg.hide:
             reveal_mod.check_hide(pipe_reveal, cfg.hide)
+        target = style_target.load(cfg.targets_path, style.target) if style.target else {}
+        style_target.check_limits(style.name, target, style.limits)
         return cls(
             cfg=cfg,
             rules=rules,
@@ -174,7 +176,7 @@ class Pipeline:
             presets=presets,
             meta=meta,
             styles=styles,
-            style_target=style_target.load(cfg.targets_path, style.target) if style.target else {},
+            style_target=target,
             style_safety=load_quality_config() if style.target else {},
             compose_moves=moves,
             light_cfg=compose.load_light_config(cfg.compose_path) if any(m.at == "light" for m in moves) else {},
@@ -557,7 +559,8 @@ class Pipeline:
                             if self.style_target.get(r.name, {}).get("hold")]
             before_ev = global_settings.get("exposure", 0.0)
             global_settings, moves = style_target.fit(proxy.rgb, global_settings,
-                self.style_target.get("global", {}), strength, limits, self.style_safety, held_regions=held_regions)
+                self.style_target.get("global", {}), strength, limits, self.style_safety, held_regions=held_regions,
+                aim=style.aim)
             if moves:
                 style_notes.append(f"{style.label}, frame: " + ", ".join(moves))
             elif self.style_target.get("global"):
@@ -576,7 +579,7 @@ class Pipeline:
                 rails = meta_for(region.name, self.meta)
                 fitted, changes = style_target.fit(proxy.rgb, current, ranges, strength, limits, self.style_safety,
                                                    mask=region.mask, global_after=global_settings,
-                                                   caps=rails.max_ops, forbidden=rails.forbidden_ops)
+                                                   caps=rails.max_ops, forbidden=rails.forbidden_ops, aim=style.aim)
                 if changes:
                     region_settings[region.name] = fitted
                     style_notes.append(f"{style.label}, {region.name}: " + ", ".join(changes))
@@ -798,11 +801,14 @@ class Pipeline:
             notes_extra.append(
                 f"sun glow: light at {light.cx:.2f}, {light.cy:.2f} from the {light.source}" if light
                 else "sun glow: no light source found, none added")
-        line = None
+        line = waterline = None
         if cfg.backend != "stub" and any(move.at == "horizon" for move in self.compose_moves):
             line = geometry.horizon_position(resolved.union, geometry.config(self.rules))
+        if cfg.backend != "stub" and any(move.at == "waterline" for move in self.compose_moves):
+            waterline = geometry.horizon_position(resolved.union, geometry.config(self.rules), only="waterline")
         shape_masks = {r.name: r.mask for r in resolved.regions} if any(m.within for m in self.compose_moves) else None
-        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity, light, line, shape_masks)
+        comp_settings = compose.settings_for(self.compose_moves, resolved.union, cfg.intensity, light, line, shape_masks,
+                                             waterline)
         comp_settings.update(reference_comp_settings)
         if adj_plan is not None:    # a place the user named is a layer of its own, like a vignette (F18)
             comp_settings.update({instructions.LAYER + name: delta for name, delta in adj_plan.layers.items()})
@@ -848,7 +854,7 @@ class Pipeline:
                     alpha = build_alpha(r.mask, full_hw, cm.feather_px, guide=guide)
                     regions_apply.append((alpha, s))
             comp = compose.plan(self.compose_moves, resolved.union, full_hw, cfg.intensity, light, line,
-                                {name: cm.feather_px for name, cm in self.meta.items()}, guide, shape_masks)
+                                {name: cm.feather_px for name, cm in self.meta.items()}, guide, shape_masks, waterline)
             guard_mask, guard_pct, held = self._build_guard(
                 resolved.union, full_hw, global_settings, guide,
                 always=bool(adj_plan is not None and adj_plan.guarded) or "richer" in style.intent)

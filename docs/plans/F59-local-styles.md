@@ -32,7 +32,7 @@ Counts are better / same / worse, as an independent checker judged them blind.
 | Bar: 0.35 stops or less on pairs | missed | missed | missed |
 | Bar: better than Standard on 7 of 10, clearly worse on none | missed | missed | missed |
 | Bar: no new review mark against Standard | met | met | missed |
-| Packaged in `configs/` | the seed values | the seed values | the seed values and the round's three changes |
+| Packaged in `configs/` | the seed values, since round two without the ranges for sky and water | the seed values | the seed values and the round's three changes |
 | The owner's blind vote | open | open | open |
 
 What the rounds showed:
@@ -45,6 +45,12 @@ What the rounds showed:
 - **Moody landscape** improved on its own start on 21 of 24 photos and still lost to Standard on
   21. Two smooth skies showed mottled patches, and a hazy mountain had an unnaturally dark sky and
   a pale rim.
+
+**Round two, Blue hour (2026-11-24):** on unedited night originals the candidate does not beat
+Standard either, and it is not released. Its sky range, which greyed night skies, came out of the
+packaged candidate, and the lamp rule no longer greys a blown lit sign; see
+[F61](F61-style-round-two.md#the-blue-hour-round-2026-11-24) for the five iterations and the
+decision that is now the owner's.
 
 The galleries show the first round's pictures. The check of 2026-11-24 then changed how a style
 treats a region (see below), so a style is rendered again before its next round, and a vote on
@@ -217,6 +223,9 @@ photos = 0                # how many finished photos the ranges come from
   2 EV on a JPEG or an 8-bit preview. A lift the rules gave a region is reduced by what the style
   added to the frame, and never by more. The shoot-consistency nudge is bound by the same budget.
   (Made complete by the check of 2026-11-24.)
+- Since [F61](F61-style-round-two.md): a style may set `aim` (0 to 0.5) to pull a measure past the
+  nearest edge toward the middle of its range, and every control its target moves needs a limit
+  in `limits`.
 
 A fixed target would force every photo to one brightness. Ranges, `pull` below 1, `limits`, and
 the fact that the photographer chose the style keep that in check. The loop's control photos show
@@ -233,6 +242,8 @@ Three additions to the compose moves, and one new op.
   or horizon that `geometry.horizon` trusts, with a `height` and a `feather`. No trusted line, no
   move. This is the lighter far shore of the second example. It changes brightness and contrast
   where the picture already is; it adds nothing.
+- Since [F61](F61-style-round-two.md): `within` also takes a list of regions, joined before they
+  are feathered, and a band may be placed `at = "waterline"`, which needs a waterline.
 - **A style carries its own moves** as `[STYLE.moves.NAME]`, with the fields of `compose.toml`.
   A style's move replaces the packaged move of the same name. The packaged whispers stay as they
   are for Standard.

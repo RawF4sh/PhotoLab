@@ -666,6 +666,9 @@ selected style. The existing clipping, banding and halo checks still run. The ca
 specialized style after its visual evaluation passes. The frame's lift and a region's own lift
 share the style's exposure limit (`style_target.over_budget`), and a region's search stays inside
 that region's rails from `concepts.toml`, so the notes report what the region policy lets through.
+Since F61 a style may aim inside its range (`aim`), every control its target moves needs a limit
+(`style_target.check_limits`), a move may work inside several regions joined before feathering,
+and a band may ask for a waterline.
 
 A local FastAPI app (`web/app.py`) over framework-agnostic logic (`web/service.py`), plus a small
 front end in `static/app/` served at `/`: `index.html`, two stylesheets and plain ES modules, no

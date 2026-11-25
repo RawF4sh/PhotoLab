@@ -1,6 +1,8 @@
 """Owner target lists and the isolated start of scripts/style_target.py. No network, no corpus."""
 
+import csv
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -58,3 +60,55 @@ def test_script_starts_isolated(tmp_path):
         capture_output=True, text=True, cwd=tmp_path,
     )
     assert "ModuleNotFoundError" not in run.stderr and "ImportError" not in run.stderr
+
+
+def target_group(tmp_path, count=14):
+    """A frozen group of `count` target photos with real small files, and its list folder."""
+    web = importlib.import_module("web_corpus")
+    root = tmp_path / "corpus"
+    rows, paths = [], []
+    for number in range(count):
+        row = web.candidate(
+            "commons", "L", "blue_hour", "finished",
+            f"https://upload.wikimedia.org/wikipedia/commons/t{number}.jpg",
+            "https://commons.wikimedia.org/wiki/File:synthetic", "CC BY-SA 4.0", f"synthetic {number}",
+            size=8, licence_url="https://creativecommons.org/licenses/by-sa/4.0/",
+        )
+        path = root / row["file"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"photo {number}".encode())
+        row["sha256"] = web.digest(path)
+        rows.append(row)
+        paths.append(path)
+    with (root / "manifest.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, web.FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    folder = tmp_path / "lists"
+    folder.mkdir()
+    (folder / "split.json").write_text(json.dumps(
+        {"blue_hour": {"target": [r["id"] for r in rows], "panel": ["p1"], "holdout": ["h1"]}}))
+    return root / "manifest.csv", folder, paths
+
+
+def pick(folder, paths):
+    lst = folder / "pick.txt"
+    lst.write_text("".join(f"{p}\n" for p in paths))
+    return lst
+
+
+def test_a_target_may_be_a_part_of_the_frozen_group(tmp_path):
+    manifest, folder, paths = target_group(tmp_path)
+    resolved = [p.resolve() for p in paths]
+    assert st.finished_files(pick(folder, paths), manifest, "blue_hour") == resolved   # the whole group
+    assert st.finished_files(pick(folder, paths[:12]), manifest, "blue_hour") == resolved[:12]
+    with pytest.raises(ValueError, match="at least 12"):
+        st.finished_files(pick(folder, paths[:11]), manifest, "blue_hour")
+
+
+def test_a_target_photo_from_outside_the_group_is_refused(tmp_path):
+    manifest, folder, paths = target_group(tmp_path)
+    stranger = tmp_path / "stranger.jpg"
+    stranger.write_bytes(b"not in the group")
+    with pytest.raises(ValueError, match="frozen target group"):
+        st.finished_files(pick(folder, [*paths[:12], stranger]), manifest, "blue_hour")

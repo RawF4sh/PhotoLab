@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses [SemVer](https://semver.org/).
 
+## [Unreleased] — Style round two: engine changes and loop tools (F61)
+
+- A local style may aim inside its range (`aim`, 0 to 0.5) where it used to stop at the nearest
+  edge. No packaged style sets it yet; the next round tries it.
+- Every control a style's target moves needs a limit in the style's `limits`. A style without one
+  is refused when it is chosen. Sunset glow got a limit for temperature, Moody landscape one for
+  vibrance.
+- A shaped-light move may work inside several regions (`within = ["sky", "cloud"]`). They are
+  joined first and feathered once. Moody's sky burn now covers the sky and its clouds.
+- A band may be placed `at = "waterline"` and then needs a waterline. Moody's band at the far
+  shore uses it, so it no longer lands on the lower edge of a sky.
+- Loop tools for a round on unedited originals: `web_corpus.py plan` takes FiveK pairs by time of
+  day; `web_corpus.py split --round 2` writes a split by shoot into `out-webloop/round-2/`;
+  `web_round.py bar` answers the release bar from the blind votes; `style_target.py` takes a pick
+  of at least 12 photos of a target group. A line of `round-2/kinds.txt` moves a photo to another
+  kind or leaves it out, until the split is frozen. The plan takes 44 night pairs, four more than
+  the split needs, because a shoot gives at most two photos to a side.
+- The Blue hour round ran on 16 night originals and released nothing: see F61. Two of its changes
+  are in the packaged candidate: Blue hour has no brightness range for sky or water any more (it
+  greyed night skies), and the lamp rule lets go of a lit area that is mostly clipped (it turned a
+  blown lit sign grey). Both act only when Blue hour is named.
+- The loop's keep rule counts a review mark as new only when Standard does not give the same
+  photo one for the same kinds of reason. `web_round.py score` reads that from a `vs-standard/`
+  folder beside the sheets; without it every mark counts, as before.
+- Standard and every default run are unchanged. The three specialized styles stay candidates.
+
 ## [Unreleased] — Local photo editor and style evaluation
 
 - Automatic edit and Photo editor share local development. The editor opens the original,

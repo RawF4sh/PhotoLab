@@ -22,6 +22,7 @@ from autoedit.paths import dump_toml
 from autoedit.pipeline import Pipeline
 from autoedit.styles import load_styles
 
+MIN_TARGET = 12  # fewest photos of the frozen group a target list may hold
 KINDS = {"blue_hour": "blue_hour", "sunset_glow": "sunset", "moody_landscape": "moody"}
 
 
@@ -54,8 +55,9 @@ def finished_files(list_path, manifest_path, style):
         near += web_corpus.same_author(row["author"]) in near_authors
         path = web_corpus.check_row(row, cfg, manifest_path.parent)
         by_path[path] = row
-    if not paths or len(paths) != len(set(paths)) or set(paths) != by_path.keys():
-        raise ValueError("target list differs from the frozen target group")
+    # The list may be a part of the frozen group (an owner's pick), never a photo from outside it.
+    if len(paths) != len(set(paths)) or not set(paths) <= by_path.keys() or len(paths) < MIN_TARGET:
+        raise ValueError(f"target list must be at least {MIN_TARGET} distinct photos of the frozen target group")
     seen_hashes = set()
     for path in paths:
         actual = web_corpus.digest(path)

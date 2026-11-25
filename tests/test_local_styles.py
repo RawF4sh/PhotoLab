@@ -85,11 +85,80 @@ def test_confined_gradient_and_trusted_horizon():
     masks = {"sky": sky}
     assert compose.plan(named, {}, sky.shape, 1) == []
     assert [n for n, _, _ in compose.plan(named, masks, sky.shape, 1)] == ["sky_grad"]
-    planned = {n:a for n,a,_ in compose.plan(named, masks, sky.shape, 1, horizon=trusted)}
+    planned = {n:a for n,a,_ in compose.plan(named, masks, sky.shape, 1, waterline=trusted)}
     assert not planned["sky_grad"][31:].any()
     assert planned["sky_grad"][:10].mean() > .5
     assert np.argmax(planned["far_shore"].mean(axis=1)) in range(22,26)
     assert not planned["far_shore"][:15].any() and not planned["far_shore"][32:].any()
+
+
+def _move(**kw):
+    return compose.Move(name="m", when="always", **kw)
+
+
+def test_move_within_several_regions_joins_before_feathering():
+    hw = (80, 96)
+    sky, cloud = np.zeros(hw, bool), np.zeros(hw, bool)
+    sky[:30, :48] = True
+    cloud[:30, 48:] = True
+    grad = dict(shape="linear", frm="top", coverage=.6, ops={"burn_ev": .25})
+    plain = compose.plan([_move(**grad)], {}, hw, 1)[0][1]
+    both = _move(within=("sky", "cloud"), **grad)
+    masks = {"sky": sky, "cloud": cloud}
+    feather = {"sky": .05, "cloud": .08}
+    alpha = compose.plan([both], masks, hw, 1, feather_px=feather)[0][1]
+    row = slice(2, 6)
+    for cols in (slice(10, 30), slice(42, 54), slice(66, 90)):     # both sides and across the border
+        assert (alpha[row, cols] >= .99 * plain[row, cols]).all()
+    only = compose.plan([_move(within=("sky",), **grad)], masks, hw, 1, feather_px=feather)[0][1]
+    assert only[4, 80] == 0 and only[4, 10] > 0
+    dry = {"m": {"burn_ev": .25}}
+    assert compose.settings_for([both], {"sky": sky}, 1) == dry
+    for fn in (lambda m: compose.settings_for([m], {"water": sky}, 1), lambda m: compose.plan([m], {"water": sky}, hw, 1)):
+        assert not fn(both)
+    assert not compose.settings_for([both], {"sky": np.zeros(hw, bool)}, 1)
+
+
+def test_within_accepts_name_or_list_and_refuses_the_rest(tmp_path):
+    def load(text):
+        path = tmp_path / "c.toml"
+        path.write_text(text)
+        return compose.load_compose(str(path))
+    assert load('[a]\nshape="linear"\nwithin="sky"\n')[0].within == ("sky",)
+    assert load('[a]\nshape="linear"\nwithin=["sky","cloud"]\n')[0].within == ("sky", "cloud")
+    assert load('[a]\nshape="linear"\n')[0].within == ()
+    assert load('[a]\nshape="linear"\nwithin=""\n')[0].within == ()      # an empty name: no region, as before
+    for bad in ('within=3', 'within=["sky", ""]', 'within=[1]'):
+        with pytest.raises(ValueError, match="'a'"):
+            load(f'[a]\nshape="linear"\n{bad}\n')
+    assert load('[a]\nshape="band"\nat="waterline"\n')[0].at == "waterline"
+    with pytest.raises(ValueError, match="'a'"):
+        load('[a]\nshape="band"\nat="light"\n')
+
+
+def test_band_waterline_only():
+    cfg = geometry.config(Pipeline.build(RunConfig(style="moody_landscape")).rules)
+    band = _move(shape="band", at="waterline", height=.12, feather=1.0, ops={"exposure": .2})
+    hw = (80, 96)
+    sky = np.zeros(hw, bool)
+    sky[:24] = True
+    both = {"sky": sky, "mountain": ~sky}                    # a sky over a mountain: no water
+    assert geometry.horizon_position(both, cfg) is not None
+    assert geometry.horizon_position(both, cfg, only="waterline") is None
+    assert compose.plan([band], both, hw, 1, waterline=None) == []
+    assert compose.settings_for([band], both, 1) == {}
+    water = np.zeros(hw, bool)
+    water[40:] = True
+    masks = {"water": water, "mountain": ~water}
+    line = geometry.horizon_position(masks, cfg, only="waterline")
+    assert line and np.allclose(line, [.5, .5], atol=.025)
+    alpha = compose.plan([band], masks, hw, 1, waterline=line)[0][1]
+    assert abs(int(np.argmax(alpha.mean(axis=1))) - 40) <= 2
+    horizon_band = _move(shape="band", at="horizon", height=.12, feather=1.0)
+    assert compose.plan([horizon_band], masks, hw, 1, waterline=line) == []
+    # A band on a horizon is still drawn on the horizon it is given, as before.
+    drawn = compose.plan([horizon_band], both, hw, 1, horizon=geometry.horizon_position(both, cfg))[0][1]
+    assert abs(int(np.argmax(drawn.mean(axis=1))) - 24) <= 2
 
 
 def test_lamp_aliases_and_hold_have_named_settings(tmp_path):
@@ -341,7 +410,8 @@ def test_richer_is_declared_by_a_style_never_by_a_config_file(tmp_path):
 
 def test_lights_rules_golden():
     """[opt_in.lights]: the lamps take back the frame's lift by how dark the whole frame is, and
-    pull their highlights down by how much of them is clipped. The same numbers in every scene."""
+    pull their highlights down by how much of them is clipped. A lit area that is mostly clipped
+    is let go: both pulls are whole up to 35 % clipped and gone at 55 %. The same in every scene."""
     from autoedit.contract import GlobalStatsModel, RegionStatsModel
     from autoedit.paths import config_path
     from autoedit.rules import apply, load
@@ -351,8 +421,9 @@ def test_lights_rules_golden():
     assert all("lights" not in plain.get(scene, {}) for scene in ("people", "landscape", "other"))
     rules = load(path, require=["lights"])
     for scene in ("people", "landscape", "other"):
-        for mean_lum, clip, exposure, highlights in ((.10, 0.0, -.3444, -12.0), (.30, .5, -.1804, -22.0),
-                                                     (.52, 1.0, 0.0, -32.0), (.80, 2.0, 0.0, -32.0)):
+        for mean_lum, clip, exposure, highlights in ((.10, 0.0, -.3444, -12.0), (.30, .35, -.1804, -19.0),
+                                                     (.30, .45, -.0902, -10.5), (.30, .5, -.0451, -5.5),
+                                                     (.10, .55, 0.0, 0.0), (.52, 1.0, 0.0, 0.0), (.80, 2.0, 0.0, 0.0)):
             whole = GlobalStatsModel(mean_lum=mean_lum, mean_sat=.2, shadow_clip=0, highlight_clip=0, haze=.2)
             lamps = {"lights": RegionStatsModel(name="lights", lum=.8, sat=.3, clip_low=0, clip_high=clip, coverage=.01)}
             got = apply(rules, scene, whole, lamps, {}, intensity=1.0)[1]["lights"]
@@ -386,3 +457,59 @@ def test_a_batch_stops_with_a_reason_when_the_saved_project_cannot_be_read(tmp_p
     assert not list((tmp_path / "out").glob("*.jpg"))
     # A plan without pixels never needed the project.
     assert batch.run(cfg, str(photos), str(tmp_path / "plan"), do_apply=False)
+
+
+def test_aim_zero_changes_nothing_and_in_range_is_untouched():
+    src, quality = frame(), load_quality_config()
+    bounds = {"p50": [.27, .42]}
+    same = style_target.fit(src, {}, bounds, .75, {"exposure": 1.5}, quality)
+    assert same == style_target.fit(src, {}, bounds, .75, {"exposure": 1.5}, quality, aim=0)
+    for aim in (0, .25, .5):
+        assert style_target.fit(frame(.30), {}, bounds, 1, {"exposure": 1.5}, quality, aim=aim) == ({}, [])
+
+
+def test_aim_pulls_inside_the_range():
+    src, quality = frame(.2), load_quality_config()
+    rng, limits = {"p50": [.30, .40]}, {"exposure": 3}
+
+    def median(strength, aim):
+        settings, _ = style_target.fit(src, {}, rng, strength, limits, quality, aim=aim)
+        return reference_features(ops.apply_ops(src, settings))["p50"]
+
+    assert abs(median(1, .5) - .35) < .01
+    assert .2 < median(.5, .5) < .35
+    assert abs(median(1, 0) - .30) < .01
+
+
+def test_a_target_control_without_a_limit_is_refused(tmp_path):
+    cfg = RunConfig()
+    text = Path(cfg.styles_path).read_text() + (
+        '\n[no_limit]\nlabel = "No limit"\nconcepts = ["sky"]\ntarget = "moody_landscape"\n'
+        'pull = 0.5\nlimits = { exposure = 1.0, shadows_ev = 1.0 }\n')
+    path = tmp_path / "styles.toml"
+    path.write_text(text)
+    with pytest.raises(ValueError, match="sets no limit"):
+        Pipeline.build(RunConfig(style="no_limit", styles_path=str(path)))
+
+
+def test_vibrance_limit_bounds_the_fit_and_candidates_build():
+    src = frame(.3)
+    src[..., 0] *= 1.6
+    src[..., 2] *= .5
+    chroma = reference_features(src)["chroma"]
+    settings, _ = style_target.fit(src, {}, {"chroma": [0, chroma / 3]}, 1, {"vibrance": 30}, load_quality_config())
+    assert -30 <= settings["vibrance"] < 0
+    for name in ("blue_hour", "sunset_glow", "moody_landscape"):
+        Pipeline.build(RunConfig(style=name))
+
+
+def test_a_joined_move_takes_the_feather_of_the_regions_that_are_there():
+    hw = (80, 96)
+    sky = np.zeros(hw, bool)
+    sky[:30] = True
+    move = _move(shape="linear", frm="top", coverage=.6, within=("sky", "cloud"), ops={"burn_ev": .2})
+    alone = _move(shape="linear", frm="top", coverage=.6, within=("sky",), ops={"burn_ev": .2})
+    feathers = {"sky": .004, "cloud": .05}       # the cloud's wide feather must not count: there is no cloud
+    joined = compose.plan([move], {"sky": sky}, hw, 1, feather_px=feathers, region_masks={"sky": sky})[0][1]
+    single = compose.plan([alone], {"sky": sky}, hw, 1, feather_px=feathers, region_masks={"sky": sky})[0][1]
+    assert np.array_equal(joined, single)

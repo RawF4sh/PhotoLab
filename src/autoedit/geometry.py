@@ -129,10 +129,11 @@ def horizon(masks: dict[str, np.ndarray], cfg: dict) -> tuple[float, str, float,
             return angle, line, n / x.size, ""
     return 0.0, "", 0.0, why
 
-def horizon_position(masks: dict[str, np.ndarray], cfg: dict):
-    """Fractional heights of the trusted horizon at the left and right image boundaries."""
+def horizon_position(masks: dict[str, np.ndarray], cfg: dict, only: str | None = None):
+    """Fractional heights of the trusted horizon at the left and right image boundaries.
+    `only="waterline"`: None unless the trusted line is a waterline."""
     angle, line, _, _ = horizon(masks, cfg)
-    if not line:
+    if not line or only and line != only:
         return None
     mask = masks["water" if line == "waterline" else "sky"]
     h, w = mask.shape

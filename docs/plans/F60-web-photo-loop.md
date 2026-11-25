@@ -84,6 +84,7 @@ curated-web/
   looks/<kind>/     Track L: photos of one kind
   pairs/<id>/       a before and its finished after
   owner/photos/     the owner's own finished photos (a style target may use these)
+  owner/originals/<kind>/   the owner's unedited originals, test photos of round two (F61)
   owner/briefs/     examples put there by hand, to look at and never to measure
 out-webloop/
   LEDGER.md         the record; a new session resumes from its last row
@@ -92,6 +93,7 @@ out-webloop/
   opens/            coverage.csv and the findings of Track O
   app/              screenshots of Track A
   blind/<kind>/     the gallery for the owner's vote
+  round-2/          the split, the lists and the iterations of round two (F61)
 ```
 
 Kinds, to start: `blue_hour`, `sunset`, `moody`, `portrait`, and `control` (ordinary daylight,
@@ -142,7 +144,12 @@ One round tunes one style on one kind of photo. An iteration:
    key is read. A Worse whose reason says "clear" or "clearly" is a clear loss.
 6. **Keep** only if all of these hold. Otherwise the iteration folder goes to `rejected/`.
    - Better outnumbers Worse, and no photo is clearly worse.
-   - The gates pass, with no new native flag and no fewer safe proposals.
+   - The gates pass, with no new native flag and no fewer safe proposals. A review mark counts as
+     new only when Standard does not give the same photo one for the same kinds of reason (the
+     owner, 2026-11-24, F61 O7). `score` reads that from `vs-standard/` in the iteration's folder:
+     the same panel with Standard as the best arm, rendered from the iteration's own best or
+     candidate configs (`contact_sheet.py ... --style STYLE --best-style natural`). Without that
+     folder every review mark counts. The three source-relative flags always count.
    - The control photos under Standard are byte-identical when only a style changed.
    - The median distance on pairs is not larger. Distance is evidence; nothing is kept on
      distance alone.

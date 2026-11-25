@@ -5,10 +5,8 @@
 photos = 0
 [blue_hour.global]
 p50 = [0.392, 0.490]
-[blue_hour.sky]
-p50 = [0.45, 0.60]
-[blue_hour.water]
-p50 = [0.27, 0.50]
+# No range for sky or water (F61, round two): drawn around a bright dusk, they lifted a night
+# sky by up to 1.3 EV into grey and grain, and pulled a blown sky down into flat grey.
 [blue_hour.lights]
 hold = true
 
