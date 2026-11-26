@@ -37,7 +37,7 @@ brief = "old-cinematic mood with strict Lightroom preservation: dramatic alpine 
 [auto]
 label = "Auto"
 pull = 1.0
-aim = 0.25
+aim = 0.5
 [auto.targets]
 landscape = "auto_landscape"
 sunset = "auto_landscape"

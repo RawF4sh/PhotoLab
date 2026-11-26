@@ -11,6 +11,9 @@ All notable changes to this project are documented here. Format follows
 - Private evaluation runs can fit provisional landscape goals, scale the edit to 150%,
   shape light along the sky boundary and around a sunset, and pull neighboring frames toward
   their shoot's median. The sidecar records the goal, fitted controls and safety reductions.
+- Auto moves a photo outside a goal's range halfway into it, up from a quarter (`aim = 0.5`).
+  On the 12-photo development sheet the median difference from Simple rose from 3.72 to 3.81,
+  and photos at 3 or more from 6 to 8.
 - Colour grading extends to ±200. A new sky-edge check looks for bright ridges introduced by an
   edit. The three experimental F59 landscape styles have been retired.
 - Play Raw collection records the source post, photographer and applicable licence for each original and edit. Downloaded photos stay in the private collection.
