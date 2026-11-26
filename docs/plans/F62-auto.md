@@ -228,8 +228,11 @@ their shoots can be excluded from eventual release rounds.
 ## Tasks
 
 Tiers as in [AGENT_ROUTING.md](../AGENT_ROUTING.md). M1 and M3 can be built while the owner's M2
-steps are pending. The tickets are one file each in [F62-tickets/](F62-tickets/), 01 to 20, each
-with its `Blocked by:` line; ticket 01 is the thin end-to-end path the others plug into.
+steps are pending. The tickets are one file each in [F62-tickets/](F62-tickets/), 01 to 24, each
+with its `Blocked by:` line; ticket 01 is the thin end-to-end path the others plug into. Tickets 21
+to 24 came after the first development sheet and deal with Auto's fault checks: 21 and 22 end
+pull-backs for faults Auto does not add or need not make, 23 names a fault no check saw, and 24
+(on hold) lets the fit stop before a fault.
 
 | Task | Tier | What | Proof |
 |---|---|---|---|

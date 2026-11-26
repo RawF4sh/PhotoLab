@@ -126,3 +126,8 @@ range (01 to 21).
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 — Planner. Tickets 22 to 24 build on this one, and the spec's ticket range already reads
+01 to 24: step 4 leaves that line as it is. A replay of this ticket's rule on the sheet with
+`aim = 0.5` gives the same single change as with 0.25: the twilight frame goes from 0 % to 25 %
+(distance from Simple 2.45) and loses its review mark; no other photo changes.
