@@ -36,14 +36,17 @@ LANDSCAPES = ("sunset", "twilight", "daylight", "mist")
 
 
 def sky_colour(rgb, sky, cfg):
-    """Colour in the sky. Separate gold light from a pink band in otherwise blue twilight."""
+    """Colour in the sky. Separate gold light from a pink band in otherwise blue twilight.
+
+    The last value is the share of the sky on the warm side of neutral (red above blue): its main
+    colour by area. A bright orange band lifts the mean warmth of a dark blue sky, not this share."""
     if sky is None or not sky.any():
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0
     r, g, b = rgb[sky > 0].T
     warmth = r - b
     gold = (warmth >= cfg["warm_pixel"]) & (g >= b)
     rose = (r - g >= cfg["rose_red"]) & (b - g >= cfg["rose_blue"])
-    return float(warmth.mean()), float(gold.mean()), float(rose.mean())
+    return float(warmth.mean()), float(gold.mean()), float(rose.mean()), float((warmth > 0).mean())
 
 
 def cloud_cover(rgb, sky, cfg, cloud=None):
@@ -85,7 +88,8 @@ def cloud_cover(rgb, sky, cfg, cloud=None):
     return None
 
 
-def landscape_scene(g, cfg, sky_warmth, warm_share, rose_share, capture_ev, light, night, clouds=None, fog=0.0):
+def landscape_scene(g, cfg, sky_warmth, warm_share, rose_share, capture_ev, light, night, clouds=None, fog=0.0,
+                    warm_side=0.0):
     """A compact evidence trail for the scene. Ambiguous evidence uses the broader goal."""
     sky = g.sky_cov >= cfg["min_sky"]
     contrast = g.lum_p90 - g.lum_p10
@@ -129,10 +133,17 @@ def landscape_scene(g, cfg, sky_warmth, warm_share, rose_share, capture_ev, ligh
         g.sky_lum >= cfg["overcast_sky_min"] and g.sky_sat <= cfg["overcast_sat_max"]))
     strong, likely = cfg["strong_confidence"], cfg["likely_confidence"]
     direct = True
-    if very_dark and not bright_capture:
+    gold_sky = sky and warm_share >= cfg["warm_min_share"] and not (dim_capture and rose_dusk) and (
+        warm_light or sky_warmth >= cfg["warm_sky"] or not sunlit_capture)
+    # An afterglow over a silhouette. The land is at night light, but the sky is still lit by the sun
+    # below the horizon (its own light, measured like the land's) and warm is its main colour. A sky
+    # that a town lights at night is far darker, and an orange band under a blue sky is mostly blue.
+    sky_tone = float(srgb_to_linear(g.sky_lum))
+    sky_ev = capture_ev + float(np.log2(max(sky_tone, np.finfo(np.float32).eps) / _MID_GREY)) if metered else None
+    afterglow = gold_sky and metered and sky_ev > cfg["afterglow_sky_min_ev"] and warm_side > cfg["afterglow_min_share"]
+    if very_dark and not bright_capture and not afterglow:
         label, confidence, reason = "twilight", strong, "night exposure and low ambient light"
-    elif sky and warm_share >= cfg["warm_min_share"] and not (dim_capture and rose_dusk) and (
-            warm_light or sky_warmth >= cfg["warm_sky"] or not sunlit_capture):
+    elif gold_sky:
         label, confidence, reason = "sunset", strong if warm_light else likely, "gold light in the sky"
     elif not bright_capture and (metered_dusk or unmetered_dusk):
         label, confidence, reason = "twilight", strong if metered_dusk else likely, (
@@ -165,7 +176,8 @@ def landscape_scene(g, cfg, sky_warmth, warm_share, rose_share, capture_ev, ligh
 def classify(g: GlobalStatsModel, present: set[str],
              region_stats: dict[str, RegionStatsModel] | None = None,
              override: str | None = None, *, thresholds=None, sky_warmth=0.0, warm_share=0.0,
-             light=None, night=False, rose_share=0.0, capture_ev=None, clouds=None, fog=0.0) -> Scene:
+             light=None, night=False, rose_share=0.0, capture_ev=None, clouds=None, fog=0.0,
+             warm_side=0.0) -> Scene:
     if override:
         broad = "landscape" if override in LANDSCAPES else override
         return Scene(broad, 1.0, override, "scene chosen by the user")
@@ -182,7 +194,8 @@ def classify(g: GlobalStatsModel, present: set[str],
         return Scene(name="people", confidence=0.7)
     if present & _LANDSCAPE:
         if thresholds is not None:
-            return landscape_scene(g, thresholds, sky_warmth, warm_share, rose_share, capture_ev, light, night, clouds, fog)
+            return landscape_scene(g, thresholds, sky_warmth, warm_share, rose_share, capture_ev, light, night, clouds, fog,
+                                   warm_side)
         return Scene(name="landscape", confidence=0.6)
     if present & _PEOPLE:  # small skin, no landscape context → still a person-ish frame
         return Scene(name="people", confidence=0.55)

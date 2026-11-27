@@ -154,3 +154,34 @@ def test_auto_asks_for_mist_and_a_frame_of_fog_is_mist():
         assert ("mist" in pipe.segmenter.words) == (style == "auto")
         if scene:
             assert info.scene == scene
+
+
+def test_auto_reads_an_afterglow_from_the_pixels_and_an_unreleased_sunset_still_renders_simple():
+    import numpy as np
+    from autoedit.contract import RunConfig
+    from autoedit.imageio import Image
+    from autoedit.pipeline import Pipeline
+    from autoedit.segment.base import RegionMask
+
+    class Masks:
+        def segment(self, im, words):
+            sky = np.indices(im.rgb.shape[:2])[0] < im.height // 2
+            items = {"sky": sky, "mountain": ~sky}
+            return [RegionMask(w, items[w], .99) for w in words if w in items]
+
+    y, x = np.indices((40, 64))
+    def photo(*skies):
+        rgb = np.stack([.05 + .04*x/64]*3, axis=2).astype(np.float32)   # land in shadow, 5 stops under mid-grey: 2.7
+        for rows, colour in skies:
+            rgb[rows] = colour
+        return Image(rgb=rgb, exif={"capture_ev100":7.6})
+    def render(im, style):
+        pipe = Pipeline.build(RunConfig(backend="stub", style=style))
+        pipe.segmenter = Masks()
+        return pipe.process_one("sample.jpg", image=im)
+    peach = photo((y < 20, [.92, .78, .66]))                                            # the sky at 9.4
+    band = photo((y < 20, [.10, .14, .30]), ((y >= 14) & (y < 20), [.95, .55, .10]))    # at 6.1, gold on 30 % of blue
+    pixels, info = render(peach, "auto")
+    assert info.scene == "sunset"
+    assert render(band, "auto")[1].scene == "twilight"
+    assert np.array_equal(pixels, render(peach, "standard")[0])

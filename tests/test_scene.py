@@ -351,3 +351,67 @@ def test_capture_ev_falls_back_to_libraw_only_for_its_own_key():
     assert imageio._ev100(1/200, 14, 200) == pytest.approx(np.log2(19600))
     assert imageio._ev100(.125, 0, 100) is None and imageio._ev100(.125, 8, 0) is None
     assert imageio._raw_capture_ev("no-such-file.raf") is None
+
+
+def test_an_afterglow_over_unlit_land_is_sunset_and_a_band_under_a_blue_sky_stays_twilight():
+    cfg = _thresholds()
+    def detect(g, ev, warmth, gold, side, **kw):
+        return scene.classify(g, {"sky"}, thresholds=cfg, capture_ev=ev, sky_warmth=warmth, warm_share=gold,
+                              warm_side=side, **kw).finer
+    # F62 ticket 27. A peach sky over land in shadow: the land 4.6 stops under mid-grey (2.0), the sky at 8.5.
+    glow = _stats(sky_cov=.48, sky_lum=.85, sky_sat=.13, lum_p10=.04, lum_p50=.33, lum_p90=.91, fg_p50=.08)
+    assert detect(glow, 6.6, .12, .37, .96) == "sunset"
+    assert detect(glow, 6.6, .12, .37, 0.) == "twilight"                # as before, for a caller that gives no share
+    assert detect(glow, 6.6, .12, .37, .96, night=True) == "sunset"     # a high ISO does not make a lit sky night
+    assert detect(glow, 6.6, .12, .37, cfg["afterglow_min_share"]) == "twilight"    # half is not the main colour
+    assert detect(glow, 6.6, .01, 0., 1.) == "twilight"                 # a white sky with a warm cast: no gold in it
+    # An orange band under a dark blue sky: the band lifts the mean warmth, most of the sky is blue.
+    band = _stats(sky_cov=.29, sky_lum=.44, sky_sat=.33, lum_p10=.03, lum_p50=.11, lum_p90=.51, fg_p50=.08)
+    assert detect(band, 9.1, .055, .29, .42) == "twilight"
+    # A town at night under cloud that its lamps light: warm all over, and 9 stops under the afterglow.
+    town = _stats(sky_cov=.68, sky_lum=.38, sky_sat=.20, lum_p50=.37, lum_p90=.47, fg_p50=.30)
+    assert detect(town, .3, .07, .14, .94) == "twilight"
+    # The sky's own light decides, at the level in the config: the same sky a stop above it and a stop below.
+    level = cfg["afterglow_sky_min_ev"] - float(np.log2(scene.srgb_to_linear(.85) / .18))
+    assert detect(glow, level + 1, .12, .37, .96) == "sunset" and detect(glow, level - 1, .12, .37, .96) == "twilight"
+
+
+def test_the_afterglow_rule_only_ever_turns_a_night_answer_into_sunset():
+    import random
+    cfg = _thresholds()
+    rng = random.Random(27)
+    moved = 0
+    for _ in range(2000):
+        low, mid, high = sorted(rng.uniform(0, 1) for _ in range(3))
+        g = _stats(sky_cov=rng.choice((0., rng.uniform(.04, .9), rng.uniform(.04, .9))), sky_lum=rng.uniform(0, 1),
+                   sky_sat=rng.uniform(0, .5), lum_p10=low, lum_p50=mid, lum_p90=high, fg_p50=rng.uniform(0, .6),
+                   veil=rng.choice((0., rng.uniform(0, .3))), blown_sky=rng.choice((0., rng.uniform(0, 1))))
+        kw = dict(thresholds=cfg, capture_ev=rng.choice((None, rng.uniform(-6, 16), rng.uniform(2, 12))),
+                  sky_warmth=rng.uniform(-.3, .3), warm_share=rng.uniform(0, 1),
+                  rose_share=rng.choice((0., rng.uniform(0, .5))), night=rng.random() < .2,
+                  clouds=rng.choice((None, "open", "deck", "ceiling")), fog=rng.choice((0., rng.uniform(0, 1))))
+        before = scene.classify(g, {"sky"}, **kw)
+        after = scene.classify(g, {"sky"}, warm_side=rng.uniform(0, 1), **kw)
+        if (after.finer, after.reason) != (before.finer, before.reason):
+            moved += 1
+            assert (before.finer, before.reason) == ("twilight", "night exposure and low ambient light")
+            assert after.finer == "sunset" and after.direct
+    assert moved > 20     # the draws do reach the rule
+
+
+def test_sky_colour_counts_the_share_of_the_sky_on_the_warm_side():
+    cfg = _thresholds()
+    rgb = np.zeros((10, 10, 3), np.float32)
+    sky = np.zeros((10, 10), bool)
+    sky[:6] = True
+    rgb[:4] = [.05, .08, .16]       # dark blue above
+    rgb[4:6] = [.95, .55, .10]      # a bright orange band on the horizon
+    warmth, gold, rose, side = scene.sky_colour(rgb, sky, cfg)
+    assert warmth > 0 and gold == pytest.approx(1 / 3)      # the mean says warm
+    assert side == pytest.approx(1 / 3)                     # the share says blue
+    rgb[:4] = [.80, .76, .74]       # a pale peach sky above the band: warm, and too pale to count as gold
+    assert scene.sky_colour(rgb, sky, cfg)[1::2] == (pytest.approx(1 / 3), 1.0)
+    rgb[:6] = .5                    # grey is on neither side
+    assert scene.sky_colour(rgb, sky, cfg)[3] == 0.0
+    assert scene.sky_colour(rgb, np.zeros_like(sky), cfg) == (0.0, 0.0, 0.0, 0.0)
+    assert scene.sky_colour(rgb, None, cfg) == (0.0, 0.0, 0.0, 0.0)

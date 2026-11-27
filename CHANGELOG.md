@@ -32,6 +32,10 @@ All notable changes to this project are documented here. Format follows
 - A photo that Auto could not give a finer scene keeps the broader landscape scene in a batch as well:
   only a photo that says daylight by default takes a scene from its neighbours, and only mist or
   sunset. On a fresh card folder the neighbours had turned 23 frames of a dawn timelapse into daylight.
+- Auto calls an afterglow a sunset. Gold in a sky that is still lit and mostly warm, over land that
+  came out as dark as night, used to read as twilight (`[scenes] afterglow_sky_min_ev` and
+  `afterglow_min_share`). On the labelled sets this names 12 of 35 sunsets in the card folder's
+  sample, up from 7, and 9 of 13 on the 120, up from 7. No label of another scene lost its answer.
 - Colour grading extends to ±200. A new sky-edge check looks for bright ridges introduced by an
   edit. The three experimental F59 landscape styles have been retired.
 - Play Raw collection records the source post, photographer and applicable licence for each original and edit. Downloaded photos stay in the private collection.

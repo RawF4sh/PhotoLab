@@ -1,6 +1,6 @@
 # 27. Scenes: an afterglow over land in shadow is a sunset
 
-Status: ready-for-agent
+Status: done
 Spec: [F62](../F62-auto.md), milestone M1
 Who: Builder (Sonnet, medium), then a Checker (Opus, high) on the diff.
 
@@ -604,3 +604,5 @@ blue bay after the glow.
   of them the dawn run on the fallback) and 1 is daylight.
 - Remove the sample's one daylight/twilight swap. It is a direct daylight answer on a frame
   labelled twilight, unsure, and no night-branch answer.
+
+2026-11-27 (session): Built as written from the Planner's patch, plus the CHANGELOG line. Named tests 36 passed and collected; full suites green (1,442 passed and 4 skipped; 1,446 passed with the venv); stub images byte-identical; public-repo check passes. A Checker (Opus, high) found no blockers and no minor findings. The code matches the ticket byte for byte, and only a night-branch twilight can become sunset. The four new tests fail without the change. Every count in Done when matched: card sample alone 97 to 102 of 147 (sunset 7 to 12), sure and owner labels 72/85, 1 swap and none on sure labels, 24 answers changed, all twilight to sunset; batch 102 to 107, with the same 30 neighbour scenes; development set unchanged at 73/97; the 120 from 94 to 96, both changes right; Swiss 0 changed; Dolomites 1. No SAM inference. The 85 % bar stays open, and O1 (a fresh card folder) and O2 (the afterglow border) stay with the owner.

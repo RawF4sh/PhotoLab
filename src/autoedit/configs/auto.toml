@@ -26,11 +26,19 @@ dusk_highlight_max = 0.48
 # Light on the land: the capture EV100 plus how far the land (the frame outside the sky) came out
 # from mid-grey, in stops. A camera set for a bright dusk sky has a daylight EV and dark land.
 # An open sky counts as daylight from day_land_min_ev up and as dusk up to dusk_land_max_ev;
-# between the two it is neither. At or below night_land_max_ev the sun is gone, whatever the sky's colour.
+# between the two it is neither. At or below night_land_max_ev the land is in night light: twilight,
+# unless the sky above it shows an afterglow.
 day_land_min_ev = 8.25
 dusk_land_max_ev = 7.0
 night_land_max_ev = 5.0
 metered_dusk_median_max = 0.50
+# An afterglow over a silhouette is a sunset, however dark the land: gold in a sky that is still
+# lit and whose main colour is warm. The sky's light is measured like the land's (capture EV100
+# plus how far the sky came out from mid-grey) and starts at the land's night level; a sky that a
+# town or the moon lights stays stops below it. afterglow_min_share is the share of the sky on the
+# warm side of neutral: more than half, so an orange band under a blue sky stays twilight.
+afterglow_sky_min_ev = 5.0
+afterglow_min_share = 0.5
 # The camera's own setting, uncorrected: at a sunlit exposure a neutral patch may be a lit cloud,
 # and gold in the sky needs a second witness (a low sun or a warm sky overall).
 sunlit_capture_min_ev = 13.7

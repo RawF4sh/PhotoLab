@@ -545,13 +545,14 @@ class Pipeline:
                           r.score >= meta_for("cloud", self.meta).min_score), None)
             fog = next((float(r.mask.mean()) for r in raw if r.name == "mist" and
                         r.score >= meta_for("mist", self.meta).min_score), 0.0)
-            sky_warmth, warm_share, rose_share = scene_mod.sky_colour(proxy.rgb, sky, thresholds)
+            sky_warmth, warm_share, rose_share, warm_side = scene_mod.sky_colour(proxy.rgb, sky, thresholds)
             detected_light = self._find_light(proxy.rgb, raw, resolved.union, asked=True)
             detected = scene_mod.classify(gstats, present, region_stats, cfg.scene, thresholds=thresholds,
                                           sky_warmth=sky_warmth, warm_share=warm_share, rose_share=rose_share,
                                           capture_ev=(proxy.exif or {}).get("capture_ev100"), light=detected_light,
                                           night=night.is_night(gstats, self.night_cfg),
-                                          clouds=scene_mod.cloud_cover(proxy.rgb, sky, thresholds, cloud), fog=fog)
+                                          clouds=scene_mod.cloud_cover(proxy.rgb, sky, thresholds, cloud), fog=fog,
+                                          warm_side=warm_side)
             choice = AutoPhoto.select(detected, style, self.auto_cfg, requested_strength, cfg.auto_unreleased,
                                       auto_strength, None if cfg.scene else auto_shoot)
             auto_scene, strength = choice.scene, choice.strength
