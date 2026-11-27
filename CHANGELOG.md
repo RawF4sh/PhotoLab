@@ -14,6 +14,24 @@ All notable changes to this project are documented here. Format follows
 - Auto moves a photo outside a goal's range halfway into it, up from a quarter (`aim = 0.5`).
   On the 12-photo development sheet the median difference from Simple rose from 3.72 to 3.81,
   and photos at 3 or more from 6 to 8.
+- Auto reads the scene from the light on the land (capture EV plus how far the land came out from mid-grey)
+  instead of the camera's setting alone, asks the segmenter for "mist" to call fog across the frame, and reads
+  capture EV from LibRaw for RAW containers Pillow cannot open (metadata only, no change to a render).
+  On the 97-photo development set, 59 to 73 scenes match; daylight/twilight swaps 5 to 1.
+- Auto's fault check names a light made grey: a sun or lamp that is white in the original and falls
+  below a luma of 0.90 (`light_dull_level`) fails `dulled_light_source`, so the photo is pulled back.
+- Auto answers only for faults it adds: a check the Simple edit already fails is held against the
+  Simple render instead of the original, so a photo no longer loses strength or gains a review mark
+  for a fault Simple has. The sidecar lists these as `inherited`.
+- Auto's own regions reach the frame edge: masks that stop a few pixels short are filled to it, so
+  sky edits no longer leave a light band along the top. Simple and unreleased scenes are unchanged.
+- Auto's scene follows the shoot only where a photo shows no light of its own: a photo with no sky in the
+  frame, a clipped sky, or an unreadable one takes the scene its neighbours (same folder, within
+  `[shoot] window_min` minutes) agree on, and a photo with its own sky keeps it. This replaces the
+  one-scene-per-group vote. The sidecar's `auto` block gains `direct`.
+- A photo that Auto could not give a finer scene keeps the broader landscape scene in a batch as well:
+  only a photo that says daylight by default takes a scene from its neighbours, and only mist or
+  sunset. On a fresh card folder the neighbours had turned 23 frames of a dawn timelapse into daylight.
 - Colour grading extends to ±200. A new sky-edge check looks for bright ridges introduced by an
   edit. The three experimental F59 landscape styles have been retired.
 - Play Raw collection records the source post, photographer and applicable licence for each original and edit. Downloaded photos stay in the private collection.

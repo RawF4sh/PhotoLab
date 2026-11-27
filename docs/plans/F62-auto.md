@@ -38,7 +38,7 @@ alike, and the owner prefers Auto on at least 7 of 10 photos in a blind vote.
 | Darker landscapes | Allowed under Auto; the darkness and clipping checks stay for Simple and portraits; fault checks stay for all (ADR 0001) |
 | Offline | Auto runs on the computer. Typed tuning uses the existing word list, with the optional AI as today |
 | Strength | One slider, 0 to 150 %, 100 % is the goal |
-| One shoot | Photos of the same shoot get the same scene and look alike |
+| One shoot | A photo that shows its own sky or light keeps its scene; a photo that says daylight only by default takes the scene its neighbours agree on (mist or sunset); a photo Auto is unsure of stays on the broader scene. Settings are pulled toward one median, so the shoot looks alike |
 | When unsure | Fall back to the broader scene at a lower strength |
 | Retire | Blue hour, Sunset glow and Moody landscape |
 | Release | Per scene: a visible-difference minimum first, then the owner's blind vote (7 of 10 or better), and no faults |
@@ -91,9 +91,12 @@ use them.
 - The scene and the reason are written to the sidecar `notes`, shown on the photo, and can be
   corrected by the user. A new `--scene` option and the app's scene menu pass the existing
   `override`.
-- **One shoot, one scene.** `consistency.py::plan_groups` already groups a shoot. Within a group,
-  every photo gets the most common scene, unless the group is split by time of day (a sunset
-  sequence that turns into twilight keeps both).
+- **One shoot, one scene.** A photo that answered daylight by default (no sky in the frame, a
+  clipped sky, or a sky the classifier cannot read) takes the scene that the photos of its folder
+  taken within `[shoot] window_min` minutes agree on (at least `min_frames` of them, `min_share`
+  alike): mist or sunset, never twilight. A photo that shows its own sky or light keeps its scene
+  (ticket 25), and a photo that fell back to `landscape` stays there (ticket 26). `consistency.py::plan_groups` groups
+  by brightness, not by shoot; it only decides which photos the settings pull evens out.
 
 Check: the Checker labels 120 landscape originals by eye (FiveK originals already on disk and the
 in-repo Dolomites corpus), without seeing the classifier's answer. The classifier must agree on
@@ -143,10 +146,13 @@ the F61 twilight originals, so M3 can be built and checked in parallel.
   have, so a strong sky edit follows the ridge.
 - **Checks under Auto.** Landscapes: the darkness check is off (`preserve_exposure`, as for
   styles that ask for darker) and the clipping budget is the scene's own, from `auto.toml`. Every
-  scene keeps the fault checks: banding, a blown light source, a wrong skin colour, and a new
+  scene keeps the fault checks: banding, a blown light source, a light made grey (white in the original, below 0.90 after), a wrong skin colour, and a new
   **halo** check: a light band along the sky edge that the edit made brighter than both sides,
   measured on the proxy. A photo that fails a fault check is pulled back to the strength that
-  passes, and the reason goes to `notes`.
+  passes, and the reason goes to `notes`. Auto answers only for what it adds: a check the Simple
+  render of the photo already fails is held, at the same limit, against the Simple render instead
+  of the original (`fault_check["inherited"]` lists them), so a fault Simple has never costs Auto
+  strength or a review mark.
 - **Strength 0 to 150 %.** The existing `--intensity` and the app's strength slider. 100 % moves the
   photo to its goal. Above 100 % the move goes further along the same direction, still inside the
   limits and checks.
@@ -228,11 +234,12 @@ their shoots can be excluded from eventual release rounds.
 ## Tasks
 
 Tiers as in [AGENT_ROUTING.md](../AGENT_ROUTING.md). M1 and M3 can be built while the owner's M2
-steps are pending. The tickets are one file each in [F62-tickets/](F62-tickets/), 01 to 24, each
+steps are pending. The tickets are one file each in [F62-tickets/](F62-tickets/), 01 to 26, each
 with its `Blocked by:` line; ticket 01 is the thin end-to-end path the others plug into. Tickets 21
 to 24 came after the first development sheet and deal with Auto's fault checks: 21 and 22 end
 pull-backs for faults Auto does not add or need not make, 23 names a fault no check saw, and 24
-(on hold) lets the fit stop before a fault.
+(on hold) lets the fit stop before a fault. Tickets 25 and 26 are M1's shoot rule: 25 built it, and
+26 keeps a photo that fell back to the broader scene from taking a scene from its neighbours.
 
 | Task | Tier | What | Proof |
 |---|---|---|---|

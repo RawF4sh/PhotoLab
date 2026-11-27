@@ -406,38 +406,73 @@ def plan(images: list[str], cfg, pipeline, thr: dict | None = None, progress=Non
         if by_cast:
             _with_rules(pipeline, lambda: _cast_plan(out, pipeline, thr, progress))
     if getattr(pipeline, "auto_cfg", None):
-        _with_rules(pipeline, lambda: _auto_shoots(out, pipeline, progress))
+        _with_rules(pipeline, lambda: _auto_shoots(images, out, pipeline, progress))
     return out
 
 
-def shoot_scenes(sequence):
-    """Choose one lighting scene per consecutive time-of-day block in a shoot.
+def shoot_time(path: str) -> float | None:
+    """When a frame was taken, for Auto's shoot rule: `capture_time`, or LibRaw's reading for the
+    RAW containers Pillow cannot open (RAF, ORF, RW2, CR3, ARW, NRW). Bursts, timelapse and sync
+    keep `capture_time`: a new time there would change which frames a default run evens out.
+    ponytail: a second open of the file; read it during the decode if it shows in a profile."""
+    when = capture_time(path)
+    if when is None and is_raw(path):
+        try:
+            import rawpy
+            with rawpy.imread(path) as raw:
+                stamp = raw.other.timestamp
+            when = stamp.timestamp() if stamp.year > 1990 else None
+        except Exception:
+            when = None
+    return when
 
-    Daylight and mist can disagree between neighbouring views of the same shoot.
-    A sunset-to-twilight transition is a new period; uncertain frames follow their neighbours.
-    People and other subjects keep Simple and never vote on the landscape.
-    """
+
+def neighbour_scenes(frames, cfg):
+    """path -> scene, for the frames that take the scene of the frames around them.
+
+    `frames`: (path, capture time in seconds, scene, direct) for the landscape frames of one
+    folder, RAW files apart from the others. `direct`: the frame's own sky or light decided its
+    scene. A frame that answered "daylight" by default takes the scene that the direct frames
+    taken within `window_min` minutes agree on: at least `min_frames` of them, `min_share` of
+    them alike. Its exposure shows the day, so it never takes twilight: the rule gives mist or
+    sunset and nothing else, and cannot swap daylight and twilight. A frame that shows its own
+    light keeps it. So does a frame that fell back to "landscape": nothing in it says what time
+    of day it is, and such frames sit where the light changes, between neighbours that disagree.
+    ponytail: every frame against every frame of its folder; sort and bisect if a folder of
+    tens of thousands shows up."""
+    reach = cfg["window_min"] * 60.0
+    out = {}
+    for path, when, scene, direct in frames:
+        if direct or scene != "daylight":       # only a daylight answer given by default listens
+            continue
+        seen = Counter(s for p, t, s, d in frames if d and p != path and abs(t - when) <= reach)
+        total = sum(seen.values())
+        if total < cfg["min_frames"]:
+            continue
+        top, count = seen.most_common(1)[0]
+        if count >= cfg["min_share"] * total and top not in ("daylight", "twilight"):
+            out[path] = top
+    return out
+
+
+def shoot_blocks(sequence):
+    """Runs of consecutive photos of one time of day, for the settings pull: daylight and mist
+    together, a sunset or a twilight apart. A photo that fell back to "landscape" stays with its
+    neighbours. People and other subjects are in no block."""
     from .scene import LANDSCAPES
-    segments = []
-    phase = None
-    group = []
+    blocks, phase, block = [], None, []
     for path, scene in sequence:
         if scene not in (*LANDSCAPES, "landscape"):
             continue
         current = None if scene == "landscape" else ("day" if scene in ("daylight", "mist") else scene)
         if phase and current and current != phase:
-            segments.append(group)
-            group = []
-        group.append((path, scene))
+            blocks.append(block)
+            block = []
+        block.append(path)
         phase = current or phase
-    if group:
-        segments.append(group)
-    result = []
-    for block in segments:
-        votes = Counter(scene for _, scene in block if scene != "landscape")
-        winner = votes.most_common(1)[0][0] if votes else "landscape"
-        result.append((winner, [path for path, _scene in block]))
-    return result
+    if block:
+        blocks.append(block)
+    return blocks
 
 
 def median_fit(plans):
@@ -472,40 +507,51 @@ def pull_fit(frame, regions, medians, amount, limits):
     return frame, {name: blend(settings, medians.get(name, {}), frame) for name, settings in regions.items()}
 
 
-def _auto_shoots(biases, pipeline, progress):
-    by_group = {}
-    for path, bias in biases.items():
-        if bias.group:
-            when = capture_time(path)
+def _auto_shoots(images, biases, pipeline, progress):
+    from .scene import LANDSCAPES
+    groups, pools = {}, {}
+    for path in images:
+        when = shoot_time(path)
+        folder, raw = os.path.dirname(os.path.abspath(path)), is_raw(path)
+        group = biases[path].group if path in biases else ""
+        if group:       # the settings pull keeps its groups
             day = datetime.fromtimestamp(when).date() if when is not None else None
-            key = (os.path.dirname(os.path.abspath(path)), bias.group, day, is_raw(path))
-            by_group.setdefault(key, []).append((when, path))
+            groups.setdefault((folder, group, day, raw), []).append((when, path))
+        if when is not None:
+            pools.setdefault((folder, raw), []).append((when, path))
+    groups = [g for g in groups.values() if len(g) > 1]
+    pools = [p for p in pools.values() if len(p) > 1]
     if progress:
         progress("measuring Auto settings within each shoot")
-    for group in by_group.values():
-        if len(group) < 2:
-            continue
-        audit = {}
-        for _, path in sorted(group, key=lambda item: (item[0] or 0, item[1])):
-            try:
-                audit[path] = pipeline.process_one(path, do_apply=False)[1].audit["auto"]
-            except Exception:
-                continue  # a damaged photo cannot steer the rest of its shoot
-        for scene, paths in shoot_scenes([(p, a["scene"]) for p, a in audit.items()]):
+    audit = {}
+
+    def analyse(path, **shoot):
+        try:
+            audit[path] = pipeline.process_one(path, do_apply=False, **shoot)[1].audit["auto"]
+        except Exception:
+            audit.pop(path, None)      # a damaged photo cannot steer the rest of its shoot
+
+    for path in sorted({p for part in (*groups, *pools) for _, p in part}):
+        analyse(path)
+    scene = {p: a["scene"] for p, a in audit.items() if a["scene"] in (*LANDSCAPES, "landscape")}
+    for pool in pools:
+        frames = [(p, when, scene[p], audit[p]["direct"]) for when, p in sorted(pool) if p in scene]
+        for path, taken in neighbour_scenes(frames, pipeline.auto_cfg["shoot"]).items():
+            analyse(path, auto_shoot={"scene": taken})      # its fit under the scene it takes
+            if path in audit:
+                scene[path] = taken
+                biases.setdefault(path, Bias()).auto_shoot = {"scene": taken, "median": {}}
+            else:
+                del scene[path]
+    for group in groups:        # the settings pull keeps its groups and its blocks
+        order = [p for _, p in sorted(group, key=lambda item: (item[0] or 0, item[1])) if p in scene]
+        for paths in shoot_blocks([(p, scene[p]) for p in order]):
             if len(paths) < 2:
                 continue
-            votes = []
-            for path in paths:
-                if audit[path]["scene"] != scene:
-                    try:
-                        audit[path] = pipeline.process_one(path, do_apply=False, auto_shoot={"scene": scene})[1].audit["auto"]
-                    except Exception:
-                        continue
-                if audit[path].get("target"):
-                    votes.append(audit[path].get("fit", {}))
+            votes = [audit[p].get("fit", {}) for p in paths if audit[p].get("target")]
             median = median_fit(votes) if len(votes) > 1 else {}
             for path in paths:
-                biases[path].auto_shoot = {"scene": scene, "median": median}
+                biases[path].auto_shoot = {"scene": scene[path], "median": median}
 
 
 def subject_colour(rgb: np.ndarray, union: dict, names) -> dict | None:

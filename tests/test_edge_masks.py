@@ -37,7 +37,7 @@ def _rect(r0, r1, c0, c1, n=128):
     return m
 
 
-def _snap_run(tmp_path, snap):
+def _snap_run(tmp_path, snap, concepts=("sky",), **cfg):
     from PIL import Image
     from autoedit.contract import Adjustment, RunConfig
     from autoedit.pipeline import Pipeline
@@ -49,7 +49,7 @@ def _snap_run(tmp_path, snap):
             return [RegionMask(name=w, mask=masks[w], score=0.9, coverage=float(masks[w].mean())) for w in words if w in masks]
     path = tmp_path / "n.png"
     Image.fromarray(np.random.default_rng(3).integers(60, 190, (128, 128, 3), dtype=np.uint8)).save(path)
-    pipe = Pipeline.build(RunConfig(backend="stub", concepts=["sky"], snap_edges=snap))
+    pipe = Pipeline.build(RunConfig(backend="stub", concepts=list(concepts) if concepts else None, snap_edges=snap, **cfg))
     pipe.segmenter = Seg()
     seen = {}
     adj = Adjustment(target="lake", ops={"exposure": 0.4}, source="x", scope="photo")
@@ -91,3 +91,18 @@ def test_corners_fill_when_mask_stops_short_of_all_four_edges():
     out = snap_to_edges(m, 12)
     assert out.all()
     assert not m[0, 0]   # input untouched
+
+
+def _auto_sky_row0(tmp_path, snap=False, **cfg):
+    seen, masks = _snap_run(tmp_path, snap, concepts=None, **cfg)
+    return seen["res"].union["sky"][0], masks
+
+
+def test_auto_regions_reach_the_frame_edge(tmp_path):
+    auto = dict(style="auto", scene="daylight", auto_unreleased=True)
+    row0, masks = _auto_sky_row0(tmp_path, **auto)
+    assert row0.all() and not masks["sky"][0].any()   # segmenter's array unchanged
+    assert not _auto_sky_row0(tmp_path, intensity=0, **auto)[0].any()
+    assert not _auto_sky_row0(tmp_path, style="standard")[0].any()
+    snapped = _auto_sky_row0(tmp_path, snap=True, **auto)[0]
+    assert (snapped == row0).all()

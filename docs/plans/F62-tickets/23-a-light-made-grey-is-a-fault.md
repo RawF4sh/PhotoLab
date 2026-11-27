@@ -1,6 +1,6 @@
 # 23. Name the fault: a light made grey
 
-Status: ready-for-agent
+Status: done
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
 
@@ -86,3 +86,5 @@ check.
 - No git writes: the owner gets a commit block.
 
 ## Comments
+
+2026-11-25 (session): Built as written: `light_dull_level = 0.90` in `quality.toml` (a new, stricter check; nothing loosened) and `dulled_light_source:<name>` in `_protected_regions`. The sunset with the grey sun now ends at 25 % with a white sun (4.45). Development sheet (12 photos, full size, `aim = 0.5`), Auto against Simple: median distance 3.81 before tickets 21 to 23, 5.52 after; photos at 3 or more stay at 8 of 12. Full suite 1,430 passed, 0 failed; stub images byte-identical to the previous state; tone report on the 110 in-repo RAW photos: 0 dark made darker, 0 pushed into clipping; public-repo check passes. A Checker (Opus, high) reviewed tickets 21 to 23 together: no blockers; Simple and default runs cannot reach the new checks (they run only while Auto is active, and no default run gets a sun or lights mask). One comment in `pipeline.py` corrected on its finding.

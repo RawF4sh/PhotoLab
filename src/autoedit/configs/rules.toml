@@ -68,7 +68,7 @@ omit_zero_global_ops = ["temp", "tint", "shadows_ev"]
 # temp and tint by at most max_wb units. A burst never reaches more than max_span_s past its first
 # frame (a longer run is split), so a real change of light is not flattened.
 [masks]
-snap_edge_px = 12     # with snap_edges on: gaps this close to the frame edge (proxy pixels) are filled
+snap_edge_px = 12     # with snap_edges on: gaps this close to the frame edge (proxy pixels) are filled; Auto's own regions always use it
 
 [consistency]
 max_gap_s = 30

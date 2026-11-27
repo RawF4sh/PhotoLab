@@ -175,6 +175,11 @@ def _load_image(path: str, decode: dict | None = None) -> Image:
             exif = _read_exif(PILImage.open(path))
         except Exception:
             exif = {}
+        if "capture_ev100" not in exif:   # RAF, ORF, RW2, CR3, ARW, NRW: containers Pillow cannot read
+            ev100 = _raw_capture_ev(path)
+            if ev100 is not None:
+                # Only this key: ISO from here would change the sharpening of a default run.
+                exif["capture_ev100"] = ev100
         return Image(rgb=np.ascontiguousarray(rgb), source_bits=bits, path=path, exif=exif,
                      decode_ev=ev, decode_info=decode_info)
 
@@ -672,14 +677,33 @@ def _read_exif(pil: PILImage.Image) -> dict:
     except (TypeError, ValueError, ZeroDivisionError):
         pass
     try:
-        seconds, aperture = float(ifd[0x829A]), float(ifd[0x829D])
-        if seconds > 0 and aperture > 0 and out.get("iso", 0) > 0:
-            ev100 = np.log2((aperture ** 2 / seconds) * (100.0 / out["iso"]))
-            if np.isfinite(ev100):
-                out["capture_ev100"] = float(ev100)
+        ev100 = _ev100(float(ifd[0x829A]), float(ifd[0x829D]), out.get("iso", 0))
+        if ev100 is not None:
+            out["capture_ev100"] = ev100
     except (KeyError, TypeError, ValueError, ZeroDivisionError, OverflowError):
         pass
     return out
+
+
+def _ev100(seconds: float, aperture: float, iso: float) -> float | None:
+    """The exposure value at ISO 100 of a shot, or None when a setting is missing."""
+    if not (seconds > 0 and aperture > 0 and iso > 0):
+        return None
+    ev100 = np.log2((aperture ** 2 / seconds) * (100.0 / iso))
+    return float(ev100) if np.isfinite(ev100) else None
+
+
+def _raw_capture_ev(path: str) -> float | None:
+    """EV100 from LibRaw's own reading of a RAW file's settings, for the containers Pillow cannot
+    read. None when a setting is missing (a manual lens has no aperture) or rawpy is too old.
+    ponytail: a second open of the file, 0.06 s in the median; fold it into _decode_raw if it shows."""
+    try:
+        import rawpy
+        with rawpy.imread(path) as raw:
+            shot = raw.other
+            return _ev100(float(shot.shutter_speed), float(shot.aperture), float(shot.iso_speed))
+    except Exception:
+        return None
 
 
 # ── export metadata (F1, docs/plans/F1-export-metadata.md) ─────────────────────

@@ -1,7 +1,7 @@
 """Source-relative safety: destruction cannot hide behind net/global brightness."""
 import numpy as np
 
-from autoedit.quality import assess_pixels, load_quality_config
+from autoedit.quality import added_faults, assess_pixels, load_quality_config
 
 
 def _gray(line):
@@ -194,8 +194,79 @@ def test_small_light_and_skin_faults_are_measured_against_the_same_region_of_the
     assert "introduced_luma_high_clipping" not in report["failures"]
 
 
-def test_auto_retries_share_one_decision_and_return_the_accepted_editable_settings():
+def test_a_light_white_in_the_original_may_not_be_made_grey():
+    source = np.full((96, 128, 3), 0.46, dtype=np.float32)
+    light = np.zeros((96, 128), bool)
+    light[13:16, 15:19] = True
+    source[light] = 1.0
+
+    def run(level, name="sun", src=source, **thresholds):
+        out = src.copy()
+        out[light] = level
+        return assess_pixels(src, out, {name: light}, thresholds or None)
+
+    grey = run(0.60)
+    assert "dulled_light_source:sun" in grey["failures"]
+    assert grey["metrics"]["sun_dulled_fraction"] == 1.0
+    assert "dulled_light_source:sun" not in run(0.95)["failures"]
+    bright = source.copy(); bright[light] = 0.95
+    assert "dulled_light_source:sun" not in run(0.50, src=bright)["failures"]
+    out = source.copy(); out[light] = 1.0
+    ys, xs = np.nonzero(light); keep = np.arange(len(ys)) < len(ys) // 2
+    out[ys[keep], xs[keep]] = 0.60
+    assert "dulled_light_source:sun" not in assess_pixels(
+        source, out, {"sun": light}, {"light_clip_fraction": 0.6})["failures"]
+    assert "dulled_light_source:lights" in run(0.60, name="lights")["failures"]
+    assert assess_pixels(source, source, {"sun": light})["passed"]
+
+
+def _ramp_pair():
+    source = _gray(np.linspace(.90, .979, 100))
+    return source, np.full_like(source, .97)
+
+
+def test_added_faults_charges_auto_only_for_what_simple_does_not_already_have():
+    source, flat = _ramp_pair()
+    texture = "encoded_highlight_texture_loss"
+    # Simple already flattens the ramp and Auto adds nothing (same picture, or uniformly darker).
+    assert added_faults(source, flat, None, None, flat) == ([], [texture])
+    assert added_faults(source, flat * .9, None, None, flat) == ([], [texture])
+    # Simple keeps the ramp and Auto flattens it.
+    assert added_faults(source, flat, None, None, source) == ([texture], [])
+    assert added_faults(source, flat, None, None, None) == ([texture], [])
+    # No failure: nothing to split.
+    assert added_faults(source, source, None, None, flat) == ([], [])
+    # Two ramps: Simple flattens one, Auto flattens the other as well.
+    two = np.concatenate([source, source], axis=1)
+    half = two.copy(); half[:, :100] = .97
+    assert added_faults(two, np.full_like(two, .97), None, None, half) == ([texture], [])
+    # Each step passes alone, the result fails: a third of the contrast, then a twentieth.
+    third, twentieth = .94 + (source - .94) / 3, .94 + (source - .94) / 20
+    assert assess_pixels(source, third)["passed"] and assess_pixels(third, twentieth)["passed"]
+    assert added_faults(source, twentieth, None, None, third) == ([texture], [])
+    # An unmeasured baseline inherits nothing.
+    nan = source.copy(); nan[0, 0, 0] = np.nan
+    assert added_faults(source, flat, None, None, nan) == ([texture], [])
+
+
+def test_added_faults_compares_failing_texture_patches_by_position():
     from unittest.mock import patch
+    source, flat = _ramp_pair()
+    texture = "encoded_highlight_texture_loss"
+    low, fine = {"x": 3, "y": 0, "retention": 0.0}, {"x": 3, "y": 0, "retention": 1.0}
+
+    def report(failures, *patches):
+        return {"failures": list(failures), "metrics": {"comparison": {},
+                                                        "highlight_texture": {"patches": list(patches)}}}
+    first, clean = report([texture], low), report([])
+    for base_patch, expect in ((fine, ([texture], [])), (low, ([], [texture]))):
+        reports = iter((report([texture], base_patch), clean))      # base, then own
+        with patch("autoedit.quality.assess_pixels", side_effect=lambda *a: next(reports)):
+            assert added_faults(source, flat, None, None, flat, first=first) == expect
+
+
+def _auto_fixture():
+    """A pipeline plus a fake `assess_pixels` that answers from the two pictures it is given."""
     from autoedit.contract import RunConfig
     from autoedit.imageio import Image
     from autoedit.pipeline import Pipeline
@@ -205,25 +276,121 @@ def test_auto_retries_share_one_decision_and_return_the_accepted_editable_settin
     image = Image(rgb=rgb)
     pipe = Pipeline.build(RunConfig(style="auto", scene="daylight", intensity=1, auto_unreleased=True,
                                     backend="stub", compose=False, concepts=["sky"]))
-    fault = {"failures": ["sky_edge_halo"], "metrics": {"sky_edge_halo": .18}}
-    ok = {"failures": [], "metrics": {"sky_edge_halo": .07}}
-    resolved = []
+    return pipe, image
+
+
+class _FakeAssess:
+    """Reports from a table keyed by (strength of the source picture or None, strength of the output)."""
+    def __init__(self, table=None):
+        self.table, self.pictures, self.source = table or {}, {}, None
+        self.recording = None
+
+    def _key(self, picture):
+        if self.source is not None and np.array_equal(picture, self.source):
+            return None
+        return next((s for s, p in self.pictures.items() if np.array_equal(picture, p)), "?")
+
+    def __call__(self, source, output, masks=None, thresholds=None, prepared=None):
+        if self.recording is not None:
+            self.source = np.array(source)
+            self.pictures[self.recording] = np.array(output)
+            failures = []
+        else:
+            failures = list(self.table.get((self._key(source), self._key(output)), []))
+        halo = {"sky_edge_halo": .07}
+        patches = [{"x": 0, "y": 0, "retention": 0.0}] if "encoded_highlight_texture_loss" in failures else []
+        return {"passed": not failures, "failures": failures, "scopes": {},
+                "metrics": {**halo, "comparison": {}, "highlight_texture": {"patches": patches}}}
+
+
+def _record(pipe, image, fake, strengths=(0.0, .125, .25, .5, .75, 1.0)):
+    from unittest.mock import patch
+    with patch("autoedit.quality.assess_pixels", fake):
+        for s in strengths:
+            fake.recording = s
+            pipe.process_one("retry.jpg", image=image, auto_strength=s, batch_group="one shoot")
+    fake.recording = None
+
+
+def _run(pipe, image, fake, **kwargs):
+    from unittest.mock import patch
+    import autoedit.pipeline as pipeline
     with patch.object(pipe.decider, "decide", wraps=pipe.decider.decide) as decider, \
          patch.object(pipe.segmenter, "segment", wraps=pipe.segmenter.segment) as segmenter, \
-         patch("autoedit.quality.assess_pixels", side_effect=[fault, ok]):
-        pixels, result = pipe.process_one("retry.jpg", image=image, batch_group="one shoot", on_resolved=resolved.append)
-    assert decider.call_count == segmenter.call_count == len(resolved) == 1
+         patch.object(pipeline, "apply_image", wraps=pipeline.apply_image) as applied, \
+         patch("autoedit.quality.assess_pixels", fake):
+        out = pipe.process_one("retry.jpg", image=image, batch_group="one shoot", **kwargs)
+    return out, decider.call_count, segmenter.call_count, applied.call_count
+
+
+def test_auto_keeps_its_strength_when_simple_already_has_the_fault():
+    texture = "encoded_highlight_texture_loss"
+    pipe, image = _auto_fixture()
+    fake = _FakeAssess()
+    _record(pipe, image, fake)
+    fake.table = {(None, 0.0): [texture], (None, .75): [texture], (None, 1.0): [texture]}
+    for given, strength in ((None, 1.0), (.75, .75)):
+        kwargs = {} if given is None else {"auto_strength": given}
+        (pixels, result), decisions, segmentations, renders = _run(pipe, image, fake, **kwargs)
+        audit = result.audit["auto"]
+        assert audit["strength"] == strength and "safety_attempts" not in audit
+        assert audit["fault_check"]["failures"] == [] and audit["fault_check"]["inherited"] == [texture]
+        assert not result.needs_review
+        assert any("the Simple edit already fails " + texture in n for n in result.notes)
+        assert decisions == segmentations == 1 and renders == 3
+        with patch_assess(fake):
+            plain, _ = pipe.process_one("retry.jpg", image=image, auto_strength=strength, batch_group="one shoot")
+        assert np.array_equal(pixels, plain)
+    stages = []
+    (shown, result), *_ = _run(pipe, image, fake, on_stage=lambda name, rgb: stages.append(name))
+    assert stages.count("candidate_decode") == stages.count("final_float") == 1
+    assert "safety_attempts" not in result.audit["auto"]
+
+
+def patch_assess(fake):
+    from unittest.mock import patch
+    return patch("autoedit.quality.assess_pixels", fake)
+
+
+def test_auto_is_pulled_back_for_a_fault_it_adds():
+    texture, halo = "encoded_highlight_texture_loss", "sky_edge_halo"
+    pipe, image = _auto_fixture()
+    fake = _FakeAssess()
+    _record(pipe, image, fake)
+    # Auto adds a fault at full strength only.
+    fake.table = {(None, 1.0): [halo], (0.0, 1.0): [halo]}
+    (pixels, result), decisions, segmentations, _ = _run(pipe, image, fake)
     audit = result.audit["auto"]
     assert audit["strength"] == .75 and len(audit["safety_attempts"]) == 2
-    assert "sky_edge_halo" in result.notes[-1] and result.batch_group == "one shoot"
-    with patch("autoedit.quality.assess_pixels", return_value=ok):
-        expected, fresh = pipe.process_one("retry.jpg", image=image, auto_strength=.75, batch_group="one shoot")
-    assert np.array_equal(pixels, expected) and fresh.global_settings == result.global_settings
+    assert audit["safety_attempts"][0] == {"strength": 1.0, "failures": [halo]}
+    assert halo in result.notes[-1] and decisions == segmentations == 1
+    with patch_assess(fake):
+        plain, _ = pipe.process_one("retry.jpg", image=image, auto_strength=.75, batch_group="one shoot")
+    assert np.array_equal(pixels, plain)
+    # Simple already fails the check and Auto's own step fails it again at full strength.
+    fake.table = {(None, 0.0): [texture], (None, .75): [texture], (None, 1.0): [texture], (0.0, 1.0): [texture]}
+    (pixels, result), *_ = _run(pipe, image, fake)
+    audit = result.audit["auto"]
+    assert audit["strength"] == .75 and audit["safety_attempts"][0]["failures"] == [texture]
     stages = []
-    with patch("autoedit.quality.assess_pixels", side_effect=[fault, ok, ok]):
-        shown, replay = pipe.process_one("retry.jpg", image=image, on_stage=lambda name, rgb: stages.append(name))
+    (shown, replay), *_ = _run(pipe, image, fake, on_stage=lambda name, rgb: stages.append(name))
     assert stages.count("candidate_decode") == stages.count("final_float") == 1
-    assert np.array_equal(pixels, shown) and replay.audit["auto"]["safety_attempts"] == audit["safety_attempts"]
+    assert np.array_equal(pixels, shown)
+
+
+def test_auto_ends_on_simple_when_every_strength_adds_a_fault():
+    halo = "sky_edge_halo"
+    pipe, image = _auto_fixture()
+    fake = _FakeAssess()
+    _record(pipe, image, fake)
+    above = (.125, .25, .5, .75, 1.0)
+    fake.table = {(None, s): [halo] for s in above} | {(0.0, s): [halo] for s in above}
+    (pixels, result), *_ = _run(pipe, image, fake)
+    audit = result.audit["auto"]
+    assert audit["strength"] == 0 and audit["fault_check"]["failures"] == [] and not result.needs_review
+    with patch_assess(fake):
+        simple, _ = pipe.process_one("retry.jpg", image=image, auto_strength=0.0, batch_group="one shoot")
+    assert np.array_equal(pixels, simple)
 
 
 def test_auto_quality_uses_the_active_landscape_budget_only():

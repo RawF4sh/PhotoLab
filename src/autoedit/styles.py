@@ -118,6 +118,13 @@ def load_auto(path, style):
         cfg = tomllib.load(fh)
     for key in ("fallback_strength", "shoot_pull"):
         _number(cfg["auto"][key], 0, 1, key)
+    shoot = cfg.get("shoot")
+    if not isinstance(shoot, dict):
+        raise ValueError("auto: the [shoot] table is missing")
+    _number(shoot.get("window_min"), 1, 120, "window_min")
+    if type(shoot.get("min_frames")) is not int or shoot["min_frames"] < 1:
+        raise ValueError("auto: min_frames must be a whole number of 1 or more")
+    _number(shoot.get("min_share"), 0.5, 1, "min_share")
     for key, value in cfg["scenes"].items():
         if key.endswith("_ev"):
             if type(value) not in (float, int) or not math.isfinite(value):
@@ -153,6 +160,7 @@ class AutoPhoto:
     requested_strength: float
     strength: float
     fallback: str
+    direct: bool = False
 
     @classmethod
     def select(cls, detected, style, cfg, requested, preview, retry=None, shoot=None):
@@ -176,10 +184,10 @@ class AutoPhoto:
         else:
             target = style.targets.get(scene, style.targets["landscape"])
         return cls(scene, reason, detected.confidence, released, target, requested,
-                   strength if target else 0.0, fallback)
+                   strength if target else 0.0, fallback, detected.direct)
 
     def audit(self):
         return {"scene": self.scene, "reason": self.reason, "confidence": self.confidence,
                 "released": self.released, "target": self.target or None,
                 "requested_strength": self.requested_strength, "strength": self.strength,
-                "fallback": self.fallback}
+                "fallback": self.fallback, "direct": self.direct}

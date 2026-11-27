@@ -37,5 +37,9 @@ ridge_min_crossings = 12
 # Fractions here refer to the detected lamp/sun itself. Skin is compared with
 # its own source colour in the OKLab chromatic plane, independent of lightness.
 light_clip_fraction = 0.04
+# A lamp or sun that is white in the original (luma above highlight_level) may not fall
+# below this luma; the share is of the lamp or sun itself, the same light_clip_fraction
+# as for a newly blown light.
+light_dull_level = 0.90
 skin_colour_delta = 0.065
 skin_colour_percentile = 90.0

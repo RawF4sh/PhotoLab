@@ -124,3 +124,33 @@ def test_unreleased_scene_and_release_preview_see_the_same_cloud_evidence():
         else:
             assert "cloud" not in pipe.segmenter.words
     assert np.array_equal(photos["standard", False], photos["auto", False])
+
+
+def test_auto_asks_for_mist_and_a_frame_of_fog_is_mist():
+    import numpy as np
+    from autoedit.contract import RunConfig
+    from autoedit.imageio import Image
+    from autoedit.pipeline import Pipeline
+    from autoedit.segment.base import RegionMask
+
+    class Masks:
+        def __init__(self):
+            self.words = []
+        def segment(self, im, words):
+            self.words = list(words)
+            everywhere = np.ones(im.rgb.shape[:2], bool)
+            sky = np.indices(im.rgb.shape[:2])[0] < im.height // 2
+            items = {"sky": sky, "mountain": ~sky, "mist": everywhere}
+            return [RegionMask(w, items[w], .6) for w in words if w in items]
+
+    y, x = np.indices((40, 64))
+    rgb = np.stack([.20 + .06*x/64]*3, axis=2).astype(np.float32)
+    rgb[y<20] = [.24, .30, .42]   # a blue cast: the sky colour alone says open sky
+    im = Image(rgb=rgb, exif={"capture_ev100":12.9})
+    for style, scene in (("auto", "mist"), ("standard", None)):
+        pipe = Pipeline.build(RunConfig(backend="stub", style=style))
+        pipe.segmenter = Masks()
+        _, info = pipe.process_one("sample.jpg", image=im)
+        assert ("mist" in pipe.segmenter.words) == (style == "auto")
+        if scene:
+            assert info.scene == scene

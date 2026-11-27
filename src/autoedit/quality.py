@@ -27,7 +27,7 @@ _NUMERIC_FIELDS = _INTEGER_FIELDS | {
     "texture_high_max", "texture_max_step_codes", "texture_min_retention",
     "texture_max_new_plateau", "halo_delta", "halo_percentile", "neutral_chroma_max",
     "neutral_luma_min", "neutral_luma_max", "finite_tolerance", "ridge_radius", "ridge_percentile", "ridge_delta",
-    "light_clip_fraction", "skin_colour_delta", "skin_colour_percentile",
+    "light_clip_fraction", "light_dull_level", "skin_colour_delta", "skin_colour_percentile",
 }
 
 
@@ -71,6 +71,8 @@ def _validate_quality_config(cfg: dict) -> dict:
         raise ValueError("quality ridge_radius must be a positive fraction smaller than half the frame")
     if cfg["light_clip_fraction"] > 1:
         raise ValueError("quality light_clip_fraction must be within [0, 1]")
+    if cfg["light_dull_level"] > cfg["highlight_level"]:
+        raise ValueError("quality light_dull_level must not exceed highlight_level")
     return cfg
 
 
@@ -262,6 +264,11 @@ def _protected_regions(source, output, masks, cfg, metrics, failures):
             metrics[f"{name}_newly_blown_fraction"] = fraction
             if fraction > cfg["light_clip_fraction"]:
                 failures.append(f"blown_light_source:{name}")
+            dulled = (luma(source[mask]) > high) & (luma(output[mask]) < cfg["light_dull_level"])
+            fraction = float(dulled.mean())
+            metrics[f"{name}_dulled_fraction"] = fraction
+            if fraction > cfg["light_clip_fraction"]:
+                failures.append(f"dulled_light_source:{name}")
     for name in ("skin", "face"):
         mask = masks.get(name)
         if mask is not None and mask.any():
@@ -394,3 +401,37 @@ def assess_pixels(source, output, masks=None, thresholds=None, prepared=None) ->
     _protected_regions(sa, sb, sampled_masks, cfg, metrics, failures)
     result["passed"] = not failures
     return result
+
+
+def added_faults(source, output, masks, thresholds, baseline, first=None):
+    """Split the output's failures into (added, inherited) relative to a baseline render.
+
+    A failure the baseline already has against the source is inherited when the step from the
+    baseline to the output passes the same check. Everything else is added.
+    """
+    if first is None:
+        first = assess_pixels(source, output, masks, thresholds)
+    names = list(first["failures"])
+    if not names or baseline is None:
+        return names, []
+    base = assess_pixels(source, baseline, masks, thresholds)
+    if not set(names) & set(base["failures"]):
+        return names, []
+    own = assess_pixels(baseline, output, masks, thresholds)
+    if not all("comparison" in r["metrics"] for r in (first, base, own)):
+        return names, []   # an unmeasured report inherits nothing
+    floor = {**load_quality_config(), **(thresholds or {})}["texture_min_retention"]
+
+    def low(report):
+        return {(p["x"], p["y"]) for p in report["metrics"]["highlight_texture"]["patches"]
+                if p["retention"] < floor}
+
+    def inherited_name(name):
+        if name not in base["failures"] or name in own["failures"]:
+            return False
+        return name != "encoded_highlight_texture_loss" or low(first) <= low(base)
+
+    added, inherited = [], []
+    for name in names:
+        (inherited if inherited_name(name) else added).append(name)
+    return added, inherited

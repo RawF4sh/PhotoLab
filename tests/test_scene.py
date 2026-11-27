@@ -47,14 +47,120 @@ def test_simple_three_scene_golden():
 
 def test_shoot_mist_consensus_preserves_sunset_twilight_transition_and_people():
     seq = list(zip("abcdefgh", ["mist", "daylight", "mist", "people", "sunset", "landscape", "twilight", "twilight"]))
-    assert consistency.shoot_scenes(seq) == [("mist", ["a", "b", "c"]), ("sunset", ["e", "f"]),
-                                            ("twilight", ["g", "h"])]
+    assert consistency.shoot_blocks(seq) == [["a", "b", "c"], ["e", "f"], ["g", "h"]]
     cases = [{"global": {"exposure": .4}, "sky": {"exposure": -.6}}, {"global": {"exposure": .5}},
              {"global": {"exposure": .6}, "sky": {"exposure": -.8}}]
     medians = consistency.median_fit(cases)
     results = [consistency.pull_fit(plan["global"], {}, medians, .5, {"exposure": 2})[0]["exposure"]
                for plan in cases]
     assert np.allclose(results, [.45, .5, .55]) and medians["sky"]["exposure"] == -.7
+
+
+def test_a_frame_without_its_own_sky_takes_its_neighbours_and_a_frame_with_one_keeps_it():
+    cfg = dict(window_min=10, min_frames=2, min_share=.75)
+    take = consistency.neighbour_scenes
+    deck = [("a", 0, "mist", True), ("b", 60, "mist", True), ("c", 120, "mist", True)]
+    assert take(deck + [("q", 90, "daylight", False)], cfg) == {"q": "mist"}
+    assert take(deck + [("q", 3000, "daylight", False)], cfg) == {}       # 48 minutes later
+    assert take(deck[:1] + [("q", 90, "daylight", False)], cfg) == {}     # one neighbour is not enough
+    assert take(deck + [("o", 100, "daylight", True)], cfg) == {}         # blue openings of its own
+    assert take(deck[:2] + [("o", 30, "daylight", True), ("q", 90, "daylight", False)], cfg) == {}   # 2 of 3
+    assert take(deck + [("f", 90, "landscape", False)], cfg) == {}        # it fell back: it stays there
+    dusk = [("a", 0, "twilight", True), ("b", 60, "twilight", True)]
+    assert take(dusk + [("q", 30, "daylight", False), ("f", 40, "landscape", False)], cfg) == {}
+    glow = [("a", 0, "sunset", True), ("b", 60, "sunset", True)]
+    assert take(glow + [("q", 30, "daylight", False)], cfg) == {"q": "sunset"}
+
+
+def test_neighbours_never_give_daylight_or_twilight():
+    import random
+    cfg = dict(window_min=10, min_frames=2, min_share=.75)
+    take = consistency.neighbour_scenes
+    # F62 ticket 26. A timelapse from dusk light into day, a frame every 10 seconds: 8 twilight
+    # frames, 36 that fell back, 30 daylight frames. Ticket 25's rule called the later ones daylight.
+    dawn = ([(f"t{i}", 10 * i, "twilight", True) for i in range(8)]
+            + [(f"u{i}", 80 + 10 * i, "landscape", False) for i in range(36)]
+            + [(f"d{i}", 440 + 10 * i, "daylight", True) for i in range(30)])
+    assert take(dawn, cfg) == {}
+    assert take([(p, -t, s, d) for p, t, s, d in dawn], cfg) == {}        # the same run at dusk
+    rng = random.Random(26)
+    for _ in range(200):
+        frames = []
+        for i in range(rng.randint(2, 40)):
+            direct = rng.random() < .6
+            kind = rng.choice(scene.LANDSCAPES) if direct else rng.choice(("daylight", "landscape"))
+            frames.append((str(i), rng.uniform(0, 1800), kind, direct))
+        own = {p: (s, d) for p, _t, s, d in frames}
+        taken = take(frames, cfg)
+        assert set(taken.values()) <= {"mist", "sunset"}
+        assert all(own[p] == ("daylight", False) for p in taken)
+
+
+def test_direct_marks_a_scene_the_frames_own_sky_or_light_decided():
+    cfg = _thresholds()
+    deck = _stats(sky_cov=.41, sky_lum=.57, sky_sat=.21, lum_p50=.17, lum_p90=.64, fg_p50=.11)
+    assert scene.classify(deck, {"sky"}, thresholds=cfg, capture_ev=12.0, sky_warmth=-.14, clouds="deck").direct
+    assert scene.classify(_stats(), {"sky"}, thresholds=cfg, sky_warmth=-.06, capture_ev=13.0, clouds="open").direct
+    shade = _stats(sky_cov=0, sky_lum=0, sky_sat=0, lum_p10=.03, lum_p50=.08, lum_p90=.21, fg_p50=.08)
+    default = scene.classify(shade, {"water"}, thresholds=cfg, capture_ev=12.3)
+    assert default.finer == "daylight" and not default.direct
+    fallback = scene.classify(_stats(sky_cov=0, lum_p50=.24), {"sky"}, thresholds=cfg)
+    assert fallback.finer == "landscape" and not fallback.direct
+    assert not scene.classify(_stats(), {"sky"}, override="mist", thresholds=cfg).direct
+    assert not scene.classify(_stats(), {"sky"}).direct      # Simple's three-way answer
+
+
+def test_auto_shoots_hands_a_frame_without_sky_its_neighbours_scene(tmp_path):
+    from types import SimpleNamespace
+    times = {"a.jpg": 0, "b.jpg": 60, "m.jpg": 30, "f.jpg": 45, "bad.jpg": 40, "late.jpg": 3600}
+    calls = []
+
+    def audit(path, scene, direct):
+        return SimpleNamespace(audit={"auto": {"scene": scene, "direct": direct, "target": "t", "fit": {}}})
+
+    canned = {"a.jpg": ("mist", True), "b.jpg": ("mist", True), "m.jpg": ("daylight", False),
+              "late.jpg": ("daylight", False), "f.jpg": ("landscape", False)}
+
+    class Pipe:
+        auto_cfg = {"shoot": dict(window_min=10, min_frames=2, min_share=.75)}
+        rules = {}
+
+        def process_one(self, path, do_apply=True, auto_shoot=None, **kw):
+            name = path.split("/")[-1]
+            calls.append((name, auto_shoot))
+            if name == "bad.jpg":
+                raise RuntimeError("damaged")
+            scene, direct = canned[name]
+            return None, audit(name, auto_shoot["scene"] if auto_shoot else scene, direct)
+
+    images = [str(tmp_path / n) for n in times]
+    saved = consistency.shoot_time
+    consistency.shoot_time = lambda path: times[path.split("/")[-1]]
+    try:
+        biases = {}
+        consistency._auto_shoots(images, biases, Pipe(), None)
+    finally:
+        consistency.shoot_time = saved
+    got = {k.split("/")[-1]: v.auto_shoot for k, v in biases.items()}
+    assert got == {"m.jpg": {"scene": "mist", "median": {}}}
+    assert [c for c in calls if c[0] == "m.jpg"] == [("m.jpg", None), ("m.jpg", {"scene": "mist"})]
+    assert [c for c in calls if c[0] == "f.jpg"] == [("f.jpg", None)]     # fell back: analysed once, handed nothing
+
+
+def test_load_auto_refuses_a_bad_shoot_table(tmp_path):
+    from autoedit.styles import load_auto
+    style = Pipeline.build(RunConfig(style="auto", backend="stub")).styles["auto"]
+    text = open(config_path("auto.toml")).read()
+    good = tmp_path / "good.toml"
+    good.write_text(text)
+    load_auto(str(good), style)
+    for old, new in (("min_share = 0.75", "min_share = 0.4"), ("min_frames = 2 ", "min_frames = 0 "),
+                     ("[shoot]", "[shoot_gone]")):
+        assert old in text
+        bad = tmp_path / "bad.toml"
+        bad.write_text(text.replace(old, new, 1))
+        with pytest.raises(ValueError):
+            load_auto(str(bad), style)
 
 
 def _synthetic():
@@ -188,3 +294,60 @@ def test_stale_shoot_or_profile_cannot_opt_portraits_into_landscape_goals():
     style = Style("auto", targets={"landscape":"land"})
     choice = AutoPhoto.select(scene.Scene("people",.9), style, cfg, 1, True, shoot={"scene":"sunset"})
     assert choice.scene == "people" and not choice.target
+
+
+def test_light_on_the_land_not_the_camera_setting_separates_dusk_from_day():
+    cfg = _thresholds()
+    def detect(land):
+        g = _stats(sky_lum=.50, lum_p50=.19, lum_p90=.63, fg_p50=land)
+        return scene.classify(g, {"sky"}, thresholds=cfg, sky_warmth=-.03, capture_ev=12.5, clouds="open").finer
+    # One camera setting and one clear sky, three amounts of light on the land.
+    assert detect(.30) == "daylight"     # 1.3 stops under mid-grey: 11.2
+    assert detect(.04) == "twilight"     # 5.9 stops under: 6.6, at sunset light
+    assert detect(.08) == "landscape"    # 7.9: between the two it is neither, and never a swap
+
+
+def test_a_night_frame_rendered_bright_is_night_and_a_dim_cloud_deck_is_overcast():
+    cfg = _thresholds()
+    # A long exposure lifts a town at night to a mid-grey median; the glow on its sky is gold.
+    town = _stats(sky_cov=.68, sky_lum=.38, sky_sat=.20, lum_p50=.37, lum_p90=.47, fg_p50=.30)
+    assert scene.classify(town, {"sky"}, thresholds=cfg, capture_ev=.3, sky_warmth=.07, warm_share=.14).finer == "twilight"
+    # Standing stones against a storm sky: the land is at dusk light, the camera was set for the sky.
+    stones = _stats(sky_cov=.60, sky_lum=.28, sky_sat=.08, lum_p10=.12, lum_p50=.21, lum_p90=.36, fg_p50=.03)
+    def detect(clouds):
+        return scene.classify(stones, {"sky"}, thresholds=cfg, capture_ev=12.6, sky_warmth=-.02, clouds=clouds).finer
+    assert detect("deck") == "mist" and detect("open") == "twilight"
+
+
+def test_gold_in_the_sky_needs_a_second_witness_only_at_a_sunlit_exposure():
+    cfg = _thresholds()
+    g = _stats(sky_cov=.33, sky_lum=.68, sky_sat=.21, lum_p50=.21, lum_p90=.74, fg_p50=.16)
+    def detect(ev):
+        return scene.classify(g, {"sky"}, thresholds=cfg, capture_ev=ev, sky_warmth=.05, warm_share=.34, clouds="open").finer
+    assert detect(12.4) == "sunset"      # the sun on the horizon, the land still at 9.4
+    assert detect(14.5) == "daylight"    # a sunlit exposure: a warm cast alone is no sunset
+
+
+def test_fog_across_the_frame_is_mist_whatever_colour_it_took():
+    cfg = _thresholds()
+    g = _stats(sky_cov=.42, sky_lum=.26, sky_sat=.19, lum_p10=.17, lum_p50=.22, lum_p90=.28, fg_p50=.20)
+    def detect(fog):
+        return scene.classify(g, {"sky"}, thresholds=cfg, capture_ev=12.9, sky_warmth=-.06, clouds="open", fog=fog).finer
+    assert detect(.68) == "mist"         # a blue cast makes fog read as open sky; the fog mask does not care
+    assert detect(.20) == "daylight"     # a bank of low cloud in a clear view
+
+
+def test_a_deck_just_above_sunset_light_is_overcast_and_a_frame_without_sky_keeps_daylight():
+    cfg = _thresholds()
+    deck = _stats(sky_cov=.41, sky_lum=.57, sky_sat=.21, lum_p50=.17, lum_p90=.64, fg_p50=.11)      # land at 8.05
+    assert scene.classify(deck, {"sky"}, thresholds=cfg, capture_ev=12.0, sky_warmth=-.14, clouds="deck").finer == "mist"
+    # A waterfall in forest shade: no sky to judge, the land 4.6 stops under mid-grey, a daylight setting.
+    shade = _stats(sky_cov=0, sky_lum=0, sky_sat=0, lum_p10=.03, lum_p50=.08, lum_p90=.21, fg_p50=.08)
+    assert scene.classify(shade, {"water"}, thresholds=cfg, capture_ev=12.3).finer == "daylight"
+
+
+def test_capture_ev_falls_back_to_libraw_only_for_its_own_key():
+    from autoedit import imageio
+    assert imageio._ev100(1/200, 14, 200) == pytest.approx(np.log2(19600))
+    assert imageio._ev100(.125, 0, 100) is None and imageio._ev100(.125, 8, 0) is None
+    assert imageio._raw_capture_ev("no-such-file.raf") is None

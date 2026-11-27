@@ -81,18 +81,34 @@ def _retry_auto_faults(render):
         faults = audit.get("fault_check", {}).get("failures", [])
         attempts = []
         if faults:
-            attempts.append({"strength": audit["strength"], "failures": faults})
-            factors = sorted(set(self.style_safety["remediation_factors"]) | {0.0}, reverse=True)
-            for factor in factors:
-                if factor >= 1 or not requested:
-                    continue
+            kept = options["_retry_inputs"]
+            first = {"strength": audit["strength"], "failures": faults}
+            first_check, caller = kept["check"], options.get("auto_strength")
+            again = []      # strengths to try, in order
+            if requested:
+                factors = sorted(set(self.style_safety["remediation_factors"]) | {0.0}, reverse=True)
+                again = [requested * f for f in factors if f < 1]
+                # Render Simple once, then judge the first render again against it: only the
+                # faults Auto adds count.
                 del rgb
                 events.clear()
-                options["auto_strength"] = requested * factor
+                options["auto_strength"] = 0.0
+                rgb, result = render(self, **options)
+                audit = result.audit["auto"]
+                faults = quality.added_faults(*first_check, kept["simple"])[0]
+                if not faults:
+                    again.insert(0, caller)     # only inherited faults: the requested strength stands
+            if faults or not requested:
+                attempts.append({**first, "failures": faults or first["failures"]})
+            for strength in again:
+                del rgb
+                events.clear()
+                options["auto_strength"] = strength
                 rgb, result = render(self, **options)
                 audit = result.audit["auto"]
                 faults = audit["fault_check"]["failures"]
-                attempts.append({"strength": audit["strength"], "failures": faults})
+                if faults or attempts:
+                    attempts.append({"strength": audit["strength"], "failures": faults})
                 if not faults:
                     break
         if show_stages:
@@ -345,8 +361,8 @@ class Pipeline:
         extra = self._with_geometry_concepts(extra, concepts)
         # Sky weather is measured even while a scene awaits release. Keep the
         # diagnostic cloud mask outside Simple's resolved edits.
-        if self.auto_cfg and "sky" in concepts and "cloud" not in concepts and "cloud" not in extra:
-            extra.append("cloud")
+        if self.auto_cfg and "sky" in concepts:
+            extra += [word for word in ("cloud", "mist") if word not in concepts and word not in extra]
         if self._may_fit_landscape() and "lights" not in concepts and "lights" not in extra:
             extra.append("lights")
         words = concepts + extra
@@ -490,7 +506,11 @@ class Pipeline:
         resolved = resolve(raw, concepts, self.meta, proxy.rgb.shape[:2])
         candidate_regions = None
         if self._may_fit_landscape() and cfg.concepts is None and not cfg.preset and "sky" in concepts:
-            candidate_regions = landscape_regions(raw, concepts, self.meta, proxy.rgb.shape[:2])
+            band = int((self.rules.get("masks") or {}).get("snap_edge_px", 12))
+            # Auto's own regions always reach the frame edge, and so do the region masks its fault check
+            # reads; `raw` (Simple, scene measures, the trusted sun and lights masks) is untouched.
+            fit_raw = [replace(rm, mask=snap_to_edges(rm.mask, band)) for rm in raw] if not px and band > 0 else raw
+            candidate_regions = landscape_regions(fit_raw, concepts, self.meta, proxy.rgb.shape[:2])
         stage_timings["resolve"] = (time.perf_counter() - stage_started) * 1000
         # Optional read-only observer for diagnostics such as preview mask overlays. Reuse the
         # exact arbitration used by apply; arrays stay out of the serializable sidecar.
@@ -523,13 +543,15 @@ class Pipeline:
             sky = resolved.union.get("sky")
             cloud = next((r.mask for r in raw if r.name == "cloud" and
                           r.score >= meta_for("cloud", self.meta).min_score), None)
+            fog = next((float(r.mask.mean()) for r in raw if r.name == "mist" and
+                        r.score >= meta_for("mist", self.meta).min_score), 0.0)
             sky_warmth, warm_share, rose_share = scene_mod.sky_colour(proxy.rgb, sky, thresholds)
             detected_light = self._find_light(proxy.rgb, raw, resolved.union, asked=True)
             detected = scene_mod.classify(gstats, present, region_stats, cfg.scene, thresholds=thresholds,
                                           sky_warmth=sky_warmth, warm_share=warm_share, rose_share=rose_share,
                                           capture_ev=(proxy.exif or {}).get("capture_ev100"), light=detected_light,
                                           night=night.is_night(gstats, self.night_cfg),
-                                          clouds=scene_mod.cloud_cover(proxy.rgb, sky, thresholds, cloud))
+                                          clouds=scene_mod.cloud_cover(proxy.rgb, sky, thresholds, cloud), fog=fog)
             choice = AutoPhoto.select(detected, style, self.auto_cfg, requested_strength, cfg.auto_unreleased,
                                       auto_strength, None if cfg.scene else auto_shoot)
             auto_scene, strength = choice.scene, choice.strength
@@ -1396,10 +1418,19 @@ class Pipeline:
                                    and r.score >= meta_for(name, self.meta).min_score]
                         if trusted:
                             masks[name] = np.logical_or.reduce(trusted)
-                    check = quality.assess_pixels(reference.rgb, post_proxy.rgb, masks,
-                        {**safety, "preserve_exposure": auto_active, "richer": auto_active})
+                    limits = {**safety, "preserve_exposure": auto_active, "richer": auto_active}
+                    check = quality.assess_pixels(reference.rgb, post_proxy.rgb, masks, limits)
                     ridge = check["metrics"].get("sky_edge_halo")
-                    auto_audit["fault_check"] = {"failures": check["failures"], "sky_edge_halo": ridge}
+                    kept = _retry_inputs if _retry_inputs is not None else {}
+                    if not auto_active:
+                        kept["simple"] = post_proxy.rgb     # strength 0 is the Simple render
+                    kept["check"] = (reference.rgb, post_proxy.rgb, masks, limits)
+                    added, inherited = quality.added_faults(*kept["check"], kept.get("simple"), first=check)
+                    auto_audit["fault_check"] = {"failures": added, "inherited": inherited,
+                                                 "sky_edge_halo": ridge}
+                    if inherited:
+                        notes_extra.append(f"Auto fault check: the Simple edit already fails "
+                                           f"{', '.join(inherited)}; not counted against Auto.")
                 else:
                     ridge = quality.sky_edge_halo(luma(reference.rgb), luma(post_proxy.rgb),
                                                   resolved.union, self.style_safety)

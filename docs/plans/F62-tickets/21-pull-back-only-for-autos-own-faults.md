@@ -1,6 +1,6 @@
 # 21. Pull Auto back only for faults it adds to Simple
 
-Status: ready-for-agent
+Status: done
 Spec: [F62](../F62-auto.md), milestone M3
 Who: Builder (Sonnet, medium)
 
@@ -131,3 +131,5 @@ range (01 to 21).
 01 to 24: step 4 leaves that line as it is. A replay of this ticket's rule on the sheet with
 `aim = 0.5` gives the same single change as with 0.25: the twilight frame goes from 0 % to 25 %
 (distance from Simple 2.45) and loses its review mark; no other photo changes.
+
+2026-11-25 (session): Built as written: `quality.added_faults`, the `check_auto` branch and the retry loop. The twilight frame that ended at 0 % now ends at 12 %, its inherited fault recorded under `inherited`. Development sheet (12 photos, full size, `aim = 0.5`), Auto against Simple: median distance 3.81 before tickets 21 to 23, 5.52 after; photos at 3 or more stay at 8 of 12. Full suite 1,430 passed, 0 failed; stub images byte-identical to the previous state; tone report on the 110 in-repo RAW photos: 0 dark made darker, 0 pushed into clipping; public-repo check passes. A Checker (Opus, high) reviewed tickets 21 to 23 together: no blockers; Simple and default runs cannot reach the new checks (they run only while Auto is active, and no default run gets a sun or lights mask). One comment in `pipeline.py` corrected on its finding.
